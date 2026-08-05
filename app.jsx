@@ -333,8 +333,10 @@ function sparkWeekLbl_(w) {
   return dm(ini) + '–' + dm(fim);
 }
 
-// Sparkline dos hero cards do Farol: linha NEUTRA (branca) das últimas 4 semanas fechadas, um ponto por
-// semana, + seta ↑↑/→→/↓↓ (direção) branca na base. Cor de status fica SÓ na bolinha do farol (de propósito).
+// Sparkline dos hero cards do Farol: linha NEUTRA (branca) dos últimos 4 blocos de 7 dias CORRIDOS
+// (2026-08-05: eram semanas de calendário seg–dom), um ponto por bloco, + seta ↑↑/→→/↓↓ branca na base.
+// Os blocos não se sobrepõem e terminam na data de referência da janela — a última bolinha é "últimos 7
+// dias", a penúltima os 7 anteriores, e assim por diante até 28 dias atrás. Cor de status fica SÓ na bolinha do farol (de propósito).
 // Escala com amplitude mínima (~6% da média) pra série flat parecer flat, não amplificar ruído.
 // Cada ponto carrega o VALOR daquela semana (rótulo acima da bolinha) + tooltip com o intervalo de datas —
 // sem isso a linha só dizia "sobe/desce", não QUANTO. Os rótulos são HTML absoluto (não <text> no SVG)
@@ -359,7 +361,7 @@ function Sparkline({ values, weeks, fmt }) {
   const arrow = dir === 'up' ? '↑↑' : dir === 'down' ? '↓↓' : '→→';
   const dirLbl = dir === 'up' ? 'subindo' : dir === 'down' ? 'caindo' : 'estável';
   const wk = weeks || [];
-  const tip = (i) => (wk[i] ? `Semana ${sparkWeekLbl_(wk[i])} · ` : '') + fmtVal(raw[i], fmt);
+  const tip = (i) => (wk[i] ? `${sparkWeekLbl_(wk[i])} (7 dias) · ` : '') + fmtVal(raw[i], fmt);
   // Intervalo COBERTO pelas bolinhas, impresso no card (à esquerda, na linha da seta — lado sempre vazio).
   // Sem isso a linha vira armadilha: numa janela curta o card mostra 5 dias e as bolinhas mostram as 4
   // semanas fechadas que desembocam nela, e não dá pra saber disso sem passar o mouse.
@@ -367,7 +369,7 @@ function Sparkline({ values, weeks, fmt }) {
     ? sparkWeekLbl_(wk[0]).split('–')[0] + '–' + sparkWeekLbl_(wk[wk.length - 1]).split('–')[1]
     : '';
   return (
-    <div className="spark" title={`${n} semana${n > 1 ? 's' : ''} fechada${n > 1 ? 's' : ''} (seg–dom) dentro do período · ${dirLbl}`}>
+    <div className="spark" title={`${n} bloco${n > 1 ? 's' : ''} de 7 dias corridos até o fim do período · ${dirLbl}`}>
       {/* a altura CSS do .spark-svg é IGUAL ao H do viewBox → o y do ponto vira px direto no `top` do rótulo */}
       <div className="spark-plot" style={{ height: H + 'px' }}>
         <svg className="spark-svg" viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none">
