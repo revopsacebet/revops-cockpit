@@ -16,7 +16,9 @@ function usePersistedState(key, initial) {
 // CONFIG — set this to your Apps Script web app URL to go live.
 // Quando `null`, o dashboard mostra o snapshot mock (modo dev).
 // ============================================================
-const ENDPOINT_URL = 'https://script.google.com/macros/s/AKfycbz23PQIQhJcqeNaLhdvyypl2epktR3frFcmekKv6OXmU5drx_BjLQVBAjSKZTIlFfw/exec';
+// Backend na conta acegaming (virada de 2026-08-05). O deployment anterior, na conta
+// apostou (AKfycbz23…), segue existindo — rollback = voltar esta linha e rodar build.js.
+const ENDPOINT_URL = 'https://script.google.com/macros/s/AKfycbyEOI20P4Vzk3oqk8jIJDuSfPHhm9z3WAy0FjukzA5cSo5B8raM2qGPXyKydxyJV_s/exec';
 
 // ===== AUTH (front) — sessão validada no backend (doPost). Token em localStorage; os
 // fetches de dados (GET) mandam &session=<tok> via authParam_(). Login/admin via apiPost_.
