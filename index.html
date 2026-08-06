@@ -381,6 +381,10 @@
   .cf-table tr.cf-sub td:first-child { padding-left: 28px; }
   /* linha desligada (créditos / IRPJ) fica apagada — está em zero de propósito */
   .cf-table tr.cf-off td { color: var(--text-dim); }
+  /* linha memo (Meta diferida): itálico e apagada — aparece pra não sumir da vista, mas NÃO entra em subtotal */
+  .cf-table tr.cf-memo td { color: var(--text-dim); font-style: italic; font-size: 11px; }
+  .cf-table tr.cf-memo td:first-child { padding-left: 28px; }
+  .cf-table tr.cf-memo td.cf-neg, .cf-table tr.cf-memo td.cf-pos { color: var(--text-dim); }
   .cf-table .cf-total-col { border-left: 1px solid var(--border-strong); font-weight: 700; }
   /* visão Diária: 1ª coluna congelada (o rótulo tem que sobreviver ao scroll horizontal de 31 colunas).
      z-index acima do thead sticky (z:2) só no cruzamento, senão o header some por baixo do rótulo. */
@@ -7370,6 +7374,11 @@ function TabAtivacao({
 //                     valor MENSAL ÷ dias do mês daquele dia. Somado na janela = pró-rata do MTD
 //                     (é a regra "Pro-Rata" escrita na própria aba PnL, linha 48 do arquivo).
 //   • DESLIGADO     → Créditos de PIS/COFINS (era +10% do investimento no arquivo) e IRPJ/CSL.
+//   • MEMO          → Meta. Regra do Luis (06/08/2026): a Meta só é PAGA no mês seguinte, os demais
+//                     canais são pagos dentro do próprio mês. Como esta aba é caixa, o spend de Meta
+//                     SAI do Tráfego e vira linha memo no rodapé — não entra em Investimento Total,
+//                     EBITDA nem Resultado Líquido. Vale SÓ AQUI: Farol e demais abas seguem competência,
+//                     com a Meta dentro (por isso o Investimento desta aba < Investimento do Farol).
 // ESCOPO = CASA INTEIRA: NÃO segue o slicer de canal (o PnL é da empresa; ratear custo fixo/despesa/
 // depreciação por canal não tem regra definida). Sinal = o do arquivo: custo negativo.
 // ============================================================
@@ -7472,7 +7481,7 @@ const CF_LINES = [{
   strong: true
 }, {
   k: 'trafego',
-  label: 'Tráfego',
+  label: 'Tráfego (sem Meta)',
   src: 'act',
   sub: true
 }, {
@@ -7521,20 +7530,28 @@ const CF_LINES = [{
   label: 'Resultado Líquido',
   src: 'calc',
   strong: true
+},
+// MEMO — fora de todo subtotal acima. Fica no rodapé da tabela pra não sumir da vista.
+{
+  k: 'metaDefer',
+  label: 'Meta (paga no mês seguinte)',
+  src: 'memo'
 }];
 const CF_SRC_LBL = {
   act: 'BQ',
   pct: '% GGR',
   fix: 'pró-rata',
   calc: '=',
-  off: 'off'
+  off: 'off',
+  memo: 'memo'
 };
 const CF_SRC_TIP = {
   act: 'Realizado — vem do BigQuery',
   pct: 'Premissa: percentual sobre o GGR',
   fix: 'Valor mensal fixo do BP, dividido pelos dias do mês (pró-rata)',
   calc: 'Subtotal calculado',
-  off: 'Desligado nesta versão (fica em zero)'
+  off: 'Desligado nesta versão (fica em zero)',
+  memo: 'Memória de cálculo — NÃO entra em nenhum subtotal desta aba'
 };
 
 // Um dia do PnL. `r` = linha crua do backend (only=cashflow); o resto é premissa.
@@ -7553,7 +7570,11 @@ function cfCalcDay_(r) {
     credito: ggr * A.pctCreditos,
     custoVar: -ggr * A.pctCustoVar,
     custosFixos: px(A.mensal.custosFixos),
-    trafego: -(r.spend || 0),
+    // REGIME DE CAIXA: a Meta é paga só no mês seguinte, então ela NÃO entra no Tráfego desta aba.
+    // Os demais canais são pagos dentro do próprio mês. `metaDefer` é memória de cálculo — fica visível
+    // na tabela pra ninguém achar que a Meta sumiu, mas não é somado em nenhum subtotal.
+    trafego: -((r.spend || 0) - (r.spendMeta || 0)),
+    metaDefer: -(r.spendMeta || 0),
     influencer: px(A.mensal.influencer),
     creator: px(A.mensal.creator),
     despesas: px(A.mensal.despesas),
@@ -7750,7 +7771,7 @@ function TabDailyCashflow({
     className: 'cf-total-col ' + valCls(tot[l.k])
   }, cfBRL(tot[l.k]))))))), /*#__PURE__*/React.createElement("div", {
     className: "ch-note"
-  }, /*#__PURE__*/React.createElement("strong", null, "Do BigQuery (realizado):"), " GGR Bruto = ", /*#__PURE__*/React.createElement("code", null, "ggr_total"), " \xB7 FreeSpins = ", /*#__PURE__*/React.createElement("code", null, "valor_wins_freespin"), " \xB7 GGR = ", /*#__PURE__*/React.createElement("code", null, "ngr_total"), " (identidade validada: GGR = GGR Bruto \u2212 FreeSpins) \xB7 Bonifica\xE7\xF5es = ", /*#__PURE__*/React.createElement("code", null, "valor_bonus_saldo_real_dia"), " \u2014 ou seja, o ", /*#__PURE__*/React.createElement("strong", null, "% de bonifica\xE7\xE3o \xE9 o realizado do dia"), ", n\xE3o o \u221231,6% fixo da coluna B do arquivo. ", /*#__PURE__*/React.createElement("strong", null, "Tr\xE1fego"), " = spend da performance com os mesmos ajustes do Farol (imposto de fechamento da Meta \xD71,1383 e CPA manual de R$ 90 \xD7 FTD na Program\xE1tica, que n\xE3o tem spend rastreado).", /*#__PURE__*/React.createElement("br", null), /*#__PURE__*/React.createElement("strong", null, "Premissas (% do GGR):"), " Repasse Social ", fmtPct(CF_ASSUM.pctRepasse, 0), " \xB7 Impostos ", fmtPct(CF_ASSUM.pctImpostos, 1), " \xB7 Custos Vari\xE1veis ", fmtPct(CF_ASSUM.pctCustoVar, 1), " (coluna B15 do arquivo). ", /*#__PURE__*/React.createElement("strong", null, "Cr\xE9ditos de PIS/COFINS e IRPJ/CSL est\xE3o em zero"), " nesta vers\xE3o.", /*#__PURE__*/React.createElement("br", null), /*#__PURE__*/React.createElement("strong", null, "Pr\xF3-rata:"), " Custos Fixos (", cfBRL(CF_ASSUM.mensal.custosFixos), "/m\xEAs), Despesas (", cfBRL(CF_ASSUM.mensal.despesas), "), Resultado Financeiro (", cfBRL(CF_ASSUM.mensal.resultadoFin), "), Deprecia\xE7\xE3o (", cfBRL(CF_ASSUM.mensal.depreciacao), "), Influencer (", cfBRL(CF_ASSUM.mensal.influencer), ") e Creator (", cfBRL(CF_ASSUM.mensal.creator), ") entram como ", /*#__PURE__*/React.createElement("strong", null, "mensal \xF7 dias do m\xEAs"), " em cada dia; o MTD \xE9 a soma disso \u2014 \xE9 a regra \"Pro-Rata\" escrita na pr\xF3pria aba PnL do arquivo. Influencer e Creator n\xE3o existem no BQ (s\xE3o contrato), por isso ficam fixos dentro do Investimento Total.", monthsTouched.length > 1 && /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("br", null), /*#__PURE__*/React.createElement("strong", null, "Aten\xE7\xE3o:"), " a janela cruza ", monthsTouched.length, " meses \u2014 cada dia \xE9 pr\xF3-rateado pelos dias do ", /*#__PURE__*/React.createElement("em", null, "seu"), " m\xEAs, ent\xE3o o total dos fixos n\xE3o \xE9 m\xFAltiplo redondo de um m\xEAs s\xF3."), /*#__PURE__*/React.createElement("br", null), /*#__PURE__*/React.createElement("strong", null, "Escopo:"), " casa inteira \u2014 esta aba ", /*#__PURE__*/React.createElement("strong", null, "ignora o filtro de canal"), " do topo (o PnL \xE9 da empresa; ratear custo fixo, despesa e deprecia\xE7\xE3o por canal n\xE3o tem regra definida). Sinal segue o arquivo: custo \xE9 negativo.", meta && meta.dataMaxDate && /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("br", null), "Dado carregado no BQ at\xE9 ", fmtBR_(meta.dataMaxDate), " \u2014 o \xFAltimo dia da s\xE9rie costuma estar incompleto."))));
+  }, /*#__PURE__*/React.createElement("strong", null, "Do BigQuery (realizado):"), " GGR Bruto = ", /*#__PURE__*/React.createElement("code", null, "ggr_total"), " \xB7 FreeSpins = ", /*#__PURE__*/React.createElement("code", null, "valor_wins_freespin"), " \xB7 GGR = ", /*#__PURE__*/React.createElement("code", null, "ngr_total"), " (identidade validada: GGR = GGR Bruto \u2212 FreeSpins) \xB7 Bonifica\xE7\xF5es = ", /*#__PURE__*/React.createElement("code", null, "valor_bonus_saldo_real_dia"), " \u2014 ou seja, o ", /*#__PURE__*/React.createElement("strong", null, "% de bonifica\xE7\xE3o \xE9 o realizado do dia"), ", n\xE3o o \u221231,6% fixo da coluna B do arquivo. ", /*#__PURE__*/React.createElement("strong", null, "Tr\xE1fego"), " = spend da performance com os mesmos ajustes do Farol (imposto de fechamento da Meta \xD71,1383 e CPA manual de R$ 90 \xD7 FTD na Program\xE1tica, que n\xE3o tem spend rastreado).", /*#__PURE__*/React.createElement("br", null), /*#__PURE__*/React.createElement("strong", null, "Regime de caixa \u2014 Meta fora do m\xEAs:"), " a Meta \xE9 paga s\xF3 no ", /*#__PURE__*/React.createElement("strong", null, "m\xEAs seguinte"), ", ent\xE3o o spend dela ", /*#__PURE__*/React.createElement("strong", null, "n\xE3o entra no Tr\xE1fego"), " desta aba (todos os outros canais s\xE3o pagos dentro do pr\xF3prio m\xEAs e entram normal). O valor da Meta aparece como linha ", /*#__PURE__*/React.createElement("em", null, "memo"), " \u2014 vis\xEDvel, mas fora de Investimento Total, EBITDA e Resultado L\xEDquido. Esta regra vale ", /*#__PURE__*/React.createElement("strong", null, "s\xF3 aqui"), ": no Farol e nas demais abas o investimento segue por compet\xEAncia, com a Meta dentro.", /*#__PURE__*/React.createElement("br", null), /*#__PURE__*/React.createElement("strong", null, "Premissas (% do GGR):"), " Repasse Social ", fmtPct(CF_ASSUM.pctRepasse, 0), " \xB7 Impostos ", fmtPct(CF_ASSUM.pctImpostos, 1), " \xB7 Custos Vari\xE1veis ", fmtPct(CF_ASSUM.pctCustoVar, 1), " (coluna B15 do arquivo). ", /*#__PURE__*/React.createElement("strong", null, "Cr\xE9ditos de PIS/COFINS e IRPJ/CSL est\xE3o em zero"), " nesta vers\xE3o.", /*#__PURE__*/React.createElement("br", null), /*#__PURE__*/React.createElement("strong", null, "Pr\xF3-rata:"), " Custos Fixos (", cfBRL(CF_ASSUM.mensal.custosFixos), "/m\xEAs), Despesas (", cfBRL(CF_ASSUM.mensal.despesas), "), Resultado Financeiro (", cfBRL(CF_ASSUM.mensal.resultadoFin), "), Deprecia\xE7\xE3o (", cfBRL(CF_ASSUM.mensal.depreciacao), "), Influencer (", cfBRL(CF_ASSUM.mensal.influencer), ") e Creator (", cfBRL(CF_ASSUM.mensal.creator), ") entram como ", /*#__PURE__*/React.createElement("strong", null, "mensal \xF7 dias do m\xEAs"), " em cada dia; o MTD \xE9 a soma disso \u2014 \xE9 a regra \"Pro-Rata\" escrita na pr\xF3pria aba PnL do arquivo. Influencer e Creator n\xE3o existem no BQ (s\xE3o contrato), por isso ficam fixos dentro do Investimento Total.", monthsTouched.length > 1 && /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("br", null), /*#__PURE__*/React.createElement("strong", null, "Aten\xE7\xE3o:"), " a janela cruza ", monthsTouched.length, " meses \u2014 cada dia \xE9 pr\xF3-rateado pelos dias do ", /*#__PURE__*/React.createElement("em", null, "seu"), " m\xEAs, ent\xE3o o total dos fixos n\xE3o \xE9 m\xFAltiplo redondo de um m\xEAs s\xF3."), /*#__PURE__*/React.createElement("br", null), /*#__PURE__*/React.createElement("strong", null, "Escopo:"), " casa inteira \u2014 esta aba ", /*#__PURE__*/React.createElement("strong", null, "ignora o filtro de canal"), " do topo (o PnL \xE9 da empresa; ratear custo fixo, despesa e deprecia\xE7\xE3o por canal n\xE3o tem regra definida). Sinal segue o arquivo: custo \xE9 negativo.", meta && meta.dataMaxDate && /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("br", null), "Dado carregado no BQ at\xE9 ", fmtBR_(meta.dataMaxDate), " \u2014 o \xFAltimo dia da s\xE9rie costuma estar incompleto."))));
 }
 
 // ============================================================
