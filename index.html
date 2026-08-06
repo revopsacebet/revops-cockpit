@@ -7816,14 +7816,16 @@ function TabDailyCashflow({
 //   T+1 (P75) / T+2 (P90) = percentis da DISTRIBUIÇÃO das safras diárias do período. São degraus
 //     internos: "replicar no todo o que o melhor quartil/decil dos nossos próprios dias já faz".
 //   Meta BP = nível exigido pela curva calibrada na Lottu (constante do estudo, não sai do nosso dado).
-//     Só existe p/ Geral/Google/Meta — outros recortes mostram "—". Passagem não tem meta ("indicativo").
+//     Só existe p/ Geral/Google/Meta — outros recortes mostram "—". As 3 taxas de passagem têm meta
+//     DERIVADA (marcada com †) — ver o bloco MDD_DERIV logo abaixo.
 //
 // ⚠️ MATURAÇÃO: cada métrica só usa safras que já fecharam a janela dela (D14 precisa de 14 dias).
 // Sem isso as safras novas entram com numerador incompleto e afundam D7/D14/S1. A coluna "safras"
 // mostra quantos dias sobraram por linha — se vier baixa, o percentil é frágil.
 // ============================================================
+// Curva-meta do estudo (Lottu-calibrada), por escopo. null = sem meta declarada.
+// pStd/pTtd/pQtd são DERIVADAS (marcadas com † na tela), não vêm prontas do estudo — ver MDD_DERIV.
 const MDD_BP = {
-  // curva-meta do estudo (Lottu-calibrada), por escopo. null = sem meta declarada.
   Geral: {
     jogD1: 0.1111,
     rsD1: 0.2976,
@@ -7832,7 +7834,10 @@ const MDD_BP = {
     m7: 2.2307,
     m14: 2.9155,
     rsS1: 0.6256,
-    jogS1: 0.2806
+    jogS1: 0.2806,
+    pStd: 0.2642,
+    pTtd: 0.4700,
+    pQtd: 0.6289
   },
   Google: {
     jogD1: 0.1566,
@@ -7842,7 +7847,10 @@ const MDD_BP = {
     m7: 2.4569,
     m14: 3.1264,
     rsS1: 0.6119,
-    jogS1: 0.3863
+    jogS1: 0.3863,
+    pStd: 0.3664,
+    pTtd: 0.5656,
+    pQtd: 0.7588
   },
   Meta: {
     jogD1: 0.0943,
@@ -7852,9 +7860,35 @@ const MDD_BP = {
     m7: 2.0197,
     m14: 2.5162,
     rsS1: 0.5432,
-    jogS1: 0.2385
+    jogS1: 0.2385,
+    pStd: 0.2343,
+    pTtd: 0.4121,
+    pQtd: 0.5460
   }
 };
+// ------------------------------------------------------------
+// DERIVAÇÃO DAS METAS DE PASSAGEM (pedido do Luis, 06/08/2026 — antes ficavam "indicativo").
+// O estudo NÃO traz taxa de passagem: a curva Lottu só tem retenção (jogD1/rsD1), multiplicadores e
+// semanal. O benchmark também não ajuda — `benchmark_net.json` guarda valor/contagem de retenção
+// (qtd, cd1, vd1, cw1, cm0…), sem a escada de nº de depósitos. Então a meta é CONSTRUÍDA, e a régua
+// escolhida foi a própria curva Lottu, pra a coluna não misturar duas medidas:
+//   alvo_passagem = passagem realizada em JULHO × (BP jogD1 ÷ jogD1 realizado em julho)
+// Ou seja: "pra chegar no nível Lottu de retenção de JOGADORES no D1, a escada inteira do começo do
+// funil sobe na mesma proporção" — preserva a FORMA do funil e ancora numa métrica de CONTAGEM
+// (passagem é contagem; ancorar no valor R$ misturaria ticket com frequência).
+// Referência = safras de JULHO/2026 (D0+D1), medidas no BQ com a mesma definição do backend:
+//   escopo | passagem jul (STD/TTD/QTD) | jogD1 jul | BP jogD1 | fator
+//   Geral  | 22,66% · 40,31% · 53,94%   |  9,53%    | 11,11%   | 1,166
+//   Google | 29,90% · 46,16% · 61,92%   | 12,78%    | 15,66%   | 1,225
+//   Meta   | 22,37% · 39,35% · 52,14%   |  9,00%    |  9,43%   | 1,047
+// ⚠️ É meta CONSTRUÍDA sobre uma referência de 1 mês — se julho foi atípico, o alvo herda o desvio.
+// Recalibrar mudando as constantes acima (a query está em scratchpad/passagem.sql).
+// ------------------------------------------------------------
+const MDD_DERIV = {
+  pStd: 1,
+  pTtd: 1,
+  pQtd: 1
+}; // chaves de bp que levam o marcador † de "derivada"
 // mat = dias que a safra precisa ter completado p/ a métrica ser legível.
 const MDD_ROWS = [{
   key: 'pStd',
@@ -7862,7 +7896,7 @@ const MDD_ROWS = [{
   mat: 1,
   fmt: 'pct',
   of: a => a.qtd ? a.cstd / a.qtd : null,
-  bp: null,
+  bp: 'pStd',
   needs: "pass"
 }, {
   key: 'pTtd',
@@ -7870,7 +7904,7 @@ const MDD_ROWS = [{
   mat: 1,
   fmt: 'pct',
   of: a => a.cstd ? a.cttd / a.cstd : null,
-  bp: null,
+  bp: 'pTtd',
   needs: "pass"
 }, {
   key: 'pQtd',
@@ -7878,7 +7912,7 @@ const MDD_ROWS = [{
   mat: 1,
   fmt: 'pct',
   of: a => a.cttd ? a.cqtd4 / a.cttd : null,
-  bp: null,
+  bp: 'pQtd',
   needs: "pass"
 }, {
   key: 'jogD1',
@@ -8189,13 +8223,20 @@ function TabMetricasDia({
       fontWeight: 400,
       fontStyle: 'italic'
     }
-  }, "indicativo") : val(r.bpVal, r.fmt)), /*#__PURE__*/React.createElement("td", {
+  }, "indicativo") : /*#__PURE__*/React.createElement(React.Fragment, null, val(r.bpVal, r.fmt), r.bpVal != null && MDD_DERIV[r.bp] && /*#__PURE__*/React.createElement("span", {
+    style: {
+      fontWeight: 400,
+      opacity: 0.65,
+      marginLeft: 3
+    },
+    title: "Meta DERIVADA: o estudo n\xE3o traz taxa de passagem. Alvo = passagem de julho/26 \xD7 (BP de reten\xE7\xE3o de jogadores D1 \xF7 D1 realizado em julho) \u2014 sobe a escada inteira na propor\xE7\xE3o exigida pela curva, preservando a forma do funil."
+  }, "\u2020"))), /*#__PURE__*/React.createElement("td", {
     style: {
       color: r.n < 14 ? 'var(--accent-red)' : 'var(--text-muted)'
     }
   }, fmtQty(r.n))))))), /*#__PURE__*/React.createElement("div", {
     className: "ch-note"
-  }, /*#__PURE__*/React.createElement("strong", null, "Realizado"), " = agregado do per\xEDodo (soma as bases, depois divide \u2014 n\xE3o \xE9 m\xE9dia das % di\xE1rias).", /*#__PURE__*/React.createElement("strong", null, " T+1 (P75)"), " e ", /*#__PURE__*/React.createElement("strong", null, "T+2 (P90)"), " s\xE3o percentis da distribui\xE7\xE3o das ", /*#__PURE__*/React.createElement("strong", null, "safras di\xE1rias"), " do per\xEDodo, sem ponderar por volume: s\xE3o degraus internos \u2014 \u201Creplicar no todo o que o melhor quartil dos nossos pr\xF3prios dias j\xE1 faz\u201D, n\xE3o uma meta externa. ", /*#__PURE__*/React.createElement("strong", null, "Meta BP"), " \xE9 o n\xEDvel exigido pela curva calibrada na Lottu; \xE9 constante do estudo, ", /*#__PURE__*/React.createElement("strong", null, "n\xE3o deriva do nosso dado"), ", e s\xF3 existe p/ Geral, Google e Meta \u2014 em qualquer outro canal, ou com 2+ canais selecionados, fica \u201C\u2014\u201D.", ' ', /*#__PURE__*/React.createElement("strong", null, "\u26A0\uFE0F A Meta BP n\xE3o muda com Faixa nem com Grupo"), ": o estudo calibrou a curva no n\xEDvel do canal, n\xE3o por faixa de FTD nem por grupo de risco. Ao filtrar, Realizado e P75/P90 seguem o recorte, mas a meta continua sendo a do canal inteiro \u2014 use como refer\xEAncia de dire\xE7\xE3o, n\xE3o como alvo daquele segmento. As 3 taxas de passagem n\xE3o t\xEAm meta declarada (", /*#__PURE__*/React.createElement("em", null, "indicativo"), "): o estudo mostra que elas medem qualidade de aquisi\xE7\xE3o/ativa\xE7\xE3o, n\xE3o reten\xE7\xE3o de cauda (r = \u22120,28 no Geral).", ' ', /*#__PURE__*/React.createElement("strong", null, "Matura\xE7\xE3o:"), " cada linha s\xF3 usa safras que j\xE1 fecharam a janela dela \u2014 D14 exige 14 dias, S1/S0 exige 13. Por isso a coluna ", /*#__PURE__*/React.createElement("strong", null, "Safras"), " muda de linha pra linha; quando ela fica", /*#__PURE__*/React.createElement("span", {
+  }, /*#__PURE__*/React.createElement("strong", null, "Realizado"), " = agregado do per\xEDodo (soma as bases, depois divide \u2014 n\xE3o \xE9 m\xE9dia das % di\xE1rias).", /*#__PURE__*/React.createElement("strong", null, " T+1 (P75)"), " e ", /*#__PURE__*/React.createElement("strong", null, "T+2 (P90)"), " s\xE3o percentis da distribui\xE7\xE3o das ", /*#__PURE__*/React.createElement("strong", null, "safras di\xE1rias"), " do per\xEDodo, sem ponderar por volume: s\xE3o degraus internos \u2014 \u201Creplicar no todo o que o melhor quartil dos nossos pr\xF3prios dias j\xE1 faz\u201D, n\xE3o uma meta externa. ", /*#__PURE__*/React.createElement("strong", null, "Meta BP"), " \xE9 o n\xEDvel exigido pela curva calibrada na Lottu; \xE9 constante do estudo, ", /*#__PURE__*/React.createElement("strong", null, "n\xE3o deriva do nosso dado"), ", e s\xF3 existe p/ Geral, Google e Meta \u2014 em qualquer outro canal, ou com 2+ canais selecionados, fica \u201C\u2014\u201D.", ' ', /*#__PURE__*/React.createElement("strong", null, "\u26A0\uFE0F A Meta BP n\xE3o muda com Faixa nem com Grupo"), ": o estudo calibrou a curva no n\xEDvel do canal, n\xE3o por faixa de FTD nem por grupo de risco. Ao filtrar, Realizado e P75/P90 seguem o recorte, mas a meta continua sendo a do canal inteiro \u2014 use como refer\xEAncia de dire\xE7\xE3o, n\xE3o como alvo daquele segmento.", ' ', /*#__PURE__*/React.createElement("strong", null, "As 3 taxas de passagem trazem meta DERIVADA (marcada com \u2020)"), ": o estudo n\xE3o mede passagem \u2014 a curva Lottu s\xF3 tem reten\xE7\xE3o, multiplicador e semanal. O alvo \xE9 constru\xEDdo como ", /*#__PURE__*/React.createElement("em", null, "passagem realizada em julho/26 \xD7 (BP de reten\xE7\xE3o de jogadores D1 \xF7 D1 realizado em julho)"), ", ou seja, a escada inteira do come\xE7o do funil sobe na propor\xE7\xE3o que a curva exige no D1, preservando a forma do funil. Ancora em m\xE9trica de contagem (passagem \xE9 contagem \u2014 ancorar no R$ misturaria ticket com frequ\xEAncia). Fatores: Geral 1,166 \xB7 Google 1,225 \xB7 Meta 1,047. ", /*#__PURE__*/React.createElement("strong", null, "\xC9 meta constru\xEDda sobre uma refer\xEAncia de 1 m\xEAs"), " \u2014 se julho foi at\xEDpico, o alvo herda o desvio. Lembrando que a passagem mede qualidade de aquisi\xE7\xE3o/ativa\xE7\xE3o, n\xE3o reten\xE7\xE3o de cauda (r = \u22120,28 no Geral).", ' ', /*#__PURE__*/React.createElement("strong", null, "Matura\xE7\xE3o:"), " cada linha s\xF3 usa safras que j\xE1 fecharam a janela dela \u2014 D14 exige 14 dias, S1/S0 exige 13. Por isso a coluna ", /*#__PURE__*/React.createElement("strong", null, "Safras"), " muda de linha pra linha; quando ela fica", /*#__PURE__*/React.createElement("span", {
     style: {
       color: 'var(--accent-red)'
     }
