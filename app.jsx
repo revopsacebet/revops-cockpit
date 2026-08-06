@@ -2892,9 +2892,15 @@ function buildFarolSpark_(spark, chFilter) {
 
 function buildFarolGroups_(MM, f, range, useYtd, sparkByKey, scenLabel) {
   const mult = useYtd ? null : monthCloseMult_(range);
-  const tf = mult == null ? null
-    : (MM.ggr && MM.ggr.act && MM.ggrTrend && MM.ggrTrend.act != null && MM.ggr.act !== 0)
-      ? MM.ggrTrend.act / MM.ggr.act : mult;
+  // Fator de projeção: preferimos a curva do GGR (ggrTrend ÷ ggr) ao run-rate reto (mult), porque o mês não
+  // fecha linear. MAS essa razão degenera quando o GGR da janela é ~0 — e aí projeta um absurdo.
+  // 2026-08-05: o Luis viu "Depósitos R$ 1,32M · TREND R$ 3302,16M" = fator ~2.502× num dia em que o run-rate
+  // era 6,2×. Trava: a razão só vale se ficar entre 1× e 3× o run-rate; fora disso cai pro run-rate puro.
+  // Projeção não pode ser menor que o realizado (nunca <1×) nem virar ficção (>3× o proporcional).
+  const tfRaw = (MM.ggr && MM.ggr.act && MM.ggrTrend && MM.ggrTrend.act != null && MM.ggr.act !== 0)
+    ? MM.ggrTrend.act / MM.ggr.act : null;
+  const tfOk = (tfRaw != null && isFinite(tfRaw) && mult != null && tfRaw >= 1 && tfRaw <= mult * 3);
+  const tf = mult == null ? null : (tfOk ? tfRaw : mult);
   const proj = (m) => (m && tf != null && m.act != null) ? m.act * tf : null;   // valor projetado de fechamento
   // Normal: card + projeção. YTD: tira M-1 (mês anterior) e trend — só ACT vs BP acumulado.
   const dress = (m) => { if (!m) return m; if (useYtd) return { ...m, m1: null, trend: undefined }; const t = proj(m); return t != null ? { ...m, trend: t } : m; };
@@ -3121,11 +3127,9 @@ function TabFarol({ M, farol, range, ytd, ftdByRegister, chFilter, planScenarios
               ? <>YTD · acumulado desde abril · {rangeLbl} · variação vs BP</>
               : <>Visão consolidada — todos os indicadores em cards, variação vs M-1 e vs BP</>}
           </div>
-          {scenOn && activeScen !== 'bp' && (
-            <div className="subtitle" style={{ color: 'var(--accent-orange)', marginTop: 6, maxWidth: 720 }}>
-              Aquisição, Depósito M0 e receita/volume (Depósitos, GGR, Turnover, Hold, Rollover) comparados vs plano <strong>{scenMeta.label}</strong> — as luzes e os deltas mudam pra esse cenário. Receita/volume só no escopo Total da Casa (o plano RevOps não tem canal). Retenção, FreeSpins e Bonificação seguem a meta fixa (Orçado).
-            </div>
-          )}
+          {/* 2026-08-05: removido o aviso laranja de cenário. Ele só aparecia quando o cenário ativo não era
+              o Orçado; com o Forecast virando padrão passou a ficar permanente na tela. O prefixo de cada
+              card já diz o cenário ("Forecast R$ …"), então o bloco era redundante. */}
           {active && (
             <div className="subtitle" style={{ color: 'var(--accent-yellow)', marginTop: 6, maxWidth: 720 }}>
               Aquisição normalizada por <strong>data de cadastro</strong>: FTD Amount, ROAS FTD, CAC e Ticket contam FTDs de quem <em>registrou</em> na janela (não de quem deu FTD). ⚠️ o mês corrente é uma coorte <strong>maturando</strong> — quem registrou e ainda não deu FTD não conta, então o CAC começa alto e cai conforme matura (~30–45d).

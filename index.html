@@ -5930,7 +5930,14 @@ function buildFarolSpark_(spark, chFilter) {
 }
 function buildFarolGroups_(MM, f, range, useYtd, sparkByKey, scenLabel) {
   const mult = useYtd ? null : monthCloseMult_(range);
-  const tf = mult == null ? null : MM.ggr && MM.ggr.act && MM.ggrTrend && MM.ggrTrend.act != null && MM.ggr.act !== 0 ? MM.ggrTrend.act / MM.ggr.act : mult;
+  // Fator de projeção: preferimos a curva do GGR (ggrTrend ÷ ggr) ao run-rate reto (mult), porque o mês não
+  // fecha linear. MAS essa razão degenera quando o GGR da janela é ~0 — e aí projeta um absurdo.
+  // 2026-08-05: o Luis viu "Depósitos R$ 1,32M · TREND R$ 3302,16M" = fator ~2.502× num dia em que o run-rate
+  // era 6,2×. Trava: a razão só vale se ficar entre 1× e 3× o run-rate; fora disso cai pro run-rate puro.
+  // Projeção não pode ser menor que o realizado (nunca <1×) nem virar ficção (>3× o proporcional).
+  const tfRaw = MM.ggr && MM.ggr.act && MM.ggrTrend && MM.ggrTrend.act != null && MM.ggr.act !== 0 ? MM.ggrTrend.act / MM.ggr.act : null;
+  const tfOk = tfRaw != null && isFinite(tfRaw) && mult != null && tfRaw >= 1 && tfRaw <= mult * 3;
+  const tf = mult == null ? null : tfOk ? tfRaw : mult;
   const proj = m => m && tf != null && m.act != null ? m.act * tf : null; // valor projetado de fechamento
   // Normal: card + projeção. YTD: tira M-1 (mês anterior) e trend — só ACT vs BP acumulado.
   const dress = m => {
@@ -6295,14 +6302,7 @@ function TabFarol({
     className: "tab-header"
   }, /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("h1", null, "Farol"), /*#__PURE__*/React.createElement("div", {
     className: "subtitle"
-  }, useYtd ? /*#__PURE__*/React.createElement(React.Fragment, null, "YTD \xB7 acumulado desde abril \xB7 ", rangeLbl, " \xB7 varia\xE7\xE3o vs BP") : /*#__PURE__*/React.createElement(React.Fragment, null, "Vis\xE3o consolidada \u2014 todos os indicadores em cards, varia\xE7\xE3o vs M-1 e vs BP")), scenOn && activeScen !== 'bp' && /*#__PURE__*/React.createElement("div", {
-    className: "subtitle",
-    style: {
-      color: 'var(--accent-orange)',
-      marginTop: 6,
-      maxWidth: 720
-    }
-  }, "Aquisi\xE7\xE3o, Dep\xF3sito M0 e receita/volume (Dep\xF3sitos, GGR, Turnover, Hold, Rollover) comparados vs plano ", /*#__PURE__*/React.createElement("strong", null, scenMeta.label), " \u2014 as luzes e os deltas mudam pra esse cen\xE1rio. Receita/volume s\xF3 no escopo Total da Casa (o plano RevOps n\xE3o tem canal). Reten\xE7\xE3o, FreeSpins e Bonifica\xE7\xE3o seguem a meta fixa (Or\xE7ado)."), active && /*#__PURE__*/React.createElement("div", {
+  }, useYtd ? /*#__PURE__*/React.createElement(React.Fragment, null, "YTD \xB7 acumulado desde abril \xB7 ", rangeLbl, " \xB7 varia\xE7\xE3o vs BP") : /*#__PURE__*/React.createElement(React.Fragment, null, "Vis\xE3o consolidada \u2014 todos os indicadores em cards, varia\xE7\xE3o vs M-1 e vs BP")), active && /*#__PURE__*/React.createElement("div", {
     className: "subtitle",
     style: {
       color: 'var(--accent-yellow)',
