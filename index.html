@@ -6257,10 +6257,12 @@ function TabFarol({
     f: farol || {}
   };
   // Cenário do plano (BP/Conservador/Rolling): re-anchora o BP dos cards de aquisição + Dep M0 (payload.planScenarios).
-  // ⚠️ NÃO persiste (era usePersistedState): o Farol SEMPRE abre no BP/meta (padrão seguro). O switcher muda no
-  // in-session, mas todo load/refresh volta pro BP — assim ninguém entra já carregado num cenário restrito por
-  // resíduo de sessão anterior (defesa em profundidade, além do gate de acesso do activeScen abaixo).
-  const [scen, setScen] = React.useState('bp');
+  // ⚠️ NÃO persiste (era usePersistedState): todo load/refresh volta pro padrão, então ninguém entra já
+  // carregado num cenário restrito por resíduo de sessão anterior (defesa em profundidade, além do gate de
+  // acesso do activeScen abaixo, que rebaixa pro firstScen permitido se o padrão não for liberado p/ o user).
+  // 2026-08-05: padrão passou de 'bp' p/ 'rolling' (Forecast) a pedido do Luis — o Orçado deixou de ser
+  // atualizado pelo time e virou referência histórica; o Forecast é o que reflete a operação.
+  const [scen, setScen] = React.useState('rolling');
   // Cenários que ESTE usuário pode ver (allowlist "por acesso" — igual às abas). Admin vê todos; null/vazio = todos.
   // É gate de UI (esconde o cenário do switcher); o payload ainda traz os 3, mas o usuário não os seleciona.
   const isAdminU = !!(user && user.admin);
