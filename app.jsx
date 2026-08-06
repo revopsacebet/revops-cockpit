@@ -3054,7 +3054,23 @@ function applyScenarioBp_(M, farol, scenData, chFilter) {
   return { M: newM, farol: newFarol };
 }
 
-function TabFarol({ M, farol, range, ytd, ftdByRegister, chFilter, planScenarios, farolSpark, user }) {
+// Metas de razão do FORECAST — vêm da aba Projection_Revenue (payload.planFcRatios) e substituem o .bp de
+// Turnover/Rollover/Hold/FreeSpins-Dep/Bonif-Dep. SÓ no cenário Forecast: Orçado e Conservador continuam nas
+// constantes fixas (decisão do Luis 2026-08-05). Existe porque a DB Plan_RevOps discorda da Projection_Revenue
+// no Turnover (ago/26: 70,49M vs 69,11M — a RevOps ainda multiplica por rollover 5,10 em vez de 5,00).
+function applyFcRatios_(M, farol, fc) {
+  if (!fc) return { M: M, farol: farol };
+  const set = (o, k, v) => (o && o[k] && v != null) ? Object.assign({}, o, { [k]: Object.assign({}, o[k], { bp: v }) }) : o;
+  let MM = M, ff = farol;
+  MM = set(MM, 'turnover', fc.turnover);
+  MM = set(MM, 'rollover', fc.rollover);
+  MM = set(MM, 'hold', fc.hold);
+  ff = set(ff, 'freespinDep', fc.freespinDep);
+  ff = set(ff, 'bonusDep', fc.bonusDep);
+  return { M: MM, farol: ff };
+}
+
+function TabFarol({ M, farol, range, ytd, ftdByRegister, chFilter, planScenarios, farolSpark, planFcRatios, user }) {
   // YTD é preset GLOBAL de data: a janela (appliedRange) já é abril→ontem, então usa o M/farol normais.
   // Só muda a comparação: SÓ vs BP — tira M-1 (mesma janela 1 mês atrás) e a projeção de fechamento, que
   // não fazem sentido num acumulado de vários meses.
@@ -3081,7 +3097,9 @@ function TabFarol({ M, farol, range, ytd, ftdByRegister, chFilter, planScenarios
   const firstScen = (visCenarios.find(c => scenAvail[c.id]) || visCenarios[0] || CENARIOS[0]).id;   // default respeita o acesso
   const activeScen = (scenAllowed(scen) && scenAvail[scen]) ? scen : firstScen;   // cenário persistido só vale se permitido
   const scenOn = hasScen && !!(planScenarios && planScenarios[activeScen]);
-  const ov = scenOn ? applyScenarioBp_(src.MM, src.f, planScenarios[activeScen], chFilter) : { M: src.MM, farol: src.f };
+  const ov0 = scenOn ? applyScenarioBp_(src.MM, src.f, planScenarios[activeScen], chFilter) : { M: src.MM, farol: src.f };
+  // Forecast: as metas de razão vêm da Projection_Revenue, não da DB Plan_RevOps (as duas divergem no Turnover).
+  const ov = (activeScen === 'rolling') ? applyFcRatios_(ov0.M, ov0.farol, planFcRatios) : ov0;
   // Série das 4 semanas fechadas por KPI (ACT — independe de cenário/BP), reescopada no chFilter. Nulls onde não há dado.
   const sparkByKey = React.useMemo(() => buildFarolSpark_(farolSpark, chFilter), [farolSpark, chFilter]);
   const scenMeta = CENARIOS.find(c => c.id === activeScen) || CENARIOS[0];
@@ -4979,6 +4997,7 @@ function App({ user, onLogout, config }) {
     bp: MOCK_BP,
     planScenarios: null,       // plano de aquisição 3 cenários {bp,conserv,rolling} (aba DB Plan_Growth Mkt) — switch do Farol (só live/backend v42+)
     farolSpark: null,          // últimas 4 semanas fechadas por KPI (semana × canal) — linha de tendência nos hero cards do Farol (só live/backend v50+)
+    planFcRatios: null,        // metas de Turnover/Rollover/Hold/FreeSpins-Dep do FORECAST (aba Projection_Revenue) — backend v64+
     isLive: false,
     retFaixaLive: false,   // o payload trouxe retencaoFaixa de verdade? false = tela mostrando MOCK
     benchmarkNet: null,        // benchmark_net.json (Apostou + Lottu, faixa_diaria com saque/net)
@@ -5029,6 +5048,7 @@ function App({ user, onLogout, config }) {
           bp: payload.bp || null,
           planScenarios: payload.planScenarios || null,
           farolSpark: payload.farolSpark || null,
+          planFcRatios: payload.planFcRatios || null,
           isLive: true,
         }));
       })
@@ -5157,6 +5177,7 @@ function App({ user, onLogout, config }) {
     ftdByRegister: state.ftdByRegister,  // FTDs por canal por data de cadastro — toggle no Farol (Aquisição)
     planScenarios: state.planScenarios,  // plano 3 cenários (BP/Conservador/Rolling) — switch de cenário do Farol
     farolSpark: state.farolSpark,  // últimas 4 semanas fechadas por KPI — linha de tendência nos hero cards do Farol
+    planFcRatios: state.planFcRatios,  // metas de razão do Forecast (Projection_Revenue)
     ytd,   // YTD ativo (preset global): Farol/Monthly Close suprimem M-1/trend e relabelam (a janela já é abril→ontem via appliedRange)
     allTabs: TABS, hiddenTabs, onSetTabHidden: setTabHidden,   // controle de visibilidade (Segurança)
   };
