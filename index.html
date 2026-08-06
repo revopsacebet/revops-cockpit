@@ -5929,15 +5929,14 @@ function buildFarolSpark_(spark, chFilter) {
   };
 }
 function buildFarolGroups_(MM, f, range, useYtd, sparkByKey, scenLabel) {
-  const mult = useYtd ? null : monthCloseMult_(range);
-  // Fator de projeção: preferimos a curva do GGR (ggrTrend ÷ ggr) ao run-rate reto (mult), porque o mês não
-  // fecha linear. MAS essa razão degenera quando o GGR da janela é ~0 — e aí projeta um absurdo.
-  // 2026-08-05: o Luis viu "Depósitos R$ 1,32M · TREND R$ 3302,16M" = fator ~2.502× num dia em que o run-rate
-  // era 6,2×. Trava: a razão só vale se ficar entre 1× e 3× o run-rate; fora disso cai pro run-rate puro.
-  // Projeção não pode ser menor que o realizado (nunca <1×) nem virar ficção (>3× o proporcional).
-  const tfRaw = MM.ggr && MM.ggr.act && MM.ggrTrend && MM.ggrTrend.act != null && MM.ggr.act !== 0 ? MM.ggrTrend.act / MM.ggr.act : null;
-  const tfOk = tfRaw != null && isFinite(tfRaw) && mult != null && tfRaw >= 1 && tfRaw <= mult * 3;
-  const tf = mult == null ? null : tfOk ? tfRaw : mult;
+  // Fator de projeção de fechamento = run-rate puro (dias do mês ÷ dias decorridos).
+  // ⚠️ 2026-08-05: ANTES o fator era `ggrTrend ÷ ggr`, na crença de que projetava pela "curva do GGR" em vez
+  // de reta. Não projetava: o backend calcula `ggrTrend = mtd.ngr × (daysInMonth / daysElapsed)`, então a
+  // razão SÓ PODE dar o próprio run-rate — zero informação a mais. E quebrava com filtro de canal/escopo:
+  // `ggr.act` vira o GGR filtrado (pequeno) e `ggrTrend` continua house-level (grande), então a razão
+  // explodia. Foi assim que "Depósitos R$ 1,32M" virou "TREND R$ 3302,16M" (fator 2.502× onde o run-rate
+  // era 6,2×). O trend NÃO é balizado em BP nem em Forecast — é extrapolação do realizado, só isso.
+  const tf = useYtd ? null : monthCloseMult_(range);
   const proj = m => m && tf != null && m.act != null ? m.act * tf : null; // valor projetado de fechamento
   // Normal: card + projeção. YTD: tira M-1 (mês anterior) e trend — só ACT vs BP acumulado.
   const dress = m => {
