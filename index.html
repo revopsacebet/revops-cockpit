@@ -6213,7 +6213,9 @@ function applyFcRatios_(M, farol, fc) {
     M: M,
     farol: farol
   };
-  const set = (o, k, v) => o && o[k] && v != null ? Object.assign({}, o, {
+  // v > 0 de propósito: a partir de set/26 a linha FreeSpins/Dep está VAZIA na planilha e chega como 0.
+  // Meta 0% deixaria o card vermelho por artefato — nesse caso mantém a constante em vez de mentir.
+  const set = (o, k, v) => o && o[k] && v != null && v > 0 ? Object.assign({}, o, {
     [k]: Object.assign({}, o[k], {
       bp: v
     })

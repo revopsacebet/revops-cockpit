@@ -3060,7 +3060,9 @@ function applyScenarioBp_(M, farol, scenData, chFilter) {
 // no Turnover (ago/26: 70,49M vs 69,11M — a RevOps ainda multiplica por rollover 5,10 em vez de 5,00).
 function applyFcRatios_(M, farol, fc) {
   if (!fc) return { M: M, farol: farol };
-  const set = (o, k, v) => (o && o[k] && v != null) ? Object.assign({}, o, { [k]: Object.assign({}, o[k], { bp: v }) }) : o;
+  // v > 0 de propósito: a partir de set/26 a linha FreeSpins/Dep está VAZIA na planilha e chega como 0.
+  // Meta 0% deixaria o card vermelho por artefato — nesse caso mantém a constante em vez de mentir.
+  const set = (o, k, v) => (o && o[k] && v != null && v > 0) ? Object.assign({}, o, { [k]: Object.assign({}, o[k], { bp: v }) }) : o;
   let MM = M, ff = farol;
   MM = set(MM, 'turnover', fc.turnover);
   MM = set(MM, 'rollover', fc.rollover);
