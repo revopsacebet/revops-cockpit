@@ -2934,7 +2934,7 @@ function buildFarolGroups_(MM, f, range, useYtd, sparkByKey, scenLabel) {
   return [
     { title: 'Aquisição', cards: [bl(ws(dress(MM.invest), 'invest'), scenL), bl(ws(dress(MM.ftdAmount), 'ftdAmount'), scenL), bl(ws(roasFtdCard, 'roasFtd'), scenL), bl(ws(dressPlain(f.roasDepD0), 'roasDepD0'), scenL), bl(ws(dressPlain(f.cac), 'cac'), scenL), bl(ws(dressPlain(f.ticketFtd), 'ticketFtd'), scenL)] },
     { title: 'Depósito M0', cards: [bl(dress(MM.depM0Total), scenL), bl(roasDepM0Card, scenL)] },
-    { title: 'Volume & GGR', cards: [bl(ws(dress(MM.depTotal), 'depTotal'), scenL), bl(ws(dress(turnoverCard), 'turnover'), scenL), bl(ws(dress(MM.ggr), 'ggr'), scenL), bl(ws(dressPlain(MM.ggrPerDep), 'ggrPerDep'), scenL), bl(ws(dressPlain(holdCard), 'hold'), scenL), bl(ws(rolloverCard, 'rollover'), scenL), bl(ws(dressPlain(f.freespinDep), 'freespinDep'), SCEN_BP_LABEL), bl(ws(dressPlain(f.bonusDep), 'bonusDep'), SCEN_BP_LABEL)] },
+    { title: 'Volume & GGR', cards: [bl(ws(dress(MM.depTotal), 'depTotal'), scenL), bl(ws(dress(turnoverCard), 'turnover'), scenL), bl(ws(dress(MM.ggr), 'ggr'), scenL), bl(ws(dressPlain(MM.ggrPerDep), 'ggrPerDep'), scenL), bl(ws(dressPlain(holdCard), 'hold'), scenL), bl(ws(rolloverCard, 'rollover'), scenL), bl(ws(dressPlain(f.freespinDep), 'freespinDep'), (f.freespinDep && f.freespinDep.fcBp) ? scenL : SCEN_BP_LABEL), bl(ws(dressPlain(f.bonusDep), 'bonusDep'), (f.bonusDep && f.bonusDep.fcBp) ? scenL : SCEN_BP_LABEL)] },
     // Retenção: Depósito (view de coorte, meta fixa do plano) + GGR (ngr net, mesma fórmula/janela, SEM meta).
     // ⚠️ o Depósito M3+ usa o residual da FAROL; o GGR M3+ é ratio de coorte puro — ver tooltip/nota.
     { title: 'Retenção', cards: [
@@ -3066,7 +3066,8 @@ function applyFcRatios_(M, farol, fc) {
   if (!fc) return { M: M, farol: farol };
   // v > 0 de propósito: a partir de set/26 a linha FreeSpins/Dep está VAZIA na planilha e chega como 0.
   // Meta 0% deixaria o card vermelho por artefato — nesse caso mantém a constante em vez de mentir.
-  const set = (o, k, v) => (o && o[k] && v != null && v > 0) ? Object.assign({}, o, { [k]: Object.assign({}, o[k], { bp: v }) }) : o;
+  // fcBp marca que a meta veio do Forecast — o rótulo do card segue isso (senão diria "Orçado" com número do FC).
+  const set = (o, k, v) => (o && o[k] && v != null && v > 0) ? Object.assign({}, o, { [k]: Object.assign({}, o[k], { bp: v, fcBp: true }) }) : o;
   let MM = M, ff = farol;
   MM = set(MM, 'turnover', fc.turnover);
   MM = set(MM, 'rollover', fc.rollover);
