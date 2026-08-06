@@ -183,7 +183,33 @@
   main {
     padding: 40px 32px 60px;
     max-width: 1600px; margin: 0 auto;
+    position: relative;             /* âncora do .gate-overlay */
   }
+  /* Portão de dado oficial: enquanto o payload não chega (ou falhou), o conteúdo fica borrado e
+     inerte, com uma engrenagem no meio. Evita que alguém leia o MOCK — ou o número do período
+     anterior — como se fosse o dado real. Ver `aguardando` no app.jsx. */
+  .gate-blur {
+    filter: blur(6px) saturate(.6);
+    pointer-events: none; user-select: none;
+    transition: filter .18s ease;
+  }
+  .gate-overlay {
+    position: fixed; inset: 0; z-index: 60;   /* fixed: fica no meio da TELA, não do <main>, que é
+                                                 alto demais e jogaria a engrenagem lá pra baixo */
+    display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px;
+    background: rgba(8,8,8,.35);
+    pointer-events: none;                     /* só o botão de retry recebe clique */
+  }
+  /* .apply-btn tem `margin-left: auto` (no slicer ele é empurrado para a direita) — dentro do
+     overlay isso jogava o botão para o canto em vez de centralizar. */
+  .gate-overlay .apply-btn { pointer-events: auto; margin: 6px auto 0; align-self: center; }
+  .gate-gear { width: 54px; height: 54px; color: var(--accent-orange); opacity: .95; }
+  .gate-gear.spin { animation: gate-spin 2.4s linear infinite; transform-origin: 50% 50%; }
+  @keyframes gate-spin { to { transform: rotate(360deg); } }
+  .gate-msg { font-size: 14px; font-weight: 600; color: #e8e8e8; letter-spacing: .2px; }
+  .gate-msg.gate-err { color: var(--accent-yellow); }
+  .gate-sub { font-size: 12px; color: var(--text-muted); }
+  @media (prefers-reduced-motion: reduce) { .gate-gear.spin { animation-duration: 6s; } }
   .tab-header {
     margin-bottom: 32px; display: flex;
     align-items: baseline; justify-content: space-between; gap: 12px;
@@ -9914,6 +9940,14 @@ function App({
     hiddenTabs,
     onSetTabHidden: setTabHidden // controle de visibilidade (Segurança)
   };
+
+  // Enquanto o payload oficial não chega, a tela mostra MOCK (na 1ª carga) ou o dado do período
+  // ANTERIOR (ao trocar o slicer) — número que parece real e não é. Nesse intervalo o conteúdo fica
+  // borrado e não-clicável, com uma engrenagem no meio (pedido do Luis, 06/08/2026).
+  // ⚠️ Em ERRO também mantém o borrado: se desborrasse, o mock ficaria nítido na tela justamente
+  // quando não há dado oficial — que é o caso pior. O overlay troca a engrenagem por "tentar de novo".
+  // Sem ENDPOINT_URL (modo mock/QA local) nunca borra, senão a tela ficaria travada para sempre.
+  const aguardando = !!ENDPOINT_URL && (state.loading || !state.isLive || !!state.error);
   return /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("header", {
     className: "topbar"
   }, /*#__PURE__*/React.createElement("div", {
@@ -10030,7 +10064,9 @@ function App({
     key: t.id,
     className: `tab-btn ${tabId === t.id ? 'active' : ''}`,
     onClick: () => setTabId(t.id)
-  }, t.label))), /*#__PURE__*/React.createElement("main", null, visibleTabs.filter(t => visitedTabs[t.id] || t.id === activeTabId).map(t => {
+  }, t.label))), /*#__PURE__*/React.createElement("main", null, /*#__PURE__*/React.createElement("div", {
+    className: aguardando ? 'gate-blur' : undefined
+  }, visibleTabs.filter(t => visitedTabs[t.id] || t.id === activeTabId).map(t => {
     const Comp = t.component;
     return /*#__PURE__*/React.createElement("div", {
       key: t.id,
@@ -10056,7 +10092,39 @@ function App({
     style: {
       marginTop: 8
     }
-  }, state.isLive ? /*#__PURE__*/React.createElement(React.Fragment, null, "Live \xB7 dados at\xE9 ", state.meta.dataMaxDate ? state.meta.dataMaxDate.slice(8, 10) + '/' + state.meta.dataMaxDate.slice(5, 7) : '—', " \xB7 gerado em ", state.meta.generatedAt ? new Date(state.meta.generatedAt).toLocaleString('pt-BR') : '—') : /*#__PURE__*/React.createElement(React.Fragment, null, "Snapshot ", state.meta.refDate, " \xB7 Mock data \xB7 Configure ", /*#__PURE__*/React.createElement("code", null, "ENDPOINT_URL"), " para ir live")))));
+  }, state.isLive ? /*#__PURE__*/React.createElement(React.Fragment, null, "Live \xB7 dados at\xE9 ", state.meta.dataMaxDate ? state.meta.dataMaxDate.slice(8, 10) + '/' + state.meta.dataMaxDate.slice(5, 7) : '—', " \xB7 gerado em ", state.meta.generatedAt ? new Date(state.meta.generatedAt).toLocaleString('pt-BR') : '—') : /*#__PURE__*/React.createElement(React.Fragment, null, "Snapshot ", state.meta.refDate, " \xB7 Mock data \xB7 Configure ", /*#__PURE__*/React.createElement("code", null, "ENDPOINT_URL"), " para ir live")))), aguardando && /*#__PURE__*/React.createElement("div", {
+    className: "gate-overlay",
+    role: "status",
+    "aria-live": "polite"
+  }, /*#__PURE__*/React.createElement("svg", {
+    className: `gate-gear${state.error ? '' : ' spin'}`,
+    viewBox: "0 0 24 24",
+    fill: "none",
+    stroke: "currentColor",
+    strokeWidth: "1.6",
+    strokeLinecap: "round",
+    strokeLinejoin: "round"
+  }, /*#__PURE__*/React.createElement("circle", {
+    cx: "12",
+    cy: "12",
+    r: "3.2"
+  }), /*#__PURE__*/React.createElement("path", {
+    d: "M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.6a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9v.09a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"
+  })), state.error ? /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("div", {
+    className: "gate-msg gate-err"
+  }, "N\xE3o foi poss\xEDvel carregar os n\xFAmeros oficiais"), /*#__PURE__*/React.createElement("div", {
+    className: "gate-sub",
+    title: state.error
+  }, "O que est\xE1 por baixo \xE9 dado provis\xF3rio \u2014 n\xE3o use."), /*#__PURE__*/React.createElement("button", {
+    className: "apply-btn",
+    onClick: () => loadData({
+      bustCache: true
+    })
+  }, "Tentar de novo")) : /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("div", {
+    className: "gate-msg"
+  }, "Carregando os n\xFAmeros oficiais\u2026"), /*#__PURE__*/React.createElement("div", {
+    className: "gate-sub"
+  }, fmtBR_(appliedRange.from), " \u2192 ", fmtBR_(appliedRange.to))))));
 }
 
 // ===== Tela de login (gateia o app quando há ENDPOINT_URL e não há sessão) =====

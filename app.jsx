@@ -5271,6 +5271,14 @@ function App({ user, onLogout, config }) {
     allTabs: TABS, hiddenTabs, onSetTabHidden: setTabHidden,   // controle de visibilidade (Segurança)
   };
 
+  // Enquanto o payload oficial não chega, a tela mostra MOCK (na 1ª carga) ou o dado do período
+  // ANTERIOR (ao trocar o slicer) — número que parece real e não é. Nesse intervalo o conteúdo fica
+  // borrado e não-clicável, com uma engrenagem no meio (pedido do Luis, 06/08/2026).
+  // ⚠️ Em ERRO também mantém o borrado: se desborrasse, o mock ficaria nítido na tela justamente
+  // quando não há dado oficial — que é o caso pior. O overlay troca a engrenagem por "tentar de novo".
+  // Sem ENDPOINT_URL (modo mock/QA local) nunca borra, senão a tela ficaria travada para sempre.
+  const aguardando = !!ENDPOINT_URL && (state.loading || !state.isLive || !!state.error);
+
   return (
     <React.Fragment>
       <header className="topbar">
@@ -5378,6 +5386,7 @@ function App({ user, onLogout, config }) {
         ))}
       </nav>
       <main>
+        <div className={aguardando ? 'gate-blur' : undefined}>
         {visibleTabs.filter(t => visitedTabs[t.id] || t.id === activeTabId).map(t => {
           const Comp = t.component;
           return (
@@ -5397,6 +5406,28 @@ function App({ user, onLogout, config }) {
             }
           </div>
         </div>
+        </div>
+        {aguardando && (
+          <div className="gate-overlay" role="status" aria-live="polite">
+            <svg className={`gate-gear${state.error ? '' : ' spin'}`} viewBox="0 0 24 24" fill="none"
+                 stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
+              <circle cx="12" cy="12" r="3.2" />
+              <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.6a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9v.09a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
+            </svg>
+            {state.error ? (
+              <React.Fragment>
+                <div className="gate-msg gate-err">Não foi possível carregar os números oficiais</div>
+                <div className="gate-sub" title={state.error}>O que está por baixo é dado provisório — não use.</div>
+                <button className="apply-btn" onClick={() => loadData({ bustCache: true })}>Tentar de novo</button>
+              </React.Fragment>
+            ) : (
+              <React.Fragment>
+                <div className="gate-msg">Carregando os números oficiais…</div>
+                <div className="gate-sub">{fmtBR_(appliedRange.from)} → {fmtBR_(appliedRange.to)}</div>
+              </React.Fragment>
+            )}
+          </div>
+        )}
       </main>
     </React.Fragment>
   );
