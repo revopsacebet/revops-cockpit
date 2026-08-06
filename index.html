@@ -8430,9 +8430,15 @@ function buildFarolMetrics_(M, comp, channels, ggrChannels, bp, filter, ggrSafra
   const fqM = sumComp('mtd', 'ftdQty');
   const ftdQtyM = fqM != null ? fqM : chFtdQty; // live: componentes (mtd) · mock: channels
   const ftdQtyL = sumComp('lm', 'ftdQty'); // M-1 só no live
-  const depD0M = (channels || []).filter(c => inSel(c.channel) && c.spend != null).reduce((a, c) => a + (c.depD0 || 0), 0) || null;
+  // 2026-08-05: caiu o filtro `c.spend != null` daqui. Ele prendia o Dep D0 aos canais PAGOS mesmo em
+  // "Total Casa", então o slicer não mexia no ROAS Dep D0 — 0,47x nos dois escopos — enquanto a sparkline
+  // (buildFarolSpark_) respeitava o escopo e mostrava 0,75x. Card e bolinha discordavam por isso, não por
+  // divergência de fonte: cohort_ftd_base e performance_daily batem no centavo quando restritas aos mesmos
+  // canais. Agora o numerador segue o slicer e o denominador segue sendo só mídia paga (investimento
+  // orgânico não existe) — em Growth dá ROAS direto, em Total Casa dá ROAS blended, que é o ponto do slicer.
+  const depD0M = (channels || []).filter(c => inSel(c.channel)).reduce((a, c) => a + (c.depD0 || 0), 0) || null;
   // M-1 (mesma janela, mês anterior) de Dep D0 por canal — backend expõe depD0Lm em channels (CACHE v28+).
-  const depD0Lm = (channels || []).filter(c => inSel(c.channel) && c.spend != null).reduce((a, c) => a + (c.depD0Lm || 0), 0) || null;
+  const depD0Lm = (channels || []).filter(c => inSel(c.channel)).reduce((a, c) => a + (c.depD0Lm || 0), 0) || null;
   const fs = (ggrChannels || []).filter(c => inSel(c.channel)).reduce((a, c) => a + (c.freespin || 0), 0) || null;
   const bn = (ggrChannels || []).filter(c => inSel(c.channel)).reduce((a, c) => a + (c.bonus || 0), 0) || null;
   // M-1 (mesma janela, mês anterior) de freespin/bonus por canal — backend expõe freespinLm/bonusLm em ggrChannels (CACHE v27+).
