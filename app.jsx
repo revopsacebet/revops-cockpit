@@ -3782,11 +3782,13 @@ function TabAtivacao({ retencaoFaixa, chFilter, meta }) {
 //                     (é a regra "Pro-Rata" escrita na própria aba PnL, linha 48 do arquivo).
 //   • DESLIGADO     → Créditos de PIS/COFINS (era +10% do investimento no arquivo) e IRPJ/CSL.
 //   • META DEFASADA → Regra do Luis (06/08/2026): a Meta só é PAGA no mês SEGUINTE; os demais canais são
-//                     pagos dentro do próprio mês. Como esta aba é CAIXA, o Tráfego do mês = canais do mês
-//                     (sem Meta) + a Meta do mês ANTERIOR, esta entrando PRÓ-RATA por dia (é compromisso
-//                     mensal, não evento diário — mesma regra dos fixos). A Meta gasta NO mês aparece só
-//                     como linha memo no rodapé, fora de todo subtotal. Vale SÓ AQUI: Farol e demais abas
-//                     seguem competência, com a Meta do próprio mês dentro.
+//                     pagos dentro do próprio mês. Como esta aba é CAIXA, o investimento do mês = canais do
+//                     próprio mês (sem Meta) + a FATURA da Meta do mês ANTERIOR, esta lançada em PARCELA
+//                     ÚNICA no dia `CF_ASSUM.metaPayDay`. ⚠️ NÃO usar pró-rata aqui: fatura é evento, não
+//                     diária — com pró-rata a janela YTD (abr→05/08) reconhecia só 5/31 da Meta de julho e
+//                     o Tráfego saía R$ 1,5 M menor do que deveria. A Meta gasta NO mês aparece só como
+//                     linha memo no rodapé, fora de todo subtotal. Vale SÓ AQUI: Farol e demais abas seguem
+//                     competência, com a Meta do próprio mês dentro.
 // ESCOPO = CASA INTEIRA: NÃO segue o slicer de canal (o PnL é da empresa; ratear custo fixo/despesa/
 // depreciação por canal não tem regra definida). Sinal = o do arquivo: custo negativo.
 // ============================================================
@@ -3807,6 +3809,10 @@ const CF_ASSUM = {
     influencer:    84000.00,   // G25/H25 — INFLUENCER/PATROCINIO (contrato, não tem no BQ)
     creator:       23500.00,   // G26/H26 — CREATOR (contrato, não tem no BQ)
   },
+  // Dia do mês em que a FATURA DA META do mês anterior sai do caixa. Lançamento em PARCELA ÚNICA
+  // (não pró-rata): fatura é evento, não diária. Se o mês tiver menos dias que isso, cai no último dia.
+  // ⚠️ Trocar aqui se o débito real for outro dia — é a única constante que governa a data.
+  metaPayDay: 1,
 };
 
 // Dias do mês a que o dia ISO pertence — base do pró-rata (fev=28/29, abr=30, jul=31…).
@@ -3837,8 +3843,8 @@ const CF_LINES = [
   { k: 'custosFixos', label: 'Custos Fixos',                  src: 'fix' },
   { k: 'lbSemMkt',    label: 'Lucro Bruto s/ Marketing',      src: 'calc', strong: true },
   { k: 'investTotal', label: 'Investimento Total',            src: 'calc', strong: true },
-  { k: 'trafego',     label: 'Tráfego do mês (sem Meta)',     src: 'act',  sub: true },
-  { k: 'metaPago',    label: 'Meta do mês anterior (pgto)',   src: 'act',  sub: true },
+  { k: 'trafego',     label: 'Tráfego — canais do próprio mês', src: 'act', sub: true },
+  { k: 'metaPago',    label: 'Meta — fatura do mês anterior', src: 'act',  sub: true },
   { k: 'influencer',  label: 'Influencer / Patrocínio',       src: 'fix',  sub: true },
   { k: 'creator',     label: 'Creator',                       src: 'fix',  sub: true },
   { k: 'lbComMkt',    label: 'Lucro Bruto c/ Marketing',      src: 'calc', strong: true },
@@ -3882,8 +3888,10 @@ function cfCalcDay_(r, metaPrev) {
     custosFixos: px(A.mensal.custosFixos),
     // REGIME DE CAIXA. O que SAI no mês: os canais do próprio mês, sem Meta…
     trafego:   -((r.spend || 0) - (r.spendMeta || 0)),
-    // …mais a Meta do mês ANTERIOR, pró-rata por dia (compromisso mensal, igual aos fixos).
-    metaPago:  -(metaMes / dim),
+    // …mais a FATURA da Meta do mês anterior, em PARCELA ÚNICA no dia de pagamento.
+    // NÃO é pró-rata: fatura é evento de caixa. Com pró-rata, uma janela que termina no meio do mês
+    // só reconhecia a fração decorrida e o YTD perdia quase um mês inteiro de Meta (~R$ 1,5 M).
+    metaPago:  (Number(String(r.d).slice(8, 10)) === Math.min(A.metaPayDay, dim)) ? -metaMes : 0,
     // MEMO: a Meta gasta NESTE mês — só sai no mês que vem, então não entra em subtotal nenhum.
     // Fica visível pra ninguém achar que a Meta sumiu, e pra dar o tamanho do que vai vencer.
     metaDefer: -(r.spendMeta || 0),
@@ -3936,9 +3944,20 @@ function TabDailyCashflow({ range, meta }) {
   const pctGgr = (v) => (tot.ggr > 0 ? v / tot.ggr : null);
   // Quantos meses a janela toca — se >1, o pró-rata usa dias-do-mês diferentes por trecho (fica dito na nota).
   const monthsTouched = Array.from(new Set(days.map(x => x.d.slice(0, 7))));
-  // Meta do mês anterior: total que vence na janela e aviso quando o mês de origem não tem spend.
-  const metaPrevTot = monthsTouched.reduce((s, m) => s + ((metaPrev && metaPrev[m]) || 0), 0);
-  const metaPrevZero = monthsTouched.filter(m => !((metaPrev && metaPrev[m]) > 0)).map(m => m.slice(5, 7) + '/' + m.slice(2, 4));
+  // Meta do mês anterior. Dois avisos diferentes:
+  //  • metaPrevZero  = o mês de ORIGEM não teve spend de Meta → nada a pagar (ok, mas vale dizer).
+  //  • metaPrevFora  = a janela toca o mês mas NÃO inclui o dia do pagamento → a fatura fica de fora
+  //    (ex.: janela 02→05/08 com pagamento no dia 1º). Sem esse aviso o caixa parece bom sem motivo.
+  const mesLbl = (m) => m.slice(5, 7) + '/' + m.slice(2, 4);
+  const diasPorMes = {};
+  days.forEach(x => { (diasPorMes[x.d.slice(0, 7)] = diasPorMes[x.d.slice(0, 7)] || []).push(Number(x.d.slice(8, 10))); });
+  const metaPrevTot = tot.metaPago ? -tot.metaPago : 0;
+  const metaPrevZero = monthsTouched.filter(m => !((metaPrev && metaPrev[m]) > 0)).map(mesLbl);
+  const metaPrevFora = monthsTouched.filter(m => {
+    if (!((metaPrev && metaPrev[m]) > 0)) return false;
+    const dim = cfDaysInMonth_(m + '-01');
+    return (diasPorMes[m] || []).indexOf(Math.min(CF_ASSUM.metaPayDay, dim)) < 0;
+  }).map(m => `${mesLbl(m)} (${cfBRL(metaPrev[m])})`);
   const dim0 = days.length ? cfDaysInMonth_(days[0].d) : null;
   const proRataPct = (monthsTouched.length === 1 && dim0) ? days.length / dim0 : null;
 
@@ -4022,8 +4041,9 @@ function TabDailyCashflow({ range, meta }) {
 
         <div className="ch-note">
           <strong>Do BigQuery (realizado):</strong> GGR Bruto = <code>ggr_total</code> · FreeSpins = <code>valor_wins_freespin</code> · GGR = <code>ngr_total</code> (identidade validada: GGR = GGR Bruto − FreeSpins) · Bonificações = <code>valor_bonus_saldo_real_dia</code> — ou seja, o <strong>% de bonificação é o realizado do dia</strong>, não o −31,6% fixo da coluna B do arquivo. <strong>Tráfego</strong> = spend da performance com os mesmos ajustes do Farol (imposto de fechamento da Meta ×1,1383 e CPA manual de R$ 90 × FTD na Programática, que não tem spend rastreado).
-          <br /><strong>Regime de caixa — Meta defasada em 1 mês:</strong> a Meta é paga só no <strong>mês seguinte</strong>; os demais canais são pagos dentro do próprio mês. Então o que sai do caixa aqui é <strong>Tráfego do mês (sem Meta) + Meta do mês anterior</strong>. A Meta do mês anterior entra <strong>pró-rata por dia</strong> (é compromisso mensal, não evento diário — mesma regra dos custos fixos){metaPrevTot > 0 && <> — {cfBRL(metaPrevTot)} no mês de referência</>}. A Meta gasta <em>neste</em> mês aparece só como linha <em>memo</em> no rodapé: é o que vai vencer no mês que vem, e não entra em Investimento Total, EBITDA nem Resultado Líquido. Esta regra vale <strong>só aqui</strong>: no Farol e nas demais abas o investimento segue por competência, com a Meta do próprio mês dentro.
-          {metaPrevZero.length > 0 && <><br /><strong>Atenção:</strong> não há spend de Meta no mês anterior a {metaPrevZero.join(', ')} — a linha de pagamento fica em zero e o caixa do período aparece <em>melhor</em> do que será.</>}
+          <br /><strong>Regime de caixa — Meta defasada em 1 mês:</strong> a Meta é paga só no <strong>mês seguinte</strong>; os demais canais são pagos dentro do próprio mês. O que sai do caixa aqui é <strong>Tráfego dos canais do mês + a fatura da Meta do mês anterior</strong>{metaPrevTot > 0 && <> ({cfBRL(metaPrevTot)} na janela)</>}. A fatura entra em <strong>parcela única no dia {CF_ASSUM.metaPayDay}</strong> de cada mês, não pró-rata — fatura é evento de caixa, e o pró-rata fazia uma janela terminada no meio do mês reconhecer só a fração decorrida (numa janela YTD isso sumia com quase um mês inteiro de Meta). A Meta gasta <em>neste</em> mês aparece só como linha <em>memo</em> no rodapé: é o que vai vencer no mês que vem, fora de Investimento Total, EBITDA e Resultado Líquido. Vale <strong>só aqui</strong>: no Farol e nas demais abas o investimento segue por competência, com a Meta do próprio mês dentro.
+          {metaPrevFora.length > 0 && <><br /><strong>⚠️ Fatura fora da janela:</strong> o período toca {metaPrevFora.join(', ')} mas não inclui o dia {CF_ASSUM.metaPayDay} desse(s) mês(es) — a fatura da Meta <strong>não</strong> está no total. Amplie a janela para o início do mês para vê-la.</>}
+          {metaPrevZero.length > 0 && <><br /><strong>Atenção:</strong> não há spend de Meta no mês anterior a {metaPrevZero.join(', ')} — nada a pagar nesse(s) mês(es).</>}
           <br /><strong>Premissas (% do GGR):</strong> Repasse Social {fmtPct(CF_ASSUM.pctRepasse, 0)} · Impostos {fmtPct(CF_ASSUM.pctImpostos, 1)} · Custos Variáveis {fmtPct(CF_ASSUM.pctCustoVar, 1)} (coluna B15 do arquivo). <strong>Créditos de PIS/COFINS e IRPJ/CSL estão em zero</strong> nesta versão.
           <br /><strong>Pró-rata:</strong> Custos Fixos ({cfBRL(CF_ASSUM.mensal.custosFixos)}/mês), Despesas ({cfBRL(CF_ASSUM.mensal.despesas)}), Resultado Financeiro ({cfBRL(CF_ASSUM.mensal.resultadoFin)}), Depreciação ({cfBRL(CF_ASSUM.mensal.depreciacao)}), Influencer ({cfBRL(CF_ASSUM.mensal.influencer)}) e Creator ({cfBRL(CF_ASSUM.mensal.creator)}) entram como <strong>mensal ÷ dias do mês</strong> em cada dia; o MTD é a soma disso — é a regra "Pro-Rata" escrita na própria aba PnL do arquivo. Influencer e Creator não existem no BQ (são contrato), por isso ficam fixos dentro do Investimento Total.
           {monthsTouched.length > 1 && <><br /><strong>Atenção:</strong> a janela cruza {monthsTouched.length} meses — cada dia é pró-rateado pelos dias do <em>seu</em> mês, então o total dos fixos não é múltiplo redondo de um mês só.</>}
