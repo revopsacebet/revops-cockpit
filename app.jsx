@@ -3933,13 +3933,6 @@ function TabDailyCashflow({ range, meta }) {
           <div className="subtitle">PnL do BP no grão diário — GGR, bonificação e investimento realizados do BigQuery; percentuais e fixos pela premissa do arquivo. Casa inteira (não segue o filtro de canal).</div>
         </div>
       </div>
-      <div className="hero-grid">
-        <Hero metric={{ label: 'GGR', act: tot.ggr || null, m1: null, pctBp: null, fmt: 'brl' }} />
-        <Hero metric={{ label: 'NGR', act: tot.ngr || null, m1: null, pctBp: null, fmt: 'brl' }} />
-        <Hero metric={{ label: 'Margem de Contribuição', act: tot.mc || null, m1: null, pctBp: null, fmt: 'brl' }} />
-        <Hero metric={{ label: 'EBITDA', act: tot.ebitda || null, m1: null, pctBp: null, fmt: 'brl' }} />
-        <Hero metric={{ label: 'Resultado Líquido', act: tot.resLiq || null, m1: null, pctBp: null, fmt: 'brl' }} />
-      </div>
       <div className="support">
         <div className="support-title">
           {view === 'mtd' ? 'MTD acumulado' : 'Diário'} · {fmtBR_(range.from)} → {fmtBR_(range.to)}
