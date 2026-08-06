@@ -3781,11 +3781,12 @@ function TabAtivacao({ retencaoFaixa, chFilter, meta }) {
 //                     valor MENSAL ÷ dias do mês daquele dia. Somado na janela = pró-rata do MTD
 //                     (é a regra "Pro-Rata" escrita na própria aba PnL, linha 48 do arquivo).
 //   • DESLIGADO     → Créditos de PIS/COFINS (era +10% do investimento no arquivo) e IRPJ/CSL.
-//   • MEMO          → Meta. Regra do Luis (06/08/2026): a Meta só é PAGA no mês seguinte, os demais
-//                     canais são pagos dentro do próprio mês. Como esta aba é caixa, o spend de Meta
-//                     SAI do Tráfego e vira linha memo no rodapé — não entra em Investimento Total,
-//                     EBITDA nem Resultado Líquido. Vale SÓ AQUI: Farol e demais abas seguem competência,
-//                     com a Meta dentro (por isso o Investimento desta aba < Investimento do Farol).
+//   • META DEFASADA → Regra do Luis (06/08/2026): a Meta só é PAGA no mês SEGUINTE; os demais canais são
+//                     pagos dentro do próprio mês. Como esta aba é CAIXA, o Tráfego do mês = canais do mês
+//                     (sem Meta) + a Meta do mês ANTERIOR, esta entrando PRÓ-RATA por dia (é compromisso
+//                     mensal, não evento diário — mesma regra dos fixos). A Meta gasta NO mês aparece só
+//                     como linha memo no rodapé, fora de todo subtotal. Vale SÓ AQUI: Farol e demais abas
+//                     seguem competência, com a Meta do próprio mês dentro.
 // ESCOPO = CASA INTEIRA: NÃO segue o slicer de canal (o PnL é da empresa; ratear custo fixo/despesa/
 // depreciação por canal não tem regra definida). Sinal = o do arquivo: custo negativo.
 // ============================================================
@@ -3836,7 +3837,8 @@ const CF_LINES = [
   { k: 'custosFixos', label: 'Custos Fixos',                  src: 'fix' },
   { k: 'lbSemMkt',    label: 'Lucro Bruto s/ Marketing',      src: 'calc', strong: true },
   { k: 'investTotal', label: 'Investimento Total',            src: 'calc', strong: true },
-  { k: 'trafego',     label: 'Tráfego (sem Meta)',            src: 'act',  sub: true },
+  { k: 'trafego',     label: 'Tráfego do mês (sem Meta)',     src: 'act',  sub: true },
+  { k: 'metaPago',    label: 'Meta do mês anterior (pgto)',   src: 'act',  sub: true },
   { k: 'influencer',  label: 'Influencer / Patrocínio',       src: 'fix',  sub: true },
   { k: 'creator',     label: 'Creator',                       src: 'fix',  sub: true },
   { k: 'lbComMkt',    label: 'Lucro Bruto c/ Marketing',      src: 'calc', strong: true },
@@ -3848,7 +3850,7 @@ const CF_LINES = [
   { k: 'irpj',        label: 'IRPJ/CSL',                      src: 'off' },
   { k: 'resLiq',      label: 'Resultado Líquido',             src: 'calc', strong: true },
   // MEMO — fora de todo subtotal acima. Fica no rodapé da tabela pra não sumir da vista.
-  { k: 'metaDefer',   label: 'Meta (paga no mês seguinte)',   src: 'memo' },
+  { k: 'metaDefer',   label: 'Meta gasta no mês (sai no mês seguinte)', src: 'memo' },
 ];
 const CF_SRC_LBL = { act: 'BQ', pct: '% GGR', fix: 'pró-rata', calc: '=', off: 'off', memo: 'memo' };
 const CF_SRC_TIP = {
@@ -3861,9 +3863,11 @@ const CF_SRC_TIP = {
 };
 
 // Um dia do PnL. `r` = linha crua do backend (only=cashflow); o resto é premissa.
-function cfCalcDay_(r) {
+// `metaPrev` = mapa { 'YYYY-MM': total de Meta do mês ANTERIOR } — é o que sai do caixa naquele mês.
+function cfCalcDay_(r, metaPrev) {
   const A = CF_ASSUM;
   const dim = cfDaysInMonth_(r.d);
+  const metaMes = (metaPrev && metaPrev[String(r.d).slice(0, 7)]) || 0;
   const px = (v) => -(v / dim);            // valor mensal fixo → parcela do dia, com sinal de custo
   const ggr = r.ggr || 0;
   const o = {
@@ -3876,10 +3880,12 @@ function cfCalcDay_(r) {
     credito:   ggr * A.pctCreditos,
     custoVar:  -ggr * A.pctCustoVar,
     custosFixos: px(A.mensal.custosFixos),
-    // REGIME DE CAIXA: a Meta é paga só no mês seguinte, então ela NÃO entra no Tráfego desta aba.
-    // Os demais canais são pagos dentro do próprio mês. `metaDefer` é memória de cálculo — fica visível
-    // na tabela pra ninguém achar que a Meta sumiu, mas não é somado em nenhum subtotal.
+    // REGIME DE CAIXA. O que SAI no mês: os canais do próprio mês, sem Meta…
     trafego:   -((r.spend || 0) - (r.spendMeta || 0)),
+    // …mais a Meta do mês ANTERIOR, pró-rata por dia (compromisso mensal, igual aos fixos).
+    metaPago:  -(metaMes / dim),
+    // MEMO: a Meta gasta NESTE mês — só sai no mês que vem, então não entra em subtotal nenhum.
+    // Fica visível pra ninguém achar que a Meta sumiu, e pra dar o tamanho do que vai vencer.
     metaDefer: -(r.spendMeta || 0),
     influencer: px(A.mensal.influencer),
     creator:   px(A.mensal.creator),
@@ -3892,7 +3898,7 @@ function cfCalcDay_(r) {
   o.ngr         = o.ggr + o.bonif + o.repasse + o.imposto + o.credito;
   o.mc          = o.ngr + o.custoVar;
   o.lbSemMkt    = o.mc + o.custosFixos;
-  o.investTotal = o.trafego + o.influencer + o.creator;
+  o.investTotal = o.trafego + o.metaPago + o.influencer + o.creator;
   o.lbComMkt    = o.lbSemMkt + o.investTotal;
   o.ebitda      = o.lbComMkt + o.despesas;
   o.lai         = o.ebitda + o.resFin + o.depre;
@@ -3902,6 +3908,7 @@ function cfCalcDay_(r) {
 
 function TabDailyCashflow({ range, meta }) {
   const [rows, setRows] = React.useState(null);
+  const [metaPrev, setMetaPrev] = React.useState(null);   // { 'YYYY-MM': Meta do mês anterior }
   const [loading, setLoading] = React.useState(!!ENDPOINT_URL);
   const [error, setError] = React.useState(null);
   const [view, setView] = usePersistedState('rvops:cfView', 'mtd');   // 'mtd' | 'diario'
@@ -3911,7 +3918,7 @@ function TabDailyCashflow({ range, meta }) {
     let live = true; setLoading(true); setError(null);
     fetch(`${ENDPOINT_URL}?${authParam_()}&only=cashflow&from=${range.from}&to=${range.to}`)
       .then(r => r.ok ? r.json() : Promise.reject(new Error('HTTP ' + r.status)))
-      .then(j => { if (!live) return; if (j.error) throw new Error(j.error); setRows(j.cashflowDaily || []); setLoading(false); })
+      .then(j => { if (!live) return; if (j.error) throw new Error(j.error); setRows(j.cashflowDaily || []); setMetaPrev(j.cashflowMetaPrev || {}); setLoading(false); })
       .catch(e => { if (live) { setError(String(e.message || e)); setLoading(false); } });
     return () => { live = false; };
   }, [range && range.from, range && range.to]);
@@ -3919,7 +3926,7 @@ function TabDailyCashflow({ range, meta }) {
   if (!ENDPOINT_URL) return (<div className="tab-header"><div><h1>Daily Cashflow</h1><div className="subtitle">Disponível só no modo live (BigQuery).</div></div></div>);
 
   const src = rows || [];
-  const days = src.map(r => ({ d: r.d, v: cfCalcDay_(r) }));
+  const days = src.map(r => ({ d: r.d, v: cfCalcDay_(r, metaPrev) }));
   // MTD = soma dos dias. Os fixos entram já pró-rateados por dia → a soma É o pró-rata da janela.
   const tot = {};
   CF_LINES.forEach(l => { tot[l.k] = 0; });
@@ -3929,6 +3936,9 @@ function TabDailyCashflow({ range, meta }) {
   const pctGgr = (v) => (tot.ggr > 0 ? v / tot.ggr : null);
   // Quantos meses a janela toca — se >1, o pró-rata usa dias-do-mês diferentes por trecho (fica dito na nota).
   const monthsTouched = Array.from(new Set(days.map(x => x.d.slice(0, 7))));
+  // Meta do mês anterior: total que vence na janela e aviso quando o mês de origem não tem spend.
+  const metaPrevTot = monthsTouched.reduce((s, m) => s + ((metaPrev && metaPrev[m]) || 0), 0);
+  const metaPrevZero = monthsTouched.filter(m => !((metaPrev && metaPrev[m]) > 0)).map(m => m.slice(5, 7) + '/' + m.slice(2, 4));
   const dim0 = days.length ? cfDaysInMonth_(days[0].d) : null;
   const proRataPct = (monthsTouched.length === 1 && dim0) ? days.length / dim0 : null;
 
@@ -4012,7 +4022,8 @@ function TabDailyCashflow({ range, meta }) {
 
         <div className="ch-note">
           <strong>Do BigQuery (realizado):</strong> GGR Bruto = <code>ggr_total</code> · FreeSpins = <code>valor_wins_freespin</code> · GGR = <code>ngr_total</code> (identidade validada: GGR = GGR Bruto − FreeSpins) · Bonificações = <code>valor_bonus_saldo_real_dia</code> — ou seja, o <strong>% de bonificação é o realizado do dia</strong>, não o −31,6% fixo da coluna B do arquivo. <strong>Tráfego</strong> = spend da performance com os mesmos ajustes do Farol (imposto de fechamento da Meta ×1,1383 e CPA manual de R$ 90 × FTD na Programática, que não tem spend rastreado).
-          <br /><strong>Regime de caixa — Meta fora do mês:</strong> a Meta é paga só no <strong>mês seguinte</strong>, então o spend dela <strong>não entra no Tráfego</strong> desta aba (todos os outros canais são pagos dentro do próprio mês e entram normal). O valor da Meta aparece como linha <em>memo</em> — visível, mas fora de Investimento Total, EBITDA e Resultado Líquido. Esta regra vale <strong>só aqui</strong>: no Farol e nas demais abas o investimento segue por competência, com a Meta dentro.
+          <br /><strong>Regime de caixa — Meta defasada em 1 mês:</strong> a Meta é paga só no <strong>mês seguinte</strong>; os demais canais são pagos dentro do próprio mês. Então o que sai do caixa aqui é <strong>Tráfego do mês (sem Meta) + Meta do mês anterior</strong>. A Meta do mês anterior entra <strong>pró-rata por dia</strong> (é compromisso mensal, não evento diário — mesma regra dos custos fixos){metaPrevTot > 0 && <> — {cfBRL(metaPrevTot)} no mês de referência</>}. A Meta gasta <em>neste</em> mês aparece só como linha <em>memo</em> no rodapé: é o que vai vencer no mês que vem, e não entra em Investimento Total, EBITDA nem Resultado Líquido. Esta regra vale <strong>só aqui</strong>: no Farol e nas demais abas o investimento segue por competência, com a Meta do próprio mês dentro.
+          {metaPrevZero.length > 0 && <><br /><strong>Atenção:</strong> não há spend de Meta no mês anterior a {metaPrevZero.join(', ')} — a linha de pagamento fica em zero e o caixa do período aparece <em>melhor</em> do que será.</>}
           <br /><strong>Premissas (% do GGR):</strong> Repasse Social {fmtPct(CF_ASSUM.pctRepasse, 0)} · Impostos {fmtPct(CF_ASSUM.pctImpostos, 1)} · Custos Variáveis {fmtPct(CF_ASSUM.pctCustoVar, 1)} (coluna B15 do arquivo). <strong>Créditos de PIS/COFINS e IRPJ/CSL estão em zero</strong> nesta versão.
           <br /><strong>Pró-rata:</strong> Custos Fixos ({cfBRL(CF_ASSUM.mensal.custosFixos)}/mês), Despesas ({cfBRL(CF_ASSUM.mensal.despesas)}), Resultado Financeiro ({cfBRL(CF_ASSUM.mensal.resultadoFin)}), Depreciação ({cfBRL(CF_ASSUM.mensal.depreciacao)}), Influencer ({cfBRL(CF_ASSUM.mensal.influencer)}) e Creator ({cfBRL(CF_ASSUM.mensal.creator)}) entram como <strong>mensal ÷ dias do mês</strong> em cada dia; o MTD é a soma disso — é a regra "Pro-Rata" escrita na própria aba PnL do arquivo. Influencer e Creator não existem no BQ (são contrato), por isso ficam fixos dentro do Investimento Total.
           {monthsTouched.length > 1 && <><br /><strong>Atenção:</strong> a janela cruza {monthsTouched.length} meses — cada dia é pró-rateado pelos dias do <em>seu</em> mês, então o total dos fixos não é múltiplo redondo de um mês só.</>}
