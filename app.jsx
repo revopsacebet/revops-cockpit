@@ -3820,7 +3820,7 @@ function cfBRL(n) {
 const CF_LINES = [
   { k: 'ggrBruto',    label: 'GGR Bruto',                     src: 'act' },
   { k: 'freespin',    label: 'FreeSpins',                     src: 'act' },
-  { k: 'ggr',         label: 'GGR',                           src: 'act',  strong: true },
+  { k: 'ggr',         label: 'GGR Líquido',                   src: 'act',  strong: true },
   { k: 'bonif',       label: 'Incentivos e Bonificações',     src: 'act' },
   { k: 'repasse',     label: 'Repasse Social — Entidades',    src: 'pct' },
   { k: 'imposto',     label: 'Impostos',                      src: 'pct' },
