@@ -2835,7 +2835,7 @@ function NetBenchTab({ benchmarkNet, retencaoFaixa }) {
 // Aba FAROL — visão consolidada: todos os indicadores em hero cards (vs M-1 e vs BP), em 4 grupos.
 // Multiplicador de projeção de fechamento p/ uma janela MTD parcial: dias-do-mês ÷ dias-decorridos.
 // Só projeta quando a janela começa no dia 1 e termina antes do fim do mês (mesmo mês-calendário).
-// Fora disso (7d/30d/mês fechado/intervalo custom) → null = sem trend.
+// Fora disso (janelas rolantes 7/14/21/28d, mês fechado, intervalo custom) → null = sem trend.
 function monthCloseMult_(range) {
   if (!range || !range.from || !range.to) return null;
   const [fy, fm, fd] = String(range.from).split('-').map(Number);
@@ -4656,8 +4656,15 @@ const PRESETS = [
     } },
   { id: 'ytd', label: 'YTD', range: () => ({ from: ytdStartISO_(), to: todayISO_() }) }, // acumulado desde abril até ontem — vale p/ TODAS as abas
   { id: 'dia', label: 'Diário', range: () => ({ from: todayISO_(), to: todayISO_() }) }, // um único dia (ontem = último dia completo)
-  { id: '7d',  label: '7d',  range: () => ({ from: daysAgoISO_(7), to: todayISO_() }) },
-  { id: '30d', label: '30d', range: () => ({ from: daysAgoISO_(30), to: todayISO_() }) },
+  // Escada de janelas rolantes em MÚLTIPLOS DE 7 (7/14/21/28, o 30d virou 28d a pedido do Luis em
+  // 06/08/2026): cada janela fecha o mesmo nº de segundas, sábados etc., então comparar uma com a
+  // outra não carrega viés de dia da semana — o que o 30d fazia (cobria 4 ou 5 fins de semana
+  // conforme o dia em que caía). `todayISO_()` já é ONTEM, e daysAgoISO_(n) volta n dias de hoje,
+  // então a janela é fechada e tem exatamente n dias.
+  { id: '7d',  label: '7d',  range: () => ({ from: daysAgoISO_(7),  to: todayISO_() }) },
+  { id: '14d', label: '14d', range: () => ({ from: daysAgoISO_(14), to: todayISO_() }) },
+  { id: '21d', label: '21d', range: () => ({ from: daysAgoISO_(21), to: todayISO_() }) },
+  { id: '28d', label: '28d', range: () => ({ from: daysAgoISO_(28), to: todayISO_() }) },
   { id: 'lm',  label: 'Mês passado', range: () => lastMonthRangeISO_() },
 ];
 
@@ -5154,7 +5161,7 @@ function App({ user, onLogout, config }) {
       .catch(() => {});
   }, []);
 
-  // Auto-roll do calendário: se um preset estiver ativo (MTD/7d/30d/mês passado),
+  // Auto-roll do calendário: se um preset estiver ativo (MTD/YTD/7-28d/mês passado),
   // re-avalia a data quando a aba volta ao foco e periodicamente — assim o MTD
   // acompanha o dia mesmo numa aba/telão deixado aberto virando a meia-noite.
   // Só atualiza (e re-busca) se a janela realmente mudou.
@@ -5205,7 +5212,7 @@ function App({ user, onLogout, config }) {
   const channelOptions = (state.channels || []).map(c => c.channel);
 
   // Hero cards (dispM, com override WINDOW-AWARE de DEP M0 via ggrSafra.m0: o deriveLiveM_ pega o M0 da view
-  // de coorte MENSAL — mês do início da janela — que quebra em YTD/7d/30d; ggrSafra.m0[].dep já é o DEP M0
+  // de coorte MENSAL — mês do início da janela — que quebra em YTD e nas janelas rolantes; ggrSafra.m0[].dep já é o DEP M0
   // DENTRO da janela) + métricas do Farol (CAC/Tkt/ROAS/FreeSpins…). FONTE ÚNICA derivePayloadMetrics_ —
   // a MESMA derivação que o export YTD roda mês a mês.
   const { dispM, farol: farolMetrics } = derivePayloadMetrics_({
