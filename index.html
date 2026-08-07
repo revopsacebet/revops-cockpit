@@ -7910,15 +7910,17 @@ function TabDailyCashflow({
 //     internos" — foram REMOVIDAS da tabela em 06/08/2026 a pedido do Luis. O helper mddPct_ ficou,
 //     é o único ponto a religar se voltarem.)
 //   Meta BP = nível exigido pela curva calibrada na Lottu (constante do estudo, não sai do nosso dado).
-//     Só existe p/ Geral/Google/Meta — outros recortes mostram "—". As 3 taxas de passagem têm meta
-//     DERIVADA (marcada com †) — ver o bloco MDD_DERIV logo abaixo.
+//     Só existe p/ Geral/Google/Meta — outros recortes mostram "—". O D30 não tem meta: a curva do
+//     estudo termina no D14.
 //
-// ⚠️ MATURAÇÃO: cada métrica só usa safras que já fecharam a janela dela (D14 precisa de 14 dias).
-// Sem isso as safras novas entram com numerador incompleto e afundam D7/D14/S1. A coluna "safras"
-// mostra quantos dias sobraram por linha — se vier baixa, o percentil é frágil.
+// ⚠️ MATURAÇÃO: cada métrica só usa safras que já fecharam a janela dela (D30 precisa de 30 dias).
+// Sem isso as safras novas entram com numerador incompleto e afundam D7/D14/D30/S1. A coluna "safras"
+// mostra quantos dias sobraram por linha — se vier baixa, a base é frágil. Quando NENHUMA safra da
+// janela maturou, a linha cai no fallback de coorte (MDD_COORTE_DIAS) em vez de ficar vazia.
 // ============================================================
 // Curva-meta do estudo (Lottu-calibrada), por escopo. null = sem meta declarada.
-// pStd/pTtd/pQtd são DERIVADAS (marcadas com † na tela), não vêm prontas do estudo — ver MDD_DERIV.
+// ⚠️ pStd/pTtd/pQtd ficaram órfãs quando as taxas de passagem saíram da tabela (06/08) — mantidas
+// aqui de propósito, é o que permite religar as 3 linhas sem recalcular nada.
 const MDD_BP = {
   Geral: {
     jogD1: 0.1111,
@@ -7960,55 +7962,14 @@ const MDD_BP = {
     pQtd: 0.5460
   }
 };
-// ------------------------------------------------------------
-// DERIVAÇÃO DAS METAS DE PASSAGEM (pedido do Luis, 06/08/2026 — antes ficavam "indicativo").
-// O estudo NÃO traz taxa de passagem: a curva Lottu só tem retenção (jogD1/rsD1), multiplicadores e
-// semanal. O benchmark também não ajuda — `benchmark_net.json` guarda valor/contagem de retenção
-// (qtd, cd1, vd1, cw1, cm0…), sem a escada de nº de depósitos. Então a meta é CONSTRUÍDA, e a régua
-// escolhida foi a própria curva Lottu, pra a coluna não misturar duas medidas:
-//   alvo_passagem = passagem realizada em JULHO × (BP jogD1 ÷ jogD1 realizado em julho)
-// Ou seja: "pra chegar no nível Lottu de retenção de JOGADORES no D1, a escada inteira do começo do
-// funil sobe na mesma proporção" — preserva a FORMA do funil e ancora numa métrica de CONTAGEM
-// (passagem é contagem; ancorar no valor R$ misturaria ticket com frequência).
-// Referência = safras de JULHO/2026 (D0+D1), medidas no BQ com a mesma definição do backend:
-//   escopo | passagem jul (STD/TTD/QTD) | jogD1 jul | BP jogD1 | fator
-//   Geral  | 22,66% · 40,31% · 53,94%   |  9,53%    | 11,11%   | 1,166
-//   Google | 29,90% · 46,16% · 61,92%   | 12,78%    | 15,66%   | 1,225
-//   Meta   | 22,37% · 39,35% · 52,14%   |  9,00%    |  9,43%   | 1,047
-// ⚠️ É meta CONSTRUÍDA sobre uma referência de 1 mês — se julho foi atípico, o alvo herda o desvio.
-// Recalibrar mudando as constantes acima (a query está em scratchpad/passagem.sql).
-// ------------------------------------------------------------
-const MDD_DERIV = {
-  pStd: 1,
-  pTtd: 1,
-  pQtd: 1
-}; // chaves de bp que levam o marcador † de "derivada"
+// As 3 TAXAS DE PASSAGEM (FTD→STD, STD→TTD, TTD→QTD) saíram da tabela em 06/08/2026 a pedido do Luis
+// ("não vamos mais olhar"), junto com a derivação † que dava meta pra elas. As constantes pStd/pTtd/
+// pQtd continuam no MDD_BP acima e o backend segue mandando cntStd/cntTtd/cntQtd4 — pra religar,
+// basta devolver as 3 linhas em MDD_ROWS. O racional da derivação está no histórico do git (commit
+// "Metricas do dia a dia: meta BP derivada para as 3 taxas de passagem").
+const MDD_DERIV = {}; // chaves de bp que levam o marcador † de "derivada" — vazio desde que as passagens saíram
 // mat = dias que a safra precisa ter completado p/ a métrica ser legível.
 const MDD_ROWS = [{
-  key: 'pStd',
-  label: 'Taxa de passagem FTD → STD (D0+D1)',
-  mat: 1,
-  fmt: 'pct',
-  of: a => a.qtd ? a.cstd / a.qtd : null,
-  bp: 'pStd',
-  needs: "pass"
-}, {
-  key: 'pTtd',
-  label: 'Taxa de passagem STD → TTD (D0+D1)',
-  mat: 1,
-  fmt: 'pct',
-  of: a => a.cstd ? a.cttd / a.cstd : null,
-  bp: 'pTtd',
-  needs: "pass"
-}, {
-  key: 'pQtd',
-  label: 'Taxa de passagem TTD → QTD (D0+D1)',
-  mat: 1,
-  fmt: 'pct',
-  of: a => a.cttd ? a.cqtd4 / a.cttd : null,
-  bp: 'pQtd',
-  needs: "pass"
-}, {
   key: 'jogD1',
   label: 'Retenção de jogadores D1/D0',
   mat: 1,
@@ -8054,6 +8015,16 @@ const MDD_ROWS = [{
   fmt: 'multiple',
   of: a => a.d0 && a.vw2 ? (a.d0 + a.vw2) / a.d0 : null,
   bp: 'm14'
+},
+// D30 = depósitos dos dias 1..30 da safra (val_d30 do backend), mesma régua dos demais: sobre o D0.
+// SEM Meta BP: a curva do estudo termina no D14 — pôr um alvo aqui seria inventar. Fica "indicativo".
+{
+  key: 'm30',
+  label: 'Multiplicador D30',
+  mat: 30,
+  fmt: 'multiple',
+  of: a => a.d0 && a.vd30 ? (a.d0 + a.vd30) / a.d0 : null,
+  bp: null
 }, {
   key: 'rsS1',
   label: 'Retenção de depósito R$ S1/S0 (semanal)',
@@ -8142,9 +8113,14 @@ function mddByDay_(rows, selCh, selFx, selGr) {
   });
   return Object.values(m).sort((a, b) => a.date < b.date ? -1 : 1);
 }
-// Quantos dias antes da janela buscar para o fallback de coorte. 14 = a maior maturação da escada
-// (Multiplicador D14); com isso toda linha consegue achar safra madura mesmo numa janela recém-aberta.
-const MDD_LOOKBACK = 14;
+// Span do fallback de coorte: 7 DIAS CORRIDOS terminando na última safra madura — fixo, não segue o
+// tamanho da janela do slicer (decisão do Luis 06/08: "não precisa ser calendário, pode ser 7 dias
+// corridos"). Fixo é melhor que espelhar a janela: o número da linha em fallback não muda de base
+// toda vez que alguém mexe no slicer.
+const MDD_COORTE_DIAS = 7;
+// Quantos dias antes da janela buscar para achar essas safras. Precisa cobrir a maior maturação da
+// escada (D30) MAIS os 7 dias do span — senão numa janela curta o D30 acha só 2 ou 3 safras maduras.
+const MDD_LOOKBACK = 30 + MDD_COORTE_DIAS;
 function TabMetricasDia({
   retencaoFaixa,
   chFilter,
@@ -8244,7 +8220,7 @@ function TabMetricasDia({
     if (!naJanela.length && byDayTail.length) {
       const maduras = byDayTail.filter(d => !cut || d.date <= cut);
       if (maduras.length) {
-        days = maduras.slice(-Math.max(1, byDay.length));
+        days = maduras.slice(-MDD_COORTE_DIAS);
         coorte = {
           de: days[0].date,
           ate: days[days.length - 1].date
@@ -8304,7 +8280,7 @@ function TabMetricasDia({
     style: {
       color: '#f87171'
     }
-  }, "\u26A0 Dados de demonstra\xE7\xE3o \u2014 n\xE3o s\xE3o os seus n\xFAmeros."), ' ', "A base de safras (", /*#__PURE__*/React.createElement("code", null, "retencaoFaixa"), ") n\xE3o chegou do BigQuery nesta carga, ent\xE3o a tabela abaixo est\xE1 preenchida com o ", /*#__PURE__*/React.createElement("strong", null, "mock"), " embutido no app (11 safras fict\xEDcias de jun/26, sem os campos de funil D0+D1 nem de coorte semanal \u2014 por isso as linhas de passagem, D3, D14 e S1/S0 aparecem \u201C\u2014\u201D).", ' ', /*#__PURE__*/React.createElement("strong", null, "Recarregue a p\xE1gina"), "; se persistir, o backend est\xE1 lento (cold start do Apps Script) ou a query de safras falhou."), /*#__PURE__*/React.createElement("div", {
+  }, "\u26A0 Dados de demonstra\xE7\xE3o \u2014 n\xE3o s\xE3o os seus n\xFAmeros."), ' ', "A base de safras (", /*#__PURE__*/React.createElement("code", null, "retencaoFaixa"), ") n\xE3o chegou do BigQuery nesta carga, ent\xE3o a tabela abaixo est\xE1 preenchida com o ", /*#__PURE__*/React.createElement("strong", null, "mock"), " embutido no app (11 safras fict\xEDcias de jun/26, sem os campos de coorte semanal \u2014 por isso D3, D14, D30 e S1/S0 aparecem \u201C\u2014\u201D).", ' ', /*#__PURE__*/React.createElement("strong", null, "Recarregue a p\xE1gina"), "; se persistir, o backend est\xE1 lento (cold start do Apps Script) ou a query de safras falhou."), /*#__PURE__*/React.createElement("div", {
     className: "slicer-group slicer-ruler"
   }, /*#__PURE__*/React.createElement("label", {
     style: {
@@ -8403,7 +8379,7 @@ function TabMetricasDia({
     }
   }, fmtQty(r.n))))))), /*#__PURE__*/React.createElement("div", {
     className: "ch-note"
-  }, /*#__PURE__*/React.createElement("strong", null, "Realizado"), " = agregado do per\xEDodo (soma as bases, depois divide \u2014 n\xE3o \xE9 m\xE9dia das % di\xE1rias).", ' ', /*#__PURE__*/React.createElement("strong", null, "Meta BP"), " \xE9 o n\xEDvel exigido pela curva calibrada na Lottu; \xE9 constante do estudo, ", /*#__PURE__*/React.createElement("strong", null, "n\xE3o deriva do nosso dado"), ", e s\xF3 existe p/ Geral, Google e Meta \u2014 em qualquer outro canal, ou com 2+ canais selecionados, fica \u201C\u2014\u201D.", ' ', /*#__PURE__*/React.createElement("strong", null, "\u26A0\uFE0F A Meta BP n\xE3o muda com Faixa nem com Grupo"), ": o estudo calibrou a curva no n\xEDvel do canal, n\xE3o por faixa de FTD nem por grupo de risco. Ao filtrar, o Realizado segue o recorte, mas a meta continua sendo a do canal inteiro \u2014 use como refer\xEAncia de dire\xE7\xE3o, n\xE3o como alvo daquele segmento.", ' ', /*#__PURE__*/React.createElement("strong", null, "As 3 taxas de passagem trazem meta DERIVADA (marcada com \u2020)"), ": o estudo n\xE3o mede passagem \u2014 a curva Lottu s\xF3 tem reten\xE7\xE3o, multiplicador e semanal. O alvo \xE9 constru\xEDdo como ", /*#__PURE__*/React.createElement("em", null, "passagem realizada em julho/26 \xD7 (BP de reten\xE7\xE3o de jogadores D1 \xF7 D1 realizado em julho)"), ", ou seja, a escada inteira do come\xE7o do funil sobe na propor\xE7\xE3o que a curva exige no D1, preservando a forma do funil. Ancora em m\xE9trica de contagem (passagem \xE9 contagem \u2014 ancorar no R$ misturaria ticket com frequ\xEAncia). Fatores: Geral 1,166 \xB7 Google 1,225 \xB7 Meta 1,047. ", /*#__PURE__*/React.createElement("strong", null, "\xC9 meta constru\xEDda sobre uma refer\xEAncia de 1 m\xEAs"), " \u2014 se julho foi at\xEDpico, o alvo herda o desvio. Lembrando que a passagem mede qualidade de aquisi\xE7\xE3o/ativa\xE7\xE3o, n\xE3o reten\xE7\xE3o de cauda (r = \u22120,28 no Geral).", ' ', /*#__PURE__*/React.createElement("strong", null, "Matura\xE7\xE3o:"), " cada linha s\xF3 usa safras que j\xE1 fecharam a janela dela \u2014 D14 exige 14 dias, S1/S0 exige 13. Por isso a coluna ", /*#__PURE__*/React.createElement("strong", null, "Safras"), " muda de linha pra linha; quando ela fica", /*#__PURE__*/React.createElement("span", {
+  }, /*#__PURE__*/React.createElement("strong", null, "Realizado"), " = agregado do per\xEDodo (soma as bases, depois divide \u2014 n\xE3o \xE9 m\xE9dia das % di\xE1rias).", ' ', /*#__PURE__*/React.createElement("strong", null, "Meta BP"), " \xE9 o n\xEDvel exigido pela curva calibrada na Lottu; \xE9 constante do estudo, ", /*#__PURE__*/React.createElement("strong", null, "n\xE3o deriva do nosso dado"), ", e s\xF3 existe p/ Geral, Google e Meta \u2014 em qualquer outro canal, ou com 2+ canais selecionados, fica \u201C\u2014\u201D.", ' ', /*#__PURE__*/React.createElement("strong", null, "\u26A0\uFE0F A Meta BP n\xE3o muda com Faixa nem com Grupo"), ": o estudo calibrou a curva no n\xEDvel do canal, n\xE3o por faixa de FTD nem por grupo de risco. Ao filtrar, o Realizado segue o recorte, mas a meta continua sendo a do canal inteiro \u2014 use como refer\xEAncia de dire\xE7\xE3o, n\xE3o como alvo daquele segmento.", ' ', /*#__PURE__*/React.createElement("strong", null, "Multiplicador D30 sai sem meta (\u201Cindicativo\u201D)"), ": a curva do estudo termina no D14 \u2014 p\xF4r um alvo ali seria inventar n\xFAmero.", ' ', /*#__PURE__*/React.createElement("strong", null, "Matura\xE7\xE3o:"), " cada linha s\xF3 usa safras que j\xE1 fecharam a janela dela \u2014 D30 exige 30 dias, D14 exige 14, S1/S0 exige 13. Por isso a coluna ", /*#__PURE__*/React.createElement("strong", null, "Safras"), " muda de linha pra linha; quando ela fica", /*#__PURE__*/React.createElement("span", {
     style: {
       color: 'var(--accent-red)'
     }

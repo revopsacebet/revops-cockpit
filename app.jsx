@@ -4127,15 +4127,17 @@ function TabDailyCashflow({ range, meta }) {
 //     internos" — foram REMOVIDAS da tabela em 06/08/2026 a pedido do Luis. O helper mddPct_ ficou,
 //     é o único ponto a religar se voltarem.)
 //   Meta BP = nível exigido pela curva calibrada na Lottu (constante do estudo, não sai do nosso dado).
-//     Só existe p/ Geral/Google/Meta — outros recortes mostram "—". As 3 taxas de passagem têm meta
-//     DERIVADA (marcada com †) — ver o bloco MDD_DERIV logo abaixo.
+//     Só existe p/ Geral/Google/Meta — outros recortes mostram "—". O D30 não tem meta: a curva do
+//     estudo termina no D14.
 //
-// ⚠️ MATURAÇÃO: cada métrica só usa safras que já fecharam a janela dela (D14 precisa de 14 dias).
-// Sem isso as safras novas entram com numerador incompleto e afundam D7/D14/S1. A coluna "safras"
-// mostra quantos dias sobraram por linha — se vier baixa, o percentil é frágil.
+// ⚠️ MATURAÇÃO: cada métrica só usa safras que já fecharam a janela dela (D30 precisa de 30 dias).
+// Sem isso as safras novas entram com numerador incompleto e afundam D7/D14/D30/S1. A coluna "safras"
+// mostra quantos dias sobraram por linha — se vier baixa, a base é frágil. Quando NENHUMA safra da
+// janela maturou, a linha cai no fallback de coorte (MDD_COORTE_DIAS) em vez de ficar vazia.
 // ============================================================
 // Curva-meta do estudo (Lottu-calibrada), por escopo. null = sem meta declarada.
-// pStd/pTtd/pQtd são DERIVADAS (marcadas com † na tela), não vêm prontas do estudo — ver MDD_DERIV.
+// ⚠️ pStd/pTtd/pQtd ficaram órfãs quando as taxas de passagem saíram da tabela (06/08) — mantidas
+// aqui de propósito, é o que permite religar as 3 linhas sem recalcular nada.
 const MDD_BP = {
   Geral:  { jogD1: 0.1111, rsD1: 0.2976, m1: 1.2976, m3: 1.6804, m7: 2.2307, m14: 2.9155, rsS1: 0.6256, jogS1: 0.2806,
             pStd: 0.2642, pTtd: 0.4700, pQtd: 0.6289 },
@@ -4144,30 +4146,14 @@ const MDD_BP = {
   Meta:   { jogD1: 0.0943, rsD1: 0.2603, m1: 1.2603, m3: 1.5571, m7: 2.0197, m14: 2.5162, rsS1: 0.5432, jogS1: 0.2385,
             pStd: 0.2343, pTtd: 0.4121, pQtd: 0.5460 },
 };
-// ------------------------------------------------------------
-// DERIVAÇÃO DAS METAS DE PASSAGEM (pedido do Luis, 06/08/2026 — antes ficavam "indicativo").
-// O estudo NÃO traz taxa de passagem: a curva Lottu só tem retenção (jogD1/rsD1), multiplicadores e
-// semanal. O benchmark também não ajuda — `benchmark_net.json` guarda valor/contagem de retenção
-// (qtd, cd1, vd1, cw1, cm0…), sem a escada de nº de depósitos. Então a meta é CONSTRUÍDA, e a régua
-// escolhida foi a própria curva Lottu, pra a coluna não misturar duas medidas:
-//   alvo_passagem = passagem realizada em JULHO × (BP jogD1 ÷ jogD1 realizado em julho)
-// Ou seja: "pra chegar no nível Lottu de retenção de JOGADORES no D1, a escada inteira do começo do
-// funil sobe na mesma proporção" — preserva a FORMA do funil e ancora numa métrica de CONTAGEM
-// (passagem é contagem; ancorar no valor R$ misturaria ticket com frequência).
-// Referência = safras de JULHO/2026 (D0+D1), medidas no BQ com a mesma definição do backend:
-//   escopo | passagem jul (STD/TTD/QTD) | jogD1 jul | BP jogD1 | fator
-//   Geral  | 22,66% · 40,31% · 53,94%   |  9,53%    | 11,11%   | 1,166
-//   Google | 29,90% · 46,16% · 61,92%   | 12,78%    | 15,66%   | 1,225
-//   Meta   | 22,37% · 39,35% · 52,14%   |  9,00%    |  9,43%   | 1,047
-// ⚠️ É meta CONSTRUÍDA sobre uma referência de 1 mês — se julho foi atípico, o alvo herda o desvio.
-// Recalibrar mudando as constantes acima (a query está em scratchpad/passagem.sql).
-// ------------------------------------------------------------
-const MDD_DERIV = { pStd: 1, pTtd: 1, pQtd: 1 };   // chaves de bp que levam o marcador † de "derivada"
+// As 3 TAXAS DE PASSAGEM (FTD→STD, STD→TTD, TTD→QTD) saíram da tabela em 06/08/2026 a pedido do Luis
+// ("não vamos mais olhar"), junto com a derivação † que dava meta pra elas. As constantes pStd/pTtd/
+// pQtd continuam no MDD_BP acima e o backend segue mandando cntStd/cntTtd/cntQtd4 — pra religar,
+// basta devolver as 3 linhas em MDD_ROWS. O racional da derivação está no histórico do git (commit
+// "Metricas do dia a dia: meta BP derivada para as 3 taxas de passagem").
+const MDD_DERIV = {};   // chaves de bp que levam o marcador † de "derivada" — vazio desde que as passagens saíram
 // mat = dias que a safra precisa ter completado p/ a métrica ser legível.
 const MDD_ROWS = [
-  { key: 'pStd',  label: 'Taxa de passagem FTD → STD (D0+D1)', mat: 1,  fmt: 'pct',      of: a => a.qtd  ? a.cstd / a.qtd : null,        bp: 'pStd', needs: "pass" },
-  { key: 'pTtd',  label: 'Taxa de passagem STD → TTD (D0+D1)', mat: 1,  fmt: 'pct',      of: a => a.cstd ? a.cttd / a.cstd : null,       bp: 'pTtd', needs: "pass" },
-  { key: 'pQtd',  label: 'Taxa de passagem TTD → QTD (D0+D1)', mat: 1,  fmt: 'pct',      of: a => a.cttd ? a.cqtd4 / a.cttd : null,      bp: 'pQtd', needs: "pass" },
   { key: 'jogD1', label: 'Retenção de jogadores D1/D0',        mat: 1,  fmt: 'pct',      of: a => a.qtd  ? a.cd1 / a.qtd : null,         bp: 'jogD1' },
   { key: 'rsD1',  label: 'Retenção de depósito R$ D1/D0',      mat: 1,  fmt: 'pct',      of: a => a.d0   ? a.vd1 / a.d0 : null,          bp: 'rsD1' },
   // ⚠️ Os multiplicadores exigem d0 > 0 E o incremento da janela > 0. Uma safra real SEMPRE tem algum
@@ -4177,6 +4163,9 @@ const MDD_ROWS = [
   { key: 'm3',    label: 'Multiplicador D3',                   mat: 3,  fmt: 'multiple', of: a => (a.d0 && a.vd3) ? (a.d0 + a.vd3) / a.d0 : null, bp: 'm3' },
   { key: 'm7',    label: 'Multiplicador D7',                   mat: 7,  fmt: 'multiple', of: a => (a.d0 && a.vw1) ? (a.d0 + a.vw1) / a.d0 : null, bp: 'm7' },
   { key: 'm14',   label: 'Multiplicador D14',                  mat: 14, fmt: 'multiple', of: a => (a.d0 && a.vw2) ? (a.d0 + a.vw2) / a.d0 : null, bp: 'm14' },
+  // D30 = depósitos dos dias 1..30 da safra (val_d30 do backend), mesma régua dos demais: sobre o D0.
+  // SEM Meta BP: a curva do estudo termina no D14 — pôr um alvo aqui seria inventar. Fica "indicativo".
+  { key: 'm30',   label: 'Multiplicador D30',                  mat: 30, fmt: 'multiple', of: a => (a.d0 && a.vd30) ? (a.d0 + a.vd30) / a.d0 : null, bp: null },
   { key: 'rsS1',  label: 'Retenção de depósito R$ S1/S0 (semanal)', mat: 13, fmt: 'pct', of: a => a.vs0  ? a.vs1 / a.vs0 : null,         bp: 'rsS1', needs: "sem" },
   // ⚠️ SEM Meta BP de propósito. A curva semanal de JOGADORES do estudo é ESTIMADA (jogadores únicos na
   // semana inferidos das taxas diárias assumindo independência entre dias) — o que infla o número: o
@@ -4222,9 +4211,14 @@ function mddByDay_(rows, selCh, selFx, selGr) {
   });
   return Object.values(m).sort((a, b) => a.date < b.date ? -1 : 1);
 }
-// Quantos dias antes da janela buscar para o fallback de coorte. 14 = a maior maturação da escada
-// (Multiplicador D14); com isso toda linha consegue achar safra madura mesmo numa janela recém-aberta.
-const MDD_LOOKBACK = 14;
+// Span do fallback de coorte: 7 DIAS CORRIDOS terminando na última safra madura — fixo, não segue o
+// tamanho da janela do slicer (decisão do Luis 06/08: "não precisa ser calendário, pode ser 7 dias
+// corridos"). Fixo é melhor que espelhar a janela: o número da linha em fallback não muda de base
+// toda vez que alguém mexe no slicer.
+const MDD_COORTE_DIAS = 7;
+// Quantos dias antes da janela buscar para achar essas safras. Precisa cobrir a maior maturação da
+// escada (D30) MAIS os 7 dias do span — senão numa janela curta o D30 acha só 2 ou 3 safras maduras.
+const MDD_LOOKBACK = 30 + MDD_COORTE_DIAS;
 
 function TabMetricasDia({ retencaoFaixa, chFilter, meta, retFaixaLive }) {
   const [faixaSel, setFaixaSel] = React.useState([]);   // multi-select de faixa de FTD; [] = todas
@@ -4287,7 +4281,7 @@ function TabMetricasDia({ retencaoFaixa, chFilter, meta, retFaixaLive }) {
     if (!naJanela.length && byDayTail.length) {
       const maduras = byDayTail.filter(d => !cut || d.date <= cut);
       if (maduras.length) {
-        days = maduras.slice(-Math.max(1, byDay.length));
+        days = maduras.slice(-MDD_COORTE_DIAS);
         coorte = { de: days[0].date, ate: days[days.length - 1].date };
       }
     }
@@ -4331,8 +4325,8 @@ function TabMetricasDia({ retencaoFaixa, chFilter, meta, retFaixaLive }) {
         }}>
           <strong style={{ color: '#f87171' }}>⚠ Dados de demonstração — não são os seus números.</strong>{' '}
           A base de safras (<code>retencaoFaixa</code>) não chegou do BigQuery nesta carga, então a tabela abaixo está
-          preenchida com o <strong>mock</strong> embutido no app (11 safras fictícias de jun/26, sem os campos de funil
-          D0+D1 nem de coorte semanal — por isso as linhas de passagem, D3, D14 e S1/S0 aparecem “—”).
+          preenchida com o <strong>mock</strong> embutido no app (11 safras fictícias de jun/26, sem os campos de
+          coorte semanal — por isso D3, D14, D30 e S1/S0 aparecem “—”).
           {' '}<strong>Recarregue a página</strong>; se persistir, o backend está lento (cold start do Apps Script) ou a
           query de safras falhou.
         </div>
@@ -4400,15 +4394,10 @@ function TabMetricasDia({ retencaoFaixa, chFilter, meta, retFaixaLive }) {
           {' '}<strong>⚠️ A Meta BP não muda com Faixa nem com Grupo</strong>: o estudo calibrou a curva no nível do canal,
           não por faixa de FTD nem por grupo de risco. Ao filtrar, o Realizado segue o recorte, mas a meta continua
           sendo a do canal inteiro — use como referência de direção, não como alvo daquele segmento.
-          {' '}<strong>As 3 taxas de passagem trazem meta DERIVADA (marcada com †)</strong>: o estudo não mede passagem —
-          a curva Lottu só tem retenção, multiplicador e semanal. O alvo é construído como <em>passagem realizada em
-          julho/26 × (BP de retenção de jogadores D1 ÷ D1 realizado em julho)</em>, ou seja, a escada inteira do começo do
-          funil sobe na proporção que a curva exige no D1, preservando a forma do funil. Ancora em métrica de contagem
-          (passagem é contagem — ancorar no R$ misturaria ticket com frequência). Fatores: Geral 1,166 · Google 1,225 ·
-          Meta 1,047. <strong>É meta construída sobre uma referência de 1 mês</strong> — se julho foi atípico, o alvo herda
-          o desvio. Lembrando que a passagem mede qualidade de aquisição/ativação, não retenção de cauda (r = −0,28 no Geral).
-          {' '}<strong>Maturação:</strong> cada linha só usa safras que já fecharam a janela dela — D14 exige 14 dias,
-          S1/S0 exige 13. Por isso a coluna <strong>Safras</strong> muda de linha pra linha; quando ela fica
+          {' '}<strong>Multiplicador D30 sai sem meta (“indicativo”)</strong>: a curva do estudo termina no D14 — pôr um
+          alvo ali seria inventar número.
+          {' '}<strong>Maturação:</strong> cada linha só usa safras que já fecharam a janela dela — D30 exige 30 dias,
+          D14 exige 14, S1/S0 exige 13. Por isso a coluna <strong>Safras</strong> muda de linha pra linha; quando ela fica
           <span style={{ color: 'var(--accent-red)' }}> vermelha (&lt;14)</span> a base está frágil, amplie o período no slicer.
           {' '}<strong>Fallback de coorte (marca <span style={{ color: 'var(--accent-yellow)' }}>coorte dd/mm–dd/mm</span>):</strong> se
           NENHUMA safra da janela escolhida fechou a maturação da linha, ela não fica mais vazia — passa a ler as safras
