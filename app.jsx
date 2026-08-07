@@ -3986,6 +3986,60 @@ const CF_SRC_TIP = {
   memo: 'Memória de cálculo — NÃO entra em nenhum subtotal desta aba',
 };
 
+// Fecha os subtotais a partir das linhas-componente. Vive fora do cfCalcDay_ porque a PROJEÇÃO de
+// fechamento usa exatamente as mesmas identidades: ela projeta as PARTES e recalcula os subtotais
+// daqui, em vez de escalar um subtotal (que faria as linhas não fecharem entre si).
+function cfRollup_(o) {
+  o.ngr         = o.ggr + o.bonif + o.repasse + o.imposto + o.credito;
+  o.mc          = o.ngr + o.custoVar;
+  o.lbSemMkt    = o.mc + o.custosFixos;
+  o.investTotal = o.trafego + o.metaPago + o.influencer + o.creator;
+  o.lbComMkt    = o.lbSemMkt + o.investTotal;
+  o.ebitda      = o.lbComMkt + o.despesas;
+  o.lai         = o.ebitda + o.resFin + o.depre;
+  o.resLiq      = o.lai + o.irpj;
+  return o;
+}
+
+// PROJEÇÃO DE FECHAMENTO — o que o mês deve fechar, dado o que já entrou.
+// Só faz sentido numa janela que é UM mês começando no dia 1: projetar "fechamento" de um recorte
+// 05→10/07 não quer dizer nada. Fora disso devolve null e a coluna mostra "—".
+// Regra POR TIPO de linha (é o ponto todo — escalar tudo por dia daria número errado):
+//   • fluxo diário (GGR, FreeSpins, bonificação, spend) e pró-rata (custos fixos, despesas, e no
+//     caixa os % sobre o GGR do mês anterior) → realizado + média dos dias COMPLETOS × dias que faltam.
+//     O último dia entra no realizado mas fica FORA da média: costuma vir parcial do BQ e puxaria a
+//     projeção pra baixo (é o mesmo aviso que a aba já dá no rodapé).
+//   • FATURA (Tráfego e Meta no caixa) → o valor da fatura, que já é conhecido INTEIRO desde o dia 1.
+//     Não escala: é evento, não fluxo. Escalando, o Tráfego projetado sairia ~4× maior.
+//   • subtotais → recalculados das partes projetadas, via cfRollup_.
+// `tot` = realizado da janela · `days` = dias já calculados · `fat` = faturas do mês (só caixa).
+function cfProject_(days, tot, dataMaxDate, caixa, fat) {
+  if (!days.length) return null;
+  const meses = {};
+  days.forEach(x => { meses[x.d.slice(0, 7)] = 1; });
+  if (Object.keys(meses).length !== 1) return null;          // janela cruza meses
+  if (Number(days[0].d.slice(8, 10)) !== 1) return null;     // não começa no dia 1
+  const dim = cfDaysInMonth_(days[0].d);
+  const ultimo = Number(days[days.length - 1].d.slice(8, 10));
+  const restantes = dim - ultimo;
+  // O último dia da série costuma estar incompleto — tira ele da MÉDIA (mas não do realizado).
+  const parcial = !!dataMaxDate && days[days.length - 1].d === dataMaxDate && days.length > 1;
+  const usados = days.slice(0, days.length - (parcial ? 1 : 0));
+  const o = {};
+  CF_LINES.forEach(l => {
+    if (l.src === 'calc') return;                            // subtotal: sai do cfRollup_ abaixo
+    if (caixa && (l.k === 'trafego' || l.k === 'metaPago')) return;   // fatura: tratada fora do laço
+    const soma = usados.reduce((a, x) => a + (x.v[l.k] || 0), 0);
+    o[l.k] = (tot[l.k] || 0) + (soma / usados.length) * restantes;
+  });
+  if (caixa) {
+    o.trafego  = -((fat && fat.outros) || 0);
+    o.metaPago = -((fat && fat.meta) || 0);
+  }
+  cfRollup_(o);
+  return { v: o, dim: dim, decorridos: ultimo, restantes: restantes, baseDias: usados.length, parcial: parcial };
+}
+
 // Um dia do PnL. `r` = linha crua do backend (only=cashflow); o resto é premissa.
 // `investPrev` = mapa { 'YYYY-MM': { outros, meta } } — as FATURAS que vencem naquele mês.
 function cfCalcDay_(r, investPrev, regime, ggrPrev) {
@@ -4037,14 +4091,7 @@ function cfCalcDay_(r, investPrev, regime, ggrPrev) {
     irpj:      0,
     dep:       r.dep || 0,               // depósitos do dia — não entra no PnL, serve de contexto
   };
-  o.ngr         = o.ggr + o.bonif + o.repasse + o.imposto + o.credito;
-  o.mc          = o.ngr + o.custoVar;
-  o.lbSemMkt    = o.mc + o.custosFixos;
-  o.investTotal = o.trafego + o.metaPago + o.influencer + o.creator;
-  o.lbComMkt    = o.lbSemMkt + o.investTotal;
-  o.ebitda      = o.lbComMkt + o.despesas;
-  o.lai         = o.ebitda + o.resFin + o.depre;
-  o.resLiq      = o.lai + o.irpj;
+  cfRollup_(o);
   return o;
 }
 
@@ -4105,6 +4152,9 @@ function TabDailyCashflow({ range, meta }) {
   // primeiro mês da série), repasse/imposto/custo variável saem ZERO no caixa e o resultado parece
   // ótimo sem motivo. Aviso explícito — silêncio aqui induz erro de leitura.
   const ggrPrevZero = isCaixa ? monthsTouched.filter(m => !((ggrPrev && ggrPrev[m]) > 0)).map(mesLbl) : [];
+  // Projeção de fechamento do mês (coluna "Estimado fechamento"). Segue o regime em uso.
+  const proj = cfProject_(days, tot, meta && meta.dataMaxDate, isCaixa,
+    isCaixa ? (investPrev && investPrev[monthsTouched[0]]) : null);
   const dim0 = days.length ? cfDaysInMonth_(days[0].d) : null;
   const proRataPct = (monthsTouched.length === 1 && dim0) ? days.length / dim0 : null;
 
@@ -4148,6 +4198,8 @@ function TabDailyCashflow({ range, meta }) {
         <div className="support-title">
           {isCaixa ? 'Caixa' : 'PnL (competência)'} · {view === 'mtd' ? 'MTD acumulado' : 'Diário'} · {fmtBR_(range.from)} → {fmtBR_(range.to)}
           {proRataPct != null && <> · fixos a <strong>{fmtPct(proRataPct, 0)}</strong> do mês ({days.length}/{dim0} dias)</>}
+          {proj && proj.restantes > 0 && <> · estimativa sobre <strong>{proj.restantes}</strong> dia(s) que faltam</>}
+          {proj && proj.restantes === 0 && <> · <strong>mês fechado</strong> — a estimativa é o próprio realizado</>}
         </div>
         <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 10, margin: '2px 0 14px' }}>
           <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>Regime</span>
@@ -4182,7 +4234,9 @@ function TabDailyCashflow({ range, meta }) {
                 <th style={{ textAlign: 'left', width: 90 }}>Fonte</th>
                 <th>Valor</th>
                 <th title="Participação da linha no GGR do período — mesma leitura da coluna B da aba PnL">% do GGR</th>
-                <th title="Valor ÷ dias da janela — quanto essa linha custa/rende por dia">Média/dia</th>
+                <th title={proj
+                  ? `Onde o mês deve fechar: o realizado até aqui + a média dos ${proj.baseDias} dia(s) completo(s) aplicada aos ${proj.restantes} dia(s) que faltam. Faturas e valores fixos do mês não escalam — já entram inteiros. Subtotais são recalculados das partes.`
+                  : 'Só é calculado quando a janela é um mês inteiro começando no dia 1º'}>Estimado fechamento</th>
               </tr>
             </thead>
             <tbody>
@@ -4192,7 +4246,7 @@ function TabDailyCashflow({ range, meta }) {
                   <td style={{ textAlign: 'left' }}>{srcTag(l)}</td>
                   <td className={valCls(tot[l.k])}>{cfBRL(tot[l.k])}</td>
                   <td className="cf-dim">{l.k === 'ggr' ? '100%' : fmtPct(pctGgr(tot[l.k]), 1)}</td>
-                  <td className="cf-dim">{cfBRL(tot[l.k] / days.length)}</td>
+                  <td className={proj ? valCls(proj.v[l.k]) : 'cf-dim'}>{proj ? cfBRL(proj.v[l.k]) : '—'}</td>
                 </tr>
               ))}
             </tbody>
@@ -4208,7 +4262,7 @@ function TabDailyCashflow({ range, meta }) {
                 <td />
                 <td className={valCls(tot.resLiq)}>{cfBRL(tot.resLiq)}</td>
                 <td>{fmtPct(pctGgr(tot.resLiq), 1)}</td>
-                <td>{cfBRL(tot.resLiq / days.length)}</td>
+                <td className={proj ? valCls(proj.v.resLiq) : ''}>{proj ? cfBRL(proj.v.resLiq) : '—'}</td>
               </tr>
             </tfoot>
           </table></div>
@@ -4246,6 +4300,8 @@ function TabDailyCashflow({ range, meta }) {
           {fatZero.length > 0 && <div><strong>Atenção:</strong> não há fatura de investimento a vencer em {fatZero.join(', ')} — os meses de origem não têm spend na base.</div>}
           {ggrPrevZero.length > 0 && <div><strong>⚠️ Sem GGR do mês anterior</strong> a {ggrPrevZero.join(', ')} — Repasse Social, Impostos e Custos Variáveis saem <strong>zerados</strong> nesse(s) mês(es), o que deixa o resultado melhor do que é. Amplie a janela ou leia no regime PnL.</div>}
           {monthsTouched.length > 1 && <div><strong>Atenção:</strong> a janela cruza {monthsTouched.length} meses — cada dia é pró-rateado pelos dias do <em>seu</em> mês, então o total dos fixos não é múltiplo redondo de um mês só.</div>}
+          {!proj && !!days.length && view === 'mtd' && <div><strong>Estimado fechamento:</strong> só é calculado quando a janela é <strong>um mês inteiro começando no dia 1º</strong> — projetar "fechamento" de um recorte no meio do mês não quer dizer nada. Use o preset MTD ou Mês passado.</div>}
+          {proj && proj.parcial && <div><strong>Estimado fechamento:</strong> a média usa os <strong>{proj.baseDias} dia(s) completo(s)</strong> — o dia {fmtBR_(meta.dataMaxDate)} entra no realizado mas fica fora da média, porque costuma vir parcial do BQ e puxaria a projeção pra baixo.</div>}
           {meta && meta.dataMaxDate && <div>Dado carregado no BQ até {fmtBR_(meta.dataMaxDate)} — o último dia da série costuma estar incompleto.</div>}
           <details style={{ marginTop: 8 }}>
             <summary style={{ cursor: 'pointer', color: 'var(--text-muted)' }}>Premissas e método</summary>
@@ -4264,6 +4320,7 @@ function TabDailyCashflow({ range, meta }) {
           )}
           <br /><strong>Premissas (% do GGR{isCaixa ? ' do mês anterior' : ''}):</strong> Repasse Social {fmtPct(CF_ASSUM.pctRepasse, 0)} · Impostos {fmtPct(CF_ASSUM.pctImpostos, 1)} · Custos Variáveis {fmtPct(CF_ASSUM.pctCustoVar, 1)} (coluna B15 do arquivo). <strong>Créditos de PIS/COFINS e IRPJ/CSL estão em zero</strong> nesta versão.
           <br /><strong>Pró-rata:</strong> Custos Fixos ({cfBRL(CF_ASSUM.mensal.custosFixos)}/mês), Despesas ({cfBRL(CF_ASSUM.mensal.despesas)}), Resultado Financeiro ({cfBRL(CF_ASSUM.mensal.resultadoFin)}){!isCaixa && <>, Depreciação ({cfBRL(CF_ASSUM.mensal.depreciacao)})</>}, Influencer ({cfBRL(CF_ASSUM.mensal.influencer)}) e Creator ({cfBRL(CF_ASSUM.mensal.creator)}) entram como <strong>mensal ÷ dias do mês</strong> em cada dia; o MTD é a soma disso — é a regra "Pro-Rata" escrita na própria aba PnL do arquivo. Influencer e Creator não existem no BQ (são contrato), por isso ficam fixos dentro do Investimento Total.
+          <br /><strong>Estimado fechamento:</strong> onde o mês deve fechar no regime em uso. Cada linha projeta do jeito dela: o que <em>corre por dia</em> (GGR, FreeSpins, bonificação, spend) e o que é pró-rata (custos fixos, despesas, e no caixa os % sobre o GGR do mês anterior) recebem <strong>realizado + média dos dias completos × dias que faltam</strong>; as <strong>faturas do caixa não escalam</strong> (Tráfego e Meta já entram inteiras no dia do pagamento — escalá-las por dia daria um Tráfego ~4× maior); e os <strong>subtotais são recalculados</strong> das partes projetadas, nunca escalados, senão não fechariam entre si. Vale só para janela de um mês inteiro a partir do dia 1º.
           <br /><strong>Escopo:</strong> casa inteira — esta aba <strong>ignora o filtro de canal</strong> do topo (o PnL é da empresa; ratear custo fixo, despesa e depreciação por canal não tem regra definida). Sinal segue o arquivo: custo é negativo.
             </div>
           </details>

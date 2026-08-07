@@ -7784,6 +7784,69 @@ const CF_SRC_TIP = {
   memo: 'Memória de cálculo — NÃO entra em nenhum subtotal desta aba'
 };
 
+// Fecha os subtotais a partir das linhas-componente. Vive fora do cfCalcDay_ porque a PROJEÇÃO de
+// fechamento usa exatamente as mesmas identidades: ela projeta as PARTES e recalcula os subtotais
+// daqui, em vez de escalar um subtotal (que faria as linhas não fecharem entre si).
+function cfRollup_(o) {
+  o.ngr = o.ggr + o.bonif + o.repasse + o.imposto + o.credito;
+  o.mc = o.ngr + o.custoVar;
+  o.lbSemMkt = o.mc + o.custosFixos;
+  o.investTotal = o.trafego + o.metaPago + o.influencer + o.creator;
+  o.lbComMkt = o.lbSemMkt + o.investTotal;
+  o.ebitda = o.lbComMkt + o.despesas;
+  o.lai = o.ebitda + o.resFin + o.depre;
+  o.resLiq = o.lai + o.irpj;
+  return o;
+}
+
+// PROJEÇÃO DE FECHAMENTO — o que o mês deve fechar, dado o que já entrou.
+// Só faz sentido numa janela que é UM mês começando no dia 1: projetar "fechamento" de um recorte
+// 05→10/07 não quer dizer nada. Fora disso devolve null e a coluna mostra "—".
+// Regra POR TIPO de linha (é o ponto todo — escalar tudo por dia daria número errado):
+//   • fluxo diário (GGR, FreeSpins, bonificação, spend) e pró-rata (custos fixos, despesas, e no
+//     caixa os % sobre o GGR do mês anterior) → realizado + média dos dias COMPLETOS × dias que faltam.
+//     O último dia entra no realizado mas fica FORA da média: costuma vir parcial do BQ e puxaria a
+//     projeção pra baixo (é o mesmo aviso que a aba já dá no rodapé).
+//   • FATURA (Tráfego e Meta no caixa) → o valor da fatura, que já é conhecido INTEIRO desde o dia 1.
+//     Não escala: é evento, não fluxo. Escalando, o Tráfego projetado sairia ~4× maior.
+//   • subtotais → recalculados das partes projetadas, via cfRollup_.
+// `tot` = realizado da janela · `days` = dias já calculados · `fat` = faturas do mês (só caixa).
+function cfProject_(days, tot, dataMaxDate, caixa, fat) {
+  if (!days.length) return null;
+  const meses = {};
+  days.forEach(x => {
+    meses[x.d.slice(0, 7)] = 1;
+  });
+  if (Object.keys(meses).length !== 1) return null; // janela cruza meses
+  if (Number(days[0].d.slice(8, 10)) !== 1) return null; // não começa no dia 1
+  const dim = cfDaysInMonth_(days[0].d);
+  const ultimo = Number(days[days.length - 1].d.slice(8, 10));
+  const restantes = dim - ultimo;
+  // O último dia da série costuma estar incompleto — tira ele da MÉDIA (mas não do realizado).
+  const parcial = !!dataMaxDate && days[days.length - 1].d === dataMaxDate && days.length > 1;
+  const usados = days.slice(0, days.length - (parcial ? 1 : 0));
+  const o = {};
+  CF_LINES.forEach(l => {
+    if (l.src === 'calc') return; // subtotal: sai do cfRollup_ abaixo
+    if (caixa && (l.k === 'trafego' || l.k === 'metaPago')) return; // fatura: tratada fora do laço
+    const soma = usados.reduce((a, x) => a + (x.v[l.k] || 0), 0);
+    o[l.k] = (tot[l.k] || 0) + soma / usados.length * restantes;
+  });
+  if (caixa) {
+    o.trafego = -(fat && fat.outros || 0);
+    o.metaPago = -(fat && fat.meta || 0);
+  }
+  cfRollup_(o);
+  return {
+    v: o,
+    dim: dim,
+    decorridos: ultimo,
+    restantes: restantes,
+    baseDias: usados.length,
+    parcial: parcial
+  };
+}
+
 // Um dia do PnL. `r` = linha crua do backend (only=cashflow); o resto é premissa.
 // `investPrev` = mapa { 'YYYY-MM': { outros, meta } } — as FATURAS que vencem naquele mês.
 function cfCalcDay_(r, investPrev, regime, ggrPrev) {
@@ -7838,14 +7901,7 @@ function cfCalcDay_(r, investPrev, regime, ggrPrev) {
     irpj: 0,
     dep: r.dep || 0 // depósitos do dia — não entra no PnL, serve de contexto
   };
-  o.ngr = o.ggr + o.bonif + o.repasse + o.imposto + o.credito;
-  o.mc = o.ngr + o.custoVar;
-  o.lbSemMkt = o.mc + o.custosFixos;
-  o.investTotal = o.trafego + o.metaPago + o.influencer + o.creator;
-  o.lbComMkt = o.lbSemMkt + o.investTotal;
-  o.ebitda = o.lbComMkt + o.despesas;
-  o.lai = o.ebitda + o.resFin + o.depre;
-  o.resLiq = o.lai + o.irpj;
+  cfRollup_(o);
   return o;
 }
 function TabDailyCashflow({
@@ -7941,6 +7997,8 @@ function TabDailyCashflow({
   // primeiro mês da série), repasse/imposto/custo variável saem ZERO no caixa e o resultado parece
   // ótimo sem motivo. Aviso explícito — silêncio aqui induz erro de leitura.
   const ggrPrevZero = isCaixa ? monthsTouched.filter(m => !((ggrPrev && ggrPrev[m]) > 0)).map(mesLbl) : [];
+  // Projeção de fechamento do mês (coluna "Estimado fechamento"). Segue o regime em uso.
+  const proj = cfProject_(days, tot, meta && meta.dataMaxDate, isCaixa, isCaixa ? investPrev && investPrev[monthsTouched[0]] : null);
   const dim0 = days.length ? cfDaysInMonth_(days[0].d) : null;
   const proRataPct = monthsTouched.length === 1 && dim0 ? days.length / dim0 : null;
   const rowCls = l => `cf-row cf-${l.src}` + (l.strong ? ' cf-strong' : '') + (l.sub ? ' cf-sub' : '');
@@ -7983,7 +8041,7 @@ function TabDailyCashflow({
     className: "support"
   }, /*#__PURE__*/React.createElement("div", {
     className: "support-title"
-  }, isCaixa ? 'Caixa' : 'PnL (competência)', " \xB7 ", view === 'mtd' ? 'MTD acumulado' : 'Diário', " \xB7 ", fmtBR_(range.from), " \u2192 ", fmtBR_(range.to), proRataPct != null && /*#__PURE__*/React.createElement(React.Fragment, null, " \xB7 fixos a ", /*#__PURE__*/React.createElement("strong", null, fmtPct(proRataPct, 0)), " do m\xEAs (", days.length, "/", dim0, " dias)")), /*#__PURE__*/React.createElement("div", {
+  }, isCaixa ? 'Caixa' : 'PnL (competência)', " \xB7 ", view === 'mtd' ? 'MTD acumulado' : 'Diário', " \xB7 ", fmtBR_(range.from), " \u2192 ", fmtBR_(range.to), proRataPct != null && /*#__PURE__*/React.createElement(React.Fragment, null, " \xB7 fixos a ", /*#__PURE__*/React.createElement("strong", null, fmtPct(proRataPct, 0)), " do m\xEAs (", days.length, "/", dim0, " dias)"), proj && proj.restantes > 0 && /*#__PURE__*/React.createElement(React.Fragment, null, " \xB7 estimativa sobre ", /*#__PURE__*/React.createElement("strong", null, proj.restantes), " dia(s) que faltam"), proj && proj.restantes === 0 && /*#__PURE__*/React.createElement(React.Fragment, null, " \xB7 ", /*#__PURE__*/React.createElement("strong", null, "m\xEAs fechado"), " \u2014 a estimativa \xE9 o pr\xF3prio realizado")), /*#__PURE__*/React.createElement("div", {
     style: {
       display: 'flex',
       flexWrap: 'wrap',
@@ -8056,8 +8114,8 @@ function TabDailyCashflow({
   }, "Fonte"), /*#__PURE__*/React.createElement("th", null, "Valor"), /*#__PURE__*/React.createElement("th", {
     title: "Participa\xE7\xE3o da linha no GGR do per\xEDodo \u2014 mesma leitura da coluna B da aba PnL"
   }, "% do GGR"), /*#__PURE__*/React.createElement("th", {
-    title: "Valor \xF7 dias da janela \u2014 quanto essa linha custa/rende por dia"
-  }, "M\xE9dia/dia"))), /*#__PURE__*/React.createElement("tbody", null, visLines.map(l => /*#__PURE__*/React.createElement("tr", {
+    title: proj ? `Onde o mês deve fechar: o realizado até aqui + a média dos ${proj.baseDias} dia(s) completo(s) aplicada aos ${proj.restantes} dia(s) que faltam. Faturas e valores fixos do mês não escalam — já entram inteiros. Subtotais são recalculados das partes.` : 'Só é calculado quando a janela é um mês inteiro começando no dia 1º'
+  }, "Estimado fechamento"))), /*#__PURE__*/React.createElement("tbody", null, visLines.map(l => /*#__PURE__*/React.createElement("tr", {
     key: l.k,
     className: rowCls(l)
   }, /*#__PURE__*/React.createElement("td", {
@@ -8073,14 +8131,16 @@ function TabDailyCashflow({
   }, cfBRL(tot[l.k])), /*#__PURE__*/React.createElement("td", {
     className: "cf-dim"
   }, l.k === 'ggr' ? '100%' : fmtPct(pctGgr(tot[l.k]), 1)), /*#__PURE__*/React.createElement("td", {
-    className: "cf-dim"
-  }, cfBRL(tot[l.k] / days.length))))), /*#__PURE__*/React.createElement("tfoot", null, /*#__PURE__*/React.createElement("tr", null, /*#__PURE__*/React.createElement("td", {
+    className: proj ? valCls(proj.v[l.k]) : 'cf-dim'
+  }, proj ? cfBRL(proj.v[l.k]) : '—')))), /*#__PURE__*/React.createElement("tfoot", null, /*#__PURE__*/React.createElement("tr", null, /*#__PURE__*/React.createElement("td", {
     style: {
       textAlign: 'left'
     }
   }, isCaixa ? 'Fluxo de Caixa Livre' : 'Margem Líquida'), /*#__PURE__*/React.createElement("td", null), /*#__PURE__*/React.createElement("td", {
     className: valCls(tot.resLiq)
-  }, cfBRL(tot.resLiq)), /*#__PURE__*/React.createElement("td", null, fmtPct(pctGgr(tot.resLiq), 1)), /*#__PURE__*/React.createElement("td", null, cfBRL(tot.resLiq / days.length)))))), !loading && !error && !!days.length && view === 'diario' && /*#__PURE__*/React.createElement("div", {
+  }, cfBRL(tot.resLiq)), /*#__PURE__*/React.createElement("td", null, fmtPct(pctGgr(tot.resLiq), 1)), /*#__PURE__*/React.createElement("td", {
+    className: proj ? valCls(proj.v.resLiq) : ''
+  }, proj ? cfBRL(proj.v.resLiq) : '—'))))), !loading && !error && !!days.length && view === 'diario' && /*#__PURE__*/React.createElement("div", {
     className: "table-scroll tall"
   }, /*#__PURE__*/React.createElement("table", {
     className: "ch-table cf-table cf-daily"
@@ -8107,7 +8167,7 @@ function TabDailyCashflow({
     className: 'cf-total-col ' + valCls(tot[l.k])
   }, cfBRL(tot[l.k]))))))), /*#__PURE__*/React.createElement("div", {
     className: "ch-note"
-  }, fatFora.length > 0 && /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("strong", null, "\u26A0\uFE0F Faturas fora da janela:"), " o per\xEDodo toca ", fatFora.join(', '), " mas n\xE3o inclui o dia ", CF_ASSUM.metaPayDay, " desse(s) m\xEAs(es) \u2014 as faturas de investimento ", /*#__PURE__*/React.createElement("strong", null, "n\xE3o"), " est\xE3o no total. Amplie a janela para o in\xEDcio do m\xEAs para v\xEA-las."), fatZero.length > 0 && /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("strong", null, "Aten\xE7\xE3o:"), " n\xE3o h\xE1 fatura de investimento a vencer em ", fatZero.join(', '), " \u2014 os meses de origem n\xE3o t\xEAm spend na base."), ggrPrevZero.length > 0 && /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("strong", null, "\u26A0\uFE0F Sem GGR do m\xEAs anterior"), " a ", ggrPrevZero.join(', '), " \u2014 Repasse Social, Impostos e Custos Vari\xE1veis saem ", /*#__PURE__*/React.createElement("strong", null, "zerados"), " nesse(s) m\xEAs(es), o que deixa o resultado melhor do que \xE9. Amplie a janela ou leia no regime PnL."), monthsTouched.length > 1 && /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("strong", null, "Aten\xE7\xE3o:"), " a janela cruza ", monthsTouched.length, " meses \u2014 cada dia \xE9 pr\xF3-rateado pelos dias do ", /*#__PURE__*/React.createElement("em", null, "seu"), " m\xEAs, ent\xE3o o total dos fixos n\xE3o \xE9 m\xFAltiplo redondo de um m\xEAs s\xF3."), meta && meta.dataMaxDate && /*#__PURE__*/React.createElement("div", null, "Dado carregado no BQ at\xE9 ", fmtBR_(meta.dataMaxDate), " \u2014 o \xFAltimo dia da s\xE9rie costuma estar incompleto."), /*#__PURE__*/React.createElement("details", {
+  }, fatFora.length > 0 && /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("strong", null, "\u26A0\uFE0F Faturas fora da janela:"), " o per\xEDodo toca ", fatFora.join(', '), " mas n\xE3o inclui o dia ", CF_ASSUM.metaPayDay, " desse(s) m\xEAs(es) \u2014 as faturas de investimento ", /*#__PURE__*/React.createElement("strong", null, "n\xE3o"), " est\xE3o no total. Amplie a janela para o in\xEDcio do m\xEAs para v\xEA-las."), fatZero.length > 0 && /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("strong", null, "Aten\xE7\xE3o:"), " n\xE3o h\xE1 fatura de investimento a vencer em ", fatZero.join(', '), " \u2014 os meses de origem n\xE3o t\xEAm spend na base."), ggrPrevZero.length > 0 && /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("strong", null, "\u26A0\uFE0F Sem GGR do m\xEAs anterior"), " a ", ggrPrevZero.join(', '), " \u2014 Repasse Social, Impostos e Custos Vari\xE1veis saem ", /*#__PURE__*/React.createElement("strong", null, "zerados"), " nesse(s) m\xEAs(es), o que deixa o resultado melhor do que \xE9. Amplie a janela ou leia no regime PnL."), monthsTouched.length > 1 && /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("strong", null, "Aten\xE7\xE3o:"), " a janela cruza ", monthsTouched.length, " meses \u2014 cada dia \xE9 pr\xF3-rateado pelos dias do ", /*#__PURE__*/React.createElement("em", null, "seu"), " m\xEAs, ent\xE3o o total dos fixos n\xE3o \xE9 m\xFAltiplo redondo de um m\xEAs s\xF3."), !proj && !!days.length && view === 'mtd' && /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("strong", null, "Estimado fechamento:"), " s\xF3 \xE9 calculado quando a janela \xE9 ", /*#__PURE__*/React.createElement("strong", null, "um m\xEAs inteiro come\xE7ando no dia 1\xBA"), " \u2014 projetar \"fechamento\" de um recorte no meio do m\xEAs n\xE3o quer dizer nada. Use o preset MTD ou M\xEAs passado."), proj && proj.parcial && /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("strong", null, "Estimado fechamento:"), " a m\xE9dia usa os ", /*#__PURE__*/React.createElement("strong", null, proj.baseDias, " dia(s) completo(s)"), " \u2014 o dia ", fmtBR_(meta.dataMaxDate), " entra no realizado mas fica fora da m\xE9dia, porque costuma vir parcial do BQ e puxaria a proje\xE7\xE3o pra baixo."), meta && meta.dataMaxDate && /*#__PURE__*/React.createElement("div", null, "Dado carregado no BQ at\xE9 ", fmtBR_(meta.dataMaxDate), " \u2014 o \xFAltimo dia da s\xE9rie costuma estar incompleto."), /*#__PURE__*/React.createElement("details", {
     style: {
       marginTop: 8
     }
@@ -8120,7 +8180,7 @@ function TabDailyCashflow({
     style: {
       marginTop: 6
     }
-  }, /*#__PURE__*/React.createElement("strong", null, "Do BigQuery (realizado):"), " GGR Bruto = ", /*#__PURE__*/React.createElement("code", null, "ggr_total"), " \xB7 FreeSpins = ", /*#__PURE__*/React.createElement("code", null, "valor_wins_freespin"), " \xB7 GGR = ", /*#__PURE__*/React.createElement("code", null, "ngr_total"), " (identidade validada: GGR = GGR Bruto \u2212 FreeSpins) \xB7 Bonifica\xE7\xF5es = ", /*#__PURE__*/React.createElement("code", null, "valor_bonus_saldo_real_dia"), " \u2014 ou seja, o ", /*#__PURE__*/React.createElement("strong", null, "% de bonifica\xE7\xE3o \xE9 o realizado do dia"), ", n\xE3o o \u221231,6% fixo da coluna B do arquivo. ", /*#__PURE__*/React.createElement("strong", null, "Tr\xE1fego"), " = spend da performance com os mesmos ajustes do Farol (imposto de fechamento da Meta \xD71,1383 e CPA manual de R$ 90 \xD7 FTD na Program\xE1tica, que n\xE3o tem spend rastreado).", /*#__PURE__*/React.createElement("br", null), /*#__PURE__*/React.createElement("strong", null, "Os dois regimes:"), " a mesma linha de baixo lida de duas formas \u2014 mesmas fontes e mesmas premissas, muda s\xF3 ", /*#__PURE__*/React.createElement("em", null, "quando"), " o dinheiro \xE9 reconhecido. Ambos v\xE3o at\xE9 Resultado L\xEDquido.", isCaixa ? /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("br", null), /*#__PURE__*/React.createElement("strong", null, "Caixa (em uso) \u2014 investimento por FATURA:"), " o m\xEAs n\xE3o paga o que gastou; paga o que venceu. Em cada m\xEAs saem a ", /*#__PURE__*/React.createElement("strong", null, "fatura de Google, TikTok, ADSPLAY e Program\xE1tica do m\xEAs anterior"), " e a ", /*#__PURE__*/React.createElement("strong", null, "fatura da Meta de dois meses atr\xE1s"), " (a Meta tem prazo maior \u2014 \"35 dias\" na linha dela no arquivo, o que atravessa mais um fechamento)", fatTot > 0 && /*#__PURE__*/React.createElement(React.Fragment, null, " \u2014 ", cfBRL(fatTot), " na janela"), ". Ex.: em ", /*#__PURE__*/React.createElement("em", null, "julho"), " sai Google/TikTok/demais de ", /*#__PURE__*/React.createElement("em", null, "junho"), " e Meta de ", /*#__PURE__*/React.createElement("em", null, "maio"), ". As faturas entram em ", /*#__PURE__*/React.createElement("strong", null, "parcela \xFAnica no dia ", CF_ASSUM.metaPayDay), ", n\xE3o pr\xF3-rata \u2014 fatura \xE9 evento de caixa, e o pr\xF3-rata fazia uma janela terminada no meio do m\xEAs reconhecer s\xF3 a fra\xE7\xE3o decorrida (numa janela YTD sumia com quase um m\xEAs inteiro de investimento). O que foi ", /*#__PURE__*/React.createElement("em", null, "gasto"), " neste m\xEAs aparece nas duas linhas ", /*#__PURE__*/React.createElement("em", null, "memo"), " do rodap\xE9, fora de Investimento Total, EBITDA e Resultado L\xEDquido. A ", /*#__PURE__*/React.createElement("strong", null, "Deprecia\xE7\xE3o (", cfBRL(CF_ASSUM.mensal.depreciacao), "/m\xEAs) fica de fora"), " \u2014 \xE9 lan\xE7amento cont\xE1bil, n\xE3o desembolso.", /*#__PURE__*/React.createElement("br", null), /*#__PURE__*/React.createElement("strong", null, "Repasse, Impostos e Custos Vari\xE1veis tamb\xE9m saem no m\xEAs seguinte:"), " incidem sobre a receita de um m\xEAs mas s\xF3 s\xE3o recolhidos/pagos no m\xEAs posterior, ent\xE3o aqui os percentuais s\xE3o aplicados sobre o ", /*#__PURE__*/React.createElement("strong", null, "GGR do m\xEAs anterior"), " (por isso o tag ", /*#__PURE__*/React.createElement("em", null, "% GGR M-1"), " e o \"(m\xEAs anterior)\" no r\xF3tulo \u2014 ", /*#__PURE__*/React.createElement("strong", null, "n\xE3o tente bater esses valores contra o GGR desta tela"), ", a base \xE9 outra). Diferente da Meta, entram ", /*#__PURE__*/React.createElement("strong", null, "pr\xF3-rata"), ": n\xE3o \xE9 uma fatura s\xF3, s\xE3o recolhimentos e taxas espalhados pelo m\xEAs. \xC9 o que a linha 37 (", /*#__PURE__*/React.createElement("em", null, "FCL Operacional Estimado"), ") do BP faz.") : /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("br", null), /*#__PURE__*/React.createElement("strong", null, "PnL / compet\xEAncia (em uso):"), " o gasto conta no m\xEAs em que foi ", /*#__PURE__*/React.createElement("strong", null, "feito"), ", ent\xE3o a ", /*#__PURE__*/React.createElement("strong", null, "Meta do pr\xF3prio m\xEAs entra direto no Tr\xE1fego"), " \u2014 n\xE3o h\xE1 fatura defasada nem linha memo, e o Investimento Total \xE9 o mesmo do ", /*#__PURE__*/React.createElement("strong", null, "Farol"), " e das demais abas. A ", /*#__PURE__*/React.createElement("strong", null, "Deprecia\xE7\xE3o (", cfBRL(CF_ASSUM.mensal.depreciacao), "/m\xEAs) entra"), ", como na aba PnL do arquivo. \xC9 a vis\xE3o para comparar com o BP; para saber o que efetivamente sai do banco, troque para ", /*#__PURE__*/React.createElement("strong", null, "Caixa"), "."), /*#__PURE__*/React.createElement("br", null), /*#__PURE__*/React.createElement("strong", null, "Premissas (% do GGR", isCaixa ? ' do mês anterior' : '', "):"), " Repasse Social ", fmtPct(CF_ASSUM.pctRepasse, 0), " \xB7 Impostos ", fmtPct(CF_ASSUM.pctImpostos, 1), " \xB7 Custos Vari\xE1veis ", fmtPct(CF_ASSUM.pctCustoVar, 1), " (coluna B15 do arquivo). ", /*#__PURE__*/React.createElement("strong", null, "Cr\xE9ditos de PIS/COFINS e IRPJ/CSL est\xE3o em zero"), " nesta vers\xE3o.", /*#__PURE__*/React.createElement("br", null), /*#__PURE__*/React.createElement("strong", null, "Pr\xF3-rata:"), " Custos Fixos (", cfBRL(CF_ASSUM.mensal.custosFixos), "/m\xEAs), Despesas (", cfBRL(CF_ASSUM.mensal.despesas), "), Resultado Financeiro (", cfBRL(CF_ASSUM.mensal.resultadoFin), ")", !isCaixa && /*#__PURE__*/React.createElement(React.Fragment, null, ", Deprecia\xE7\xE3o (", cfBRL(CF_ASSUM.mensal.depreciacao), ")"), ", Influencer (", cfBRL(CF_ASSUM.mensal.influencer), ") e Creator (", cfBRL(CF_ASSUM.mensal.creator), ") entram como ", /*#__PURE__*/React.createElement("strong", null, "mensal \xF7 dias do m\xEAs"), " em cada dia; o MTD \xE9 a soma disso \u2014 \xE9 a regra \"Pro-Rata\" escrita na pr\xF3pria aba PnL do arquivo. Influencer e Creator n\xE3o existem no BQ (s\xE3o contrato), por isso ficam fixos dentro do Investimento Total.", /*#__PURE__*/React.createElement("br", null), /*#__PURE__*/React.createElement("strong", null, "Escopo:"), " casa inteira \u2014 esta aba ", /*#__PURE__*/React.createElement("strong", null, "ignora o filtro de canal"), " do topo (o PnL \xE9 da empresa; ratear custo fixo, despesa e deprecia\xE7\xE3o por canal n\xE3o tem regra definida). Sinal segue o arquivo: custo \xE9 negativo.")))));
+  }, /*#__PURE__*/React.createElement("strong", null, "Do BigQuery (realizado):"), " GGR Bruto = ", /*#__PURE__*/React.createElement("code", null, "ggr_total"), " \xB7 FreeSpins = ", /*#__PURE__*/React.createElement("code", null, "valor_wins_freespin"), " \xB7 GGR = ", /*#__PURE__*/React.createElement("code", null, "ngr_total"), " (identidade validada: GGR = GGR Bruto \u2212 FreeSpins) \xB7 Bonifica\xE7\xF5es = ", /*#__PURE__*/React.createElement("code", null, "valor_bonus_saldo_real_dia"), " \u2014 ou seja, o ", /*#__PURE__*/React.createElement("strong", null, "% de bonifica\xE7\xE3o \xE9 o realizado do dia"), ", n\xE3o o \u221231,6% fixo da coluna B do arquivo. ", /*#__PURE__*/React.createElement("strong", null, "Tr\xE1fego"), " = spend da performance com os mesmos ajustes do Farol (imposto de fechamento da Meta \xD71,1383 e CPA manual de R$ 90 \xD7 FTD na Program\xE1tica, que n\xE3o tem spend rastreado).", /*#__PURE__*/React.createElement("br", null), /*#__PURE__*/React.createElement("strong", null, "Os dois regimes:"), " a mesma linha de baixo lida de duas formas \u2014 mesmas fontes e mesmas premissas, muda s\xF3 ", /*#__PURE__*/React.createElement("em", null, "quando"), " o dinheiro \xE9 reconhecido. Ambos v\xE3o at\xE9 Resultado L\xEDquido.", isCaixa ? /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("br", null), /*#__PURE__*/React.createElement("strong", null, "Caixa (em uso) \u2014 investimento por FATURA:"), " o m\xEAs n\xE3o paga o que gastou; paga o que venceu. Em cada m\xEAs saem a ", /*#__PURE__*/React.createElement("strong", null, "fatura de Google, TikTok, ADSPLAY e Program\xE1tica do m\xEAs anterior"), " e a ", /*#__PURE__*/React.createElement("strong", null, "fatura da Meta de dois meses atr\xE1s"), " (a Meta tem prazo maior \u2014 \"35 dias\" na linha dela no arquivo, o que atravessa mais um fechamento)", fatTot > 0 && /*#__PURE__*/React.createElement(React.Fragment, null, " \u2014 ", cfBRL(fatTot), " na janela"), ". Ex.: em ", /*#__PURE__*/React.createElement("em", null, "julho"), " sai Google/TikTok/demais de ", /*#__PURE__*/React.createElement("em", null, "junho"), " e Meta de ", /*#__PURE__*/React.createElement("em", null, "maio"), ". As faturas entram em ", /*#__PURE__*/React.createElement("strong", null, "parcela \xFAnica no dia ", CF_ASSUM.metaPayDay), ", n\xE3o pr\xF3-rata \u2014 fatura \xE9 evento de caixa, e o pr\xF3-rata fazia uma janela terminada no meio do m\xEAs reconhecer s\xF3 a fra\xE7\xE3o decorrida (numa janela YTD sumia com quase um m\xEAs inteiro de investimento). O que foi ", /*#__PURE__*/React.createElement("em", null, "gasto"), " neste m\xEAs aparece nas duas linhas ", /*#__PURE__*/React.createElement("em", null, "memo"), " do rodap\xE9, fora de Investimento Total, EBITDA e Resultado L\xEDquido. A ", /*#__PURE__*/React.createElement("strong", null, "Deprecia\xE7\xE3o (", cfBRL(CF_ASSUM.mensal.depreciacao), "/m\xEAs) fica de fora"), " \u2014 \xE9 lan\xE7amento cont\xE1bil, n\xE3o desembolso.", /*#__PURE__*/React.createElement("br", null), /*#__PURE__*/React.createElement("strong", null, "Repasse, Impostos e Custos Vari\xE1veis tamb\xE9m saem no m\xEAs seguinte:"), " incidem sobre a receita de um m\xEAs mas s\xF3 s\xE3o recolhidos/pagos no m\xEAs posterior, ent\xE3o aqui os percentuais s\xE3o aplicados sobre o ", /*#__PURE__*/React.createElement("strong", null, "GGR do m\xEAs anterior"), " (por isso o tag ", /*#__PURE__*/React.createElement("em", null, "% GGR M-1"), " e o \"(m\xEAs anterior)\" no r\xF3tulo \u2014 ", /*#__PURE__*/React.createElement("strong", null, "n\xE3o tente bater esses valores contra o GGR desta tela"), ", a base \xE9 outra). Diferente da Meta, entram ", /*#__PURE__*/React.createElement("strong", null, "pr\xF3-rata"), ": n\xE3o \xE9 uma fatura s\xF3, s\xE3o recolhimentos e taxas espalhados pelo m\xEAs. \xC9 o que a linha 37 (", /*#__PURE__*/React.createElement("em", null, "FCL Operacional Estimado"), ") do BP faz.") : /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("br", null), /*#__PURE__*/React.createElement("strong", null, "PnL / compet\xEAncia (em uso):"), " o gasto conta no m\xEAs em que foi ", /*#__PURE__*/React.createElement("strong", null, "feito"), ", ent\xE3o a ", /*#__PURE__*/React.createElement("strong", null, "Meta do pr\xF3prio m\xEAs entra direto no Tr\xE1fego"), " \u2014 n\xE3o h\xE1 fatura defasada nem linha memo, e o Investimento Total \xE9 o mesmo do ", /*#__PURE__*/React.createElement("strong", null, "Farol"), " e das demais abas. A ", /*#__PURE__*/React.createElement("strong", null, "Deprecia\xE7\xE3o (", cfBRL(CF_ASSUM.mensal.depreciacao), "/m\xEAs) entra"), ", como na aba PnL do arquivo. \xC9 a vis\xE3o para comparar com o BP; para saber o que efetivamente sai do banco, troque para ", /*#__PURE__*/React.createElement("strong", null, "Caixa"), "."), /*#__PURE__*/React.createElement("br", null), /*#__PURE__*/React.createElement("strong", null, "Premissas (% do GGR", isCaixa ? ' do mês anterior' : '', "):"), " Repasse Social ", fmtPct(CF_ASSUM.pctRepasse, 0), " \xB7 Impostos ", fmtPct(CF_ASSUM.pctImpostos, 1), " \xB7 Custos Vari\xE1veis ", fmtPct(CF_ASSUM.pctCustoVar, 1), " (coluna B15 do arquivo). ", /*#__PURE__*/React.createElement("strong", null, "Cr\xE9ditos de PIS/COFINS e IRPJ/CSL est\xE3o em zero"), " nesta vers\xE3o.", /*#__PURE__*/React.createElement("br", null), /*#__PURE__*/React.createElement("strong", null, "Pr\xF3-rata:"), " Custos Fixos (", cfBRL(CF_ASSUM.mensal.custosFixos), "/m\xEAs), Despesas (", cfBRL(CF_ASSUM.mensal.despesas), "), Resultado Financeiro (", cfBRL(CF_ASSUM.mensal.resultadoFin), ")", !isCaixa && /*#__PURE__*/React.createElement(React.Fragment, null, ", Deprecia\xE7\xE3o (", cfBRL(CF_ASSUM.mensal.depreciacao), ")"), ", Influencer (", cfBRL(CF_ASSUM.mensal.influencer), ") e Creator (", cfBRL(CF_ASSUM.mensal.creator), ") entram como ", /*#__PURE__*/React.createElement("strong", null, "mensal \xF7 dias do m\xEAs"), " em cada dia; o MTD \xE9 a soma disso \u2014 \xE9 a regra \"Pro-Rata\" escrita na pr\xF3pria aba PnL do arquivo. Influencer e Creator n\xE3o existem no BQ (s\xE3o contrato), por isso ficam fixos dentro do Investimento Total.", /*#__PURE__*/React.createElement("br", null), /*#__PURE__*/React.createElement("strong", null, "Estimado fechamento:"), " onde o m\xEAs deve fechar no regime em uso. Cada linha projeta do jeito dela: o que ", /*#__PURE__*/React.createElement("em", null, "corre por dia"), " (GGR, FreeSpins, bonifica\xE7\xE3o, spend) e o que \xE9 pr\xF3-rata (custos fixos, despesas, e no caixa os % sobre o GGR do m\xEAs anterior) recebem ", /*#__PURE__*/React.createElement("strong", null, "realizado + m\xE9dia dos dias completos \xD7 dias que faltam"), "; as ", /*#__PURE__*/React.createElement("strong", null, "faturas do caixa n\xE3o escalam"), " (Tr\xE1fego e Meta j\xE1 entram inteiras no dia do pagamento \u2014 escal\xE1-las por dia daria um Tr\xE1fego ~4\xD7 maior); e os ", /*#__PURE__*/React.createElement("strong", null, "subtotais s\xE3o recalculados"), " das partes projetadas, nunca escalados, sen\xE3o n\xE3o fechariam entre si. Vale s\xF3 para janela de um m\xEAs inteiro a partir do dia 1\xBA.", /*#__PURE__*/React.createElement("br", null), /*#__PURE__*/React.createElement("strong", null, "Escopo:"), " casa inteira \u2014 esta aba ", /*#__PURE__*/React.createElement("strong", null, "ignora o filtro de canal"), " do topo (o PnL \xE9 da empresa; ratear custo fixo, despesa e deprecia\xE7\xE3o por canal n\xE3o tem regra definida). Sinal segue o arquivo: custo \xE9 negativo.")))));
 }
 
 // ============================================================
