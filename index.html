@@ -8321,34 +8321,28 @@ function TabMetricasDia({
     className: "support"
   }, /*#__PURE__*/React.createElement("div", {
     className: "support-title"
-  }, "Escada de reten\xE7\xE3o precoce \xB7 ", chLbl, " \xB7 ", faixaLbl, " \xB7 ", grupoLbl, " \xB7 safras do per\xEDodo", dataMax ? ' (até ' + dataMax.slice(8, 10) + '/' + dataMax.slice(5, 7) + ')' : '', grFetch.loading ? ' · carregando grupos…' : '', grFetch.error ? ' · erro ao carregar grupos' : ''), /*#__PURE__*/React.createElement("div", {
+  }, "Escada de reten\xE7\xE3o precoce \xB7 ", chLbl, " \xB7 ", faixaLbl, " \xB7 ", grupoLbl, " \xB7 safras do per\xEDodo", dataMax ? ' (até ' + dataMax.slice(8, 10) + '/' + dataMax.slice(5, 7) + ')' : '', grFetch.loading ? ' · carregando grupos…' : '', grFetch.error ? ' · erro ao carregar grupos' : '', tail.loading ? ' · carregando safras maduras…' : '', tail.error ? /*#__PURE__*/React.createElement("span", {
+    style: {
+      color: 'var(--accent-red)'
+    }
+  }, " \xB7 falhou buscar as safras maduras (", tail.error, ") \u2014 linhas de D14/D30/S1 podem ficar vazias") : ''), /*#__PURE__*/React.createElement("div", {
     className: "table-scroll"
   }, /*#__PURE__*/React.createElement("table", {
     className: "ch-table"
   }, /*#__PURE__*/React.createElement("thead", null, /*#__PURE__*/React.createElement("tr", null, /*#__PURE__*/React.createElement("th", null, "M\xE9trica do dia a dia"), /*#__PURE__*/React.createElement("th", {
     title: "Agregado do per\xEDodo: soma as bases e divide (n\xE3o \xE9 m\xE9dia das % di\xE1rias). S\xF3 safras j\xE1 maduras p/ a janela da m\xE9trica."
   }, "Realizado"), /*#__PURE__*/React.createElement("th", {
-    title: "N\xEDvel exigido pela curva-meta calibrada na Lottu (constante do estudo, n\xE3o deriva do nosso dado). S\xF3 Geral/Google/Meta."
-  }, "Meta BP"), /*#__PURE__*/React.createElement("th", {
-    title: "N\xBA de safras di\xE1rias que j\xE1 fecharam a janela da m\xE9trica e entraram na conta."
-  }, "Safras"))), /*#__PURE__*/React.createElement("tbody", null, out.map(r => /*#__PURE__*/React.createElement("tr", {
+    title: "N\xEDvel exigido pela curva calibrada na Lottu (constante do estudo, n\xE3o deriva do nosso dado). S\xF3 Geral/Google/Meta."
+  }, "Planejado"))), /*#__PURE__*/React.createElement("tbody", null, out.map(r => /*#__PURE__*/React.createElement("tr", {
     key: r.key
   }, /*#__PURE__*/React.createElement("td", {
     className: "ch-name"
   }, r.label), /*#__PURE__*/React.createElement("td", {
     style: {
       fontWeight: 600
-    }
-  }, val(r.real, r.fmt), r.coorte && /*#__PURE__*/React.createElement("span", {
-    style: {
-      fontWeight: 400,
-      fontSize: '11px',
-      color: 'var(--accent-yellow)',
-      marginLeft: 6,
-      opacity: 0.85
     },
-    title: `Nenhuma safra da janela selecionada fechou os ${r.mat} dia(s) de maturação desta métrica. Este número é leitura de COORTE: as ${r.n} safra(s) maduras mais recentes que existem no dado (${fmtBR_(r.coorte.de)} a ${fmtBR_(r.coorte.ate)}), FORA da janela do topo. As demais linhas seguem a janela — não some as duas leituras.`
-  }, "coorte ", r.coorte.de.slice(8, 10), "/", r.coorte.de.slice(5, 7), "\u2013", r.coorte.ate.slice(8, 10), "/", r.coorte.ate.slice(5, 7)), r.imatura && /*#__PURE__*/React.createElement("span", {
+    title: r.coorte ? `Leitura de COORTE: nenhuma safra da janela selecionada fechou os ${r.mat} dia(s) de maturação desta métrica, então este número usa as ${r.n} safras maduras mais recentes do dado (${fmtBR_(r.coorte.de)} a ${fmtBR_(r.coorte.ate)}), fora da janela do topo. Não some com as demais linhas.` : r.n > 0 ? `${r.n} safra(s) da janela entraram na conta (as que já fecharam os ${r.mat} dia(s) de maturação desta métrica).` : undefined
+  }, val(r.real, r.fmt), r.imatura && /*#__PURE__*/React.createElement("span", {
     style: {
       fontWeight: 400,
       fontSize: '11px',
@@ -8373,21 +8367,9 @@ function TabMetricasDia({
       marginLeft: 3
     },
     title: "Meta DERIVADA: o estudo n\xE3o traz taxa de passagem. Alvo = passagem de julho/26 \xD7 (BP de reten\xE7\xE3o de jogadores D1 \xF7 D1 realizado em julho) \u2014 sobe a escada inteira na propor\xE7\xE3o exigida pela curva, preservando a forma do funil."
-  }, "\u2020"))), /*#__PURE__*/React.createElement("td", {
-    style: {
-      color: r.n < 14 ? 'var(--accent-red)' : 'var(--text-muted)'
-    }
-  }, fmtQty(r.n))))))), /*#__PURE__*/React.createElement("div", {
+  }, "\u2020")))))))), /*#__PURE__*/React.createElement("div", {
     className: "ch-note"
-  }, /*#__PURE__*/React.createElement("strong", null, "Realizado"), " = agregado do per\xEDodo (soma as bases, depois divide \u2014 n\xE3o \xE9 m\xE9dia das % di\xE1rias).", ' ', /*#__PURE__*/React.createElement("strong", null, "Meta BP"), " \xE9 o n\xEDvel exigido pela curva calibrada na Lottu; \xE9 constante do estudo, ", /*#__PURE__*/React.createElement("strong", null, "n\xE3o deriva do nosso dado"), ", e s\xF3 existe p/ Geral, Google e Meta \u2014 em qualquer outro canal, ou com 2+ canais selecionados, fica \u201C\u2014\u201D.", ' ', /*#__PURE__*/React.createElement("strong", null, "\u26A0\uFE0F A Meta BP n\xE3o muda com Faixa nem com Grupo"), ": o estudo calibrou a curva no n\xEDvel do canal, n\xE3o por faixa de FTD nem por grupo de risco. Ao filtrar, o Realizado segue o recorte, mas a meta continua sendo a do canal inteiro \u2014 use como refer\xEAncia de dire\xE7\xE3o, n\xE3o como alvo daquele segmento.", ' ', /*#__PURE__*/React.createElement("strong", null, "Multiplicador D30 sai sem meta (\u201Cindicativo\u201D)"), ": a curva do estudo termina no D14 \u2014 p\xF4r um alvo ali seria inventar n\xFAmero.", ' ', /*#__PURE__*/React.createElement("strong", null, "Matura\xE7\xE3o:"), " cada linha s\xF3 usa safras que j\xE1 fecharam a janela dela \u2014 D30 exige 30 dias, D14 exige 14, S1/S0 exige 13. Por isso a coluna ", /*#__PURE__*/React.createElement("strong", null, "Safras"), " muda de linha pra linha; quando ela fica", /*#__PURE__*/React.createElement("span", {
-    style: {
-      color: 'var(--accent-red)'
-    }
-  }, " vermelha (<14)"), " a base est\xE1 fr\xE1gil, amplie o per\xEDodo no slicer.", ' ', /*#__PURE__*/React.createElement("strong", null, "Fallback de coorte (marca ", /*#__PURE__*/React.createElement("span", {
-    style: {
-      color: 'var(--accent-yellow)'
-    }
-  }, "coorte dd/mm\u2013dd/mm"), "):"), " se NENHUMA safra da janela escolhida fechou a matura\xE7\xE3o da linha, ela n\xE3o fica mais vazia \u2014 passa a ler as safras maduras mais recentes que existem no dado (mesma quantidade de dias da janela, terminando na \xFAltima safra que maturou), buscadas at\xE9 ", MDD_LOOKBACK, " dias antes do in\xEDcio da janela. ", /*#__PURE__*/React.createElement("strong", null, "\xC9 leitura de coorte, n\xE3o da janela"), ": a linha marcada e as demais n\xE3o somam entre si, e o recorte de canal/faixa/grupo \xE9 o mesmo dos dois lados.", ' ', "Multiplicadores aqui s\xE3o ", /*#__PURE__*/React.createElement("strong", null, "sobre o dep\xF3sito do D0"), " (D0 = 1,00x), n\xE3o sobre o FTD$ \u2014 \xE9 a base do estudo.", ' ', /*#__PURE__*/React.createElement("strong", null, "S0/S1 s\xE3o semanas de calend\xE1rio"), " (seg\u2013dom): S0 = dep\xF3sito na semana do FTD, S1 = na semana seguinte \u2014 mesma l\xF3gica do M0/M+1, um n\xEDvel acima. N\xE3o \xE9 janela de 7 dias corridos.", ' ', "A linha de ", /*#__PURE__*/React.createElement("strong", null, "jogadores S1/S0 fica sem Meta BP de prop\xF3sito"), ": a curva semanal de jogadores do estudo \xE9 ", /*#__PURE__*/React.createElement("em", null, "estimada"), " (infere jogadores \xFAnicos das taxas di\xE1rias assumindo independ\xEAncia entre dias), o que infla o n\xEDvel \u2014 a mesma coorte medida de forma exata d\xE1 bem menos. Comparar a contagem exata daqui com aquela meta mostraria um gap de defini\xE7\xE3o, n\xE3o de performance. A linha de R$ n\xE3o tem esse problema.", out.some(r => r.real == null) ? ' · alguma linha sem base: payload anterior ao v60, recarregue com Atualizar.' : '')));
+  }, /*#__PURE__*/React.createElement("strong", null, "Realizado"), " = agregado do per\xEDodo (soma as bases, depois divide \u2014 n\xE3o \xE9 m\xE9dia das % di\xE1rias).", ' ', /*#__PURE__*/React.createElement("strong", null, "Meta BP"), " \xE9 o n\xEDvel exigido pela curva calibrada na Lottu; \xE9 constante do estudo, ", /*#__PURE__*/React.createElement("strong", null, "n\xE3o deriva do nosso dado"), ", e s\xF3 existe p/ Geral, Google e Meta \u2014 em qualquer outro canal, ou com 2+ canais selecionados, fica \u201C\u2014\u201D.", ' ', /*#__PURE__*/React.createElement("strong", null, "\u26A0\uFE0F A Meta BP n\xE3o muda com Faixa nem com Grupo"), ": o estudo calibrou a curva no n\xEDvel do canal, n\xE3o por faixa de FTD nem por grupo de risco. Ao filtrar, o Realizado segue o recorte, mas a meta continua sendo a do canal inteiro \u2014 use como refer\xEAncia de dire\xE7\xE3o, n\xE3o como alvo daquele segmento.", ' ', /*#__PURE__*/React.createElement("strong", null, "Multiplicador D30 sai sem meta (\u201Cindicativo\u201D)"), ": a curva do estudo termina no D14 \u2014 p\xF4r um alvo ali seria inventar n\xFAmero.", ' ', /*#__PURE__*/React.createElement("strong", null, "Matura\xE7\xE3o:"), " cada linha s\xF3 usa safras que j\xE1 fecharam a janela dela \u2014 D30 exige 30 dias, D14 exige 14, S1/S0 exige 13. Ou seja, ", /*#__PURE__*/React.createElement("strong", null, "cada linha l\xEA um n\xBA diferente de safras"), ": passe o mouse no valor pra ver quantas entraram e de que per\xEDodo.", ' ', /*#__PURE__*/React.createElement("strong", null, "Fallback de coorte:"), " se NENHUMA safra da janela escolhida fechou a matura\xE7\xE3o da linha, ela n\xE3o fica mais vazia \u2014 passa a ler as safras maduras mais recentes que existem no dado (mesma quantidade de dias da janela, terminando na \xFAltima safra que maturou), buscadas at\xE9 ", MDD_LOOKBACK, " dias antes do in\xEDcio da janela. ", /*#__PURE__*/React.createElement("strong", null, "\xC9 leitura de coorte, n\xE3o da janela"), ": a linha marcada e as demais n\xE3o somam entre si, e o recorte de canal/faixa/grupo \xE9 o mesmo dos dois lados.", ' ', "Multiplicadores aqui s\xE3o ", /*#__PURE__*/React.createElement("strong", null, "sobre o dep\xF3sito do D0"), " (D0 = 1,00x), n\xE3o sobre o FTD$ \u2014 \xE9 a base do estudo.", ' ', /*#__PURE__*/React.createElement("strong", null, "S0/S1 s\xE3o semanas de calend\xE1rio"), " (seg\u2013dom): S0 = dep\xF3sito na semana do FTD, S1 = na semana seguinte \u2014 mesma l\xF3gica do M0/M+1, um n\xEDvel acima. N\xE3o \xE9 janela de 7 dias corridos.", ' ', "A linha de ", /*#__PURE__*/React.createElement("strong", null, "jogadores S1/S0 fica sem Meta BP de prop\xF3sito"), ": a curva semanal de jogadores do estudo \xE9 ", /*#__PURE__*/React.createElement("em", null, "estimada"), " (infere jogadores \xFAnicos das taxas di\xE1rias assumindo independ\xEAncia entre dias), o que infla o n\xEDvel \u2014 a mesma coorte medida de forma exata d\xE1 bem menos. Comparar a contagem exata daqui com aquela meta mostraria um gap de defini\xE7\xE3o, n\xE3o de performance. A linha de R$ n\xE3o tem esse problema.", out.some(r => r.real == null) ? ' · alguma linha sem base: payload anterior ao v60, recarregue com Atualizar.' : '')));
 }
 const TABS = [{
   id: 'farol',

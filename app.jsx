@@ -4341,28 +4341,31 @@ function TabMetricasDia({ retencaoFaixa, chFilter, meta, retFaixaLive }) {
         </span>
       </div>
       <div className="support">
-        <div className="support-title">Escada de retenção precoce · {chLbl} · {faixaLbl} · {grupoLbl} · safras do período{dataMax ? ' (até ' + dataMax.slice(8, 10) + '/' + dataMax.slice(5, 7) + ')' : ''}{grFetch.loading ? ' · carregando grupos…' : ''}{grFetch.error ? ' · erro ao carregar grupos' : ''}</div>
+        <div className="support-title">Escada de retenção precoce · {chLbl} · {faixaLbl} · {grupoLbl} · safras do período{dataMax ? ' (até ' + dataMax.slice(8, 10) + '/' + dataMax.slice(5, 7) + ')' : ''}{grFetch.loading ? ' · carregando grupos…' : ''}{grFetch.error ? ' · erro ao carregar grupos' : ''}
+          {/* Sem isto, uma falha no fetch da cauda derruba o fallback de coorte em silêncio e as linhas
+              de maturação longa (D14, D30, S1/S0) voltam a aparecer vazias "sem motivo". */}
+          {tail.loading ? ' · carregando safras maduras…' : ''}
+          {tail.error ? <span style={{ color: 'var(--accent-red)' }}> · falhou buscar as safras maduras ({tail.error}) — linhas de D14/D30/S1 podem ficar vazias</span> : ''}</div>
         <div className="table-scroll"><table className="ch-table">
           <thead>
             <tr>
               <th>Métrica do dia a dia</th>
               <th title="Agregado do período: soma as bases e divide (não é média das % diárias). Só safras já maduras p/ a janela da métrica.">Realizado</th>
-              <th title="Nível exigido pela curva-meta calibrada na Lottu (constante do estudo, não deriva do nosso dado). Só Geral/Google/Meta.">Meta BP</th>
-              <th title="Nº de safras diárias que já fecharam a janela da métrica e entraram na conta.">Safras</th>
+              <th title="Nível exigido pela curva calibrada na Lottu (constante do estudo, não deriva do nosso dado). Só Geral/Google/Meta.">Planejado</th>
             </tr>
           </thead>
           <tbody>
             {out.map(r => (
               <tr key={r.key}>
                 <td className="ch-name">{r.label}</td>
-                <td style={{ fontWeight: 600 }}>
+                {/* A marca amarela "coorte dd/mm–dd/mm" saiu a pedido do Luis (06/08). A informação
+                    continua no title da célula: sem ela ninguém sabe que a linha lê um período
+                    diferente das demais. */}
+                <td style={{ fontWeight: 600 }}
+                    title={r.coorte
+                      ? `Leitura de COORTE: nenhuma safra da janela selecionada fechou os ${r.mat} dia(s) de maturação desta métrica, então este número usa as ${r.n} safras maduras mais recentes do dado (${fmtBR_(r.coorte.de)} a ${fmtBR_(r.coorte.ate)}), fora da janela do topo. Não some com as demais linhas.`
+                      : (r.n > 0 ? `${r.n} safra(s) da janela entraram na conta (as que já fecharam os ${r.mat} dia(s) de maturação desta métrica).` : undefined)}>
                   {val(r.real, r.fmt)}
-                  {r.coorte && (
-                    <span style={{ fontWeight: 400, fontSize: '11px', color: 'var(--accent-yellow)', marginLeft: 6, opacity: 0.85 }}
-                          title={`Nenhuma safra da janela selecionada fechou os ${r.mat} dia(s) de maturação desta métrica. Este número é leitura de COORTE: as ${r.n} safra(s) maduras mais recentes que existem no dado (${fmtBR_(r.coorte.de)} a ${fmtBR_(r.coorte.ate)}), FORA da janela do topo. As demais linhas seguem a janela — não some as duas leituras.`}>
-                      coorte {r.coorte.de.slice(8, 10)}/{r.coorte.de.slice(5, 7)}–{r.coorte.ate.slice(8, 10)}/{r.coorte.ate.slice(5, 7)}
-                    </span>
-                  )}
                   {r.imatura && (
                     <span style={{ fontWeight: 400, fontSize: '11px', color: 'var(--text-muted)', marginLeft: 6 }}
                           title={`Esta métrica precisa de ${r.mat} dia(s) de maturação: uma safra só entra na conta depois de fechar a janela dela. Nenhuma safra da janela selecionada chegou lá (dado vai até ${dataMax ? fmtBR_(dataMax) : '—'}). Contar as safras novas afundaria a métrica com numerador incompleto. Amplie a janela para trás para ver esta linha.`}>
@@ -4381,7 +4384,6 @@ function TabMetricasDia({ retencaoFaixa, chFilter, meta, retFaixaLive }) {
                     </React.Fragment>
                   )}
                 </td>
-                <td style={{ color: r.n < 14 ? 'var(--accent-red)' : 'var(--text-muted)' }}>{fmtQty(r.n)}</td>
               </tr>
             ))}
           </tbody>
@@ -4397,9 +4399,9 @@ function TabMetricasDia({ retencaoFaixa, chFilter, meta, retFaixaLive }) {
           {' '}<strong>Multiplicador D30 sai sem meta (“indicativo”)</strong>: a curva do estudo termina no D14 — pôr um
           alvo ali seria inventar número.
           {' '}<strong>Maturação:</strong> cada linha só usa safras que já fecharam a janela dela — D30 exige 30 dias,
-          D14 exige 14, S1/S0 exige 13. Por isso a coluna <strong>Safras</strong> muda de linha pra linha; quando ela fica
-          <span style={{ color: 'var(--accent-red)' }}> vermelha (&lt;14)</span> a base está frágil, amplie o período no slicer.
-          {' '}<strong>Fallback de coorte (marca <span style={{ color: 'var(--accent-yellow)' }}>coorte dd/mm–dd/mm</span>):</strong> se
+          D14 exige 14, S1/S0 exige 13. Ou seja, <strong>cada linha lê um nº diferente de safras</strong>: passe o mouse
+          no valor pra ver quantas entraram e de que período.
+          {' '}<strong>Fallback de coorte:</strong> se
           NENHUMA safra da janela escolhida fechou a maturação da linha, ela não fica mais vazia — passa a ler as safras
           maduras mais recentes que existem no dado (mesma quantidade de dias da janela, terminando na última safra que
           maturou), buscadas até {MDD_LOOKBACK} dias antes do início da janela. <strong>É leitura de coorte, não da janela</strong>:
