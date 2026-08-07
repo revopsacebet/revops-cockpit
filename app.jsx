@@ -4202,7 +4202,9 @@ function TabDailyCashflow({ range, meta }) {
                   Agora cada célula fica na SUA coluna, igual às demais: é o mesmo total da linha
                   Resultado Líquido, repetido no pé como fecha um PnL. */}
               <tr>
-                <td style={{ textAlign: 'left' }}>Margem Líquida</td>
+                {/* No caixa a linha de fechamento não é margem, é o FCL — mesmo nome da linha 37 do BP,
+                    que é a linha de caixa do arquivo. Mesmo número do Resultado Líquido, repetido no pé. */}
+                <td style={{ textAlign: 'left' }}>{isCaixa ? 'Fluxo de Caixa Livre' : 'Margem Líquida'}</td>
                 <td />
                 <td className={valCls(tot.resLiq)}>{cfBRL(tot.resLiq)}</td>
                 <td>{fmtPct(pctGgr(tot.resLiq), 1)}</td>
