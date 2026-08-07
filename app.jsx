@@ -3142,6 +3142,15 @@ function TabFarol({ M, farol, range, ytd, ftdByRegister, chFilter, planScenarios
   const scenMeta = CENARIOS.find(c => c.id === activeScen) || CENARIOS[0];
   // Prefixo do "BP" nos cards = nome do cenário ATIVO (segue o toggle). Sem cenário aplicado (scenOn=false) → Orçado (base).
   const scenLabel = scenOn ? scenMeta.label : SCEN_BP_LABEL;
+  // Cobertura do plano na janela (backend v68+ manda planDays/winDays/emptyMonths no house). As linhas
+  // do DB Plan_RevOps existem de abr a dez, mas Orçado e Conservador vêm ZERADOS em abr/mai — numa
+  // janela 01/04→30/06 o Farol comparava 91 dias de realizado contra 30 de plano e mostrava Dep M0 em
+  // 61% vermelho como se fosse performance. Degrada em silêncio em backend antigo (campos ausentes).
+  const scenHouse = (scenOn && planScenarios && planScenarios[activeScen] && planScenarios[activeScen].house) || null;
+  const planGap = (scenHouse && scenHouse.winDays > 0 && scenHouse.planDays != null && scenHouse.planDays < scenHouse.winDays) ? scenHouse : null;
+  const mesCurto_ = (mk) => { const MM_ = ['jan','fev','mar','abr','mai','jun','jul','ago','set','out','nov','dez']; return (MM_[+String(mk).slice(5, 7) - 1] || mk) + '/' + String(mk).slice(2, 4); };
+  // Algum outro cenário cobre a janela inteira? Se sim, aponta — é a saída prática pro usuário.
+  const scenCheio = planGap ? visCenarios.find(c => { if (c.id === activeScen || !scenAvail[c.id]) return false; const h = planScenarios[c.id] && planScenarios[c.id].house; return !!(h && h.winDays > 0 && h.planDays >= h.winDays); }) : null;
   const groups = buildFarolGroups_(ov.M, ov.farol, range, useYtd, sparkByKey, scenLabel);
   const rangeLbl = (range && range.from) ? `${fmtBR_(range.from)} → ${fmtBR_(range.to)}` : '';
   return (
@@ -3157,6 +3166,14 @@ function TabFarol({ M, farol, range, ytd, ftdByRegister, chFilter, planScenarios
           {/* 2026-08-05: removido o aviso laranja de cenário. Ele só aparecia quando o cenário ativo não era
               o Orçado; com o Forecast virando padrão passou a ficar permanente na tela. O prefixo de cada
               card já diz o cenário ("Forecast R$ …"), então o bloco era redundante. */}
+          {planGap && (
+            <div className="subtitle" style={{ color: 'var(--accent-yellow)', marginTop: 6, maxWidth: 760 }}>
+              ⚠️ O plano <strong>{scenMeta.label}</strong> cobre <strong>{planGap.planDays} de {planGap.winDays} dias</strong> desta janela
+              {planGap.emptyMonths && planGap.emptyMonths.length > 0 && <> — não existe plano em <strong>{planGap.emptyMonths.map(mesCurto_).join(', ')}</strong></>}.
+              {' '}O realizado conta a janela toda, então o <strong>% vs plano está subestimado</strong> — o buraco é de plano, não de operação.
+              {scenCheio && <> O cenário <strong>{scenCheio.label}</strong> cobre a janela inteira.</>}
+            </div>
+          )}
           {active && (
             <div className="subtitle" style={{ color: 'var(--accent-yellow)', marginTop: 6, maxWidth: 720 }}>
               Aquisição normalizada por <strong>data de cadastro</strong>: FTD Amount, ROAS FTD, CAC e Ticket contam FTDs de quem <em>registrou</em> na janela (não de quem deu FTD). ⚠️ o mês corrente é uma coorte <strong>maturando</strong> — quem registrou e ainda não deu FTD não conta, então o CAC começa alto e cai conforme matura (~30–45d).

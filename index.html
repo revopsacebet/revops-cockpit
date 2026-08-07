@@ -6361,13 +6361,36 @@ function TabFarol({
   const scenMeta = CENARIOS.find(c => c.id === activeScen) || CENARIOS[0];
   // Prefixo do "BP" nos cards = nome do cenário ATIVO (segue o toggle). Sem cenário aplicado (scenOn=false) → Orçado (base).
   const scenLabel = scenOn ? scenMeta.label : SCEN_BP_LABEL;
+  // Cobertura do plano na janela (backend v68+ manda planDays/winDays/emptyMonths no house). As linhas
+  // do DB Plan_RevOps existem de abr a dez, mas Orçado e Conservador vêm ZERADOS em abr/mai — numa
+  // janela 01/04→30/06 o Farol comparava 91 dias de realizado contra 30 de plano e mostrava Dep M0 em
+  // 61% vermelho como se fosse performance. Degrada em silêncio em backend antigo (campos ausentes).
+  const scenHouse = scenOn && planScenarios && planScenarios[activeScen] && planScenarios[activeScen].house || null;
+  const planGap = scenHouse && scenHouse.winDays > 0 && scenHouse.planDays != null && scenHouse.planDays < scenHouse.winDays ? scenHouse : null;
+  const mesCurto_ = mk => {
+    const MM_ = ['jan', 'fev', 'mar', 'abr', 'mai', 'jun', 'jul', 'ago', 'set', 'out', 'nov', 'dez'];
+    return (MM_[+String(mk).slice(5, 7) - 1] || mk) + '/' + String(mk).slice(2, 4);
+  };
+  // Algum outro cenário cobre a janela inteira? Se sim, aponta — é a saída prática pro usuário.
+  const scenCheio = planGap ? visCenarios.find(c => {
+    if (c.id === activeScen || !scenAvail[c.id]) return false;
+    const h = planScenarios[c.id] && planScenarios[c.id].house;
+    return !!(h && h.winDays > 0 && h.planDays >= h.winDays);
+  }) : null;
   const groups = buildFarolGroups_(ov.M, ov.farol, range, useYtd, sparkByKey, scenLabel);
   const rangeLbl = range && range.from ? `${fmtBR_(range.from)} → ${fmtBR_(range.to)}` : '';
   return /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("div", {
     className: "tab-header"
   }, /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("h1", null, "Farol"), /*#__PURE__*/React.createElement("div", {
     className: "subtitle"
-  }, useYtd ? /*#__PURE__*/React.createElement(React.Fragment, null, "YTD \xB7 acumulado desde abril \xB7 ", rangeLbl, " \xB7 varia\xE7\xE3o vs BP") : /*#__PURE__*/React.createElement(React.Fragment, null, "Vis\xE3o consolidada \u2014 todos os indicadores em cards, varia\xE7\xE3o vs M-1 e vs BP")), active && /*#__PURE__*/React.createElement("div", {
+  }, useYtd ? /*#__PURE__*/React.createElement(React.Fragment, null, "YTD \xB7 acumulado desde abril \xB7 ", rangeLbl, " \xB7 varia\xE7\xE3o vs BP") : /*#__PURE__*/React.createElement(React.Fragment, null, "Vis\xE3o consolidada \u2014 todos os indicadores em cards, varia\xE7\xE3o vs M-1 e vs BP")), planGap && /*#__PURE__*/React.createElement("div", {
+    className: "subtitle",
+    style: {
+      color: 'var(--accent-yellow)',
+      marginTop: 6,
+      maxWidth: 760
+    }
+  }, "\u26A0\uFE0F O plano ", /*#__PURE__*/React.createElement("strong", null, scenMeta.label), " cobre ", /*#__PURE__*/React.createElement("strong", null, planGap.planDays, " de ", planGap.winDays, " dias"), " desta janela", planGap.emptyMonths && planGap.emptyMonths.length > 0 && /*#__PURE__*/React.createElement(React.Fragment, null, " \u2014 n\xE3o existe plano em ", /*#__PURE__*/React.createElement("strong", null, planGap.emptyMonths.map(mesCurto_).join(', '))), ".", ' ', "O realizado conta a janela toda, ent\xE3o o ", /*#__PURE__*/React.createElement("strong", null, "% vs plano est\xE1 subestimado"), " \u2014 o buraco \xE9 de plano, n\xE3o de opera\xE7\xE3o.", scenCheio && /*#__PURE__*/React.createElement(React.Fragment, null, " O cen\xE1rio ", /*#__PURE__*/React.createElement("strong", null, scenCheio.label), " cobre a janela inteira.")), active && /*#__PURE__*/React.createElement("div", {
     className: "subtitle",
     style: {
       color: 'var(--accent-yellow)',
