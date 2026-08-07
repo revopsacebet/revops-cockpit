@@ -3903,6 +3903,39 @@ const CF_LINES = [
   // MEMO — fora de todo subtotal acima. Fica no rodapé da tabela pra não sumir da vista.
   { k: 'metaDefer',   label: 'Meta gasta no mês (sai no mês seguinte)', src: 'memo' },
 ];
+// BLOCOS RECOLHÍVEIS — num PnL as linhas que compõem um subtotal vêm ACIMA dele, então cada
+// subtotal fecha (e manda em) o bloco que está logo acima. Recolher = esconder o detalhe e deixar
+// só a linha grande. Regra: TODO subtotal `calc` é recolhível, inclusive os aninhados
+// (Investimento Total dentro de Lucro c/ Mkt; LAI dentro de Resultado Líquido) — recolher o pai
+// leva os filhos junto (ver cfHiddenBy_). Recolher tudo = a leitura de PnL em 7 linhas.
+const CF_GROUPS = [
+  { k: 'ggr',         of: ['ggrBruto', 'freespin'] },
+  { k: 'ngr',         of: ['bonif', 'repasse', 'imposto', 'credito'] },
+  { k: 'mc',          of: ['custoVar'] },
+  { k: 'lbSemMkt',    of: ['custosFixos'] },
+  { k: 'investTotal', of: ['trafego', 'metaPago', 'influencer', 'creator'] },
+  { k: 'lbComMkt',    of: ['investTotal'] },
+  { k: 'ebitda',      of: ['despesas'] },
+  { k: 'lai',         of: ['resFin', 'depre'] },
+  { k: 'resLiq',      of: ['lai', 'irpj'] },
+];
+// linha → subtotal que a esconde, e subtotal → quantas linhas ele engole (contando as aninhadas)
+const CF_OWNER = {};
+CF_GROUPS.forEach(g => g.of.forEach(k => { CF_OWNER[k] = g.k; }));
+const CF_GROUP_KEYS = CF_GROUPS.map(g => g.k);
+const CF_GROUP_SIZE = {};
+CF_GROUP_KEYS.forEach(k => {
+  CF_GROUP_SIZE[k] = Object.keys(CF_OWNER).filter(x => {
+    for (let o = CF_OWNER[x]; o; o = CF_OWNER[o]) if (o === k) return true;
+    return false;
+  }).length;
+});
+// Está escondida se QUALQUER ancestral estiver recolhido (Lucro c/ Mkt recolhido some com Tráfego).
+function cfHiddenBy_(k, isOn) {
+  for (let o = CF_OWNER[k]; o; o = CF_OWNER[o]) if (isOn(o)) return true;
+  return false;
+}
+
 const CF_SRC_LBL = { act: 'BQ', pct: '% GGR', fix: 'pró-rata', calc: '=', off: 'off', memo: 'memo' };
 const CF_SRC_TIP = {
   act:  'Realizado — vem do BigQuery',
@@ -3965,6 +3998,8 @@ function TabDailyCashflow({ range, meta }) {
   const [loading, setLoading] = React.useState(!!ENDPOINT_URL);
   const [error, setError] = React.useState(null);
   const [view, setView] = usePersistedState('rvops:cfView', 'mtd');   // 'mtd' | 'diario'
+  // Subtotais recolhidos (array de chaves, persistido). Vazio = tudo aberto, que é o default.
+  const [collapsed, setCollapsed] = usePersistedState('rvops:cfCollapsed', []);
 
   React.useEffect(() => {
     if (!ENDPOINT_URL || !range) { setLoading(false); return; }
@@ -4011,6 +4046,25 @@ function TabDailyCashflow({ range, meta }) {
   const srcTag = (l) => <span className="cf-tag" title={CF_SRC_TIP[l.src]}>{CF_SRC_LBL[l.src]}</span>;
   const dayLbl = (iso) => iso.slice(8, 10) + '/' + iso.slice(5, 7);
 
+  // Recolher/expandir. Os TOTAIS acima já foram somados sobre CF_LINES inteiro — esconder linha
+  // é só apresentação, nenhum subtotal muda de valor.
+  const isOn = (k) => collapsed.indexOf(k) >= 0;
+  const toggle = (k) => setCollapsed(c => (c.indexOf(k) >= 0 ? c.filter(x => x !== k) : c.concat([k])));
+  const allOn = CF_GROUP_KEYS.every(isOn);
+  const visLines = CF_LINES.filter(l => !cfHiddenBy_(l.k, isOn));
+  const cfLabel = (l) => {
+    if (CF_GROUP_SIZE[l.k] == null) return l.label;
+    const on = isOn(l.k);
+    return (
+      <button type="button" className="cf-toggle" onClick={() => toggle(l.k)}
+        title={on ? `Expandir as ${CF_GROUP_SIZE[l.k]} linhas que compõem ${l.label}` : `Recolher as ${CF_GROUP_SIZE[l.k]} linhas que compõem ${l.label}`}>
+        <span className={'cf-chev' + (on ? ' is-on' : '')}>▾</span>
+        {l.label}
+        {on && <span className="cf-count">+{CF_GROUP_SIZE[l.k]}</span>}
+      </button>
+    );
+  };
+
   return (
     <React.Fragment>
       <div className="tab-header">
@@ -4030,6 +4084,13 @@ function TabDailyCashflow({ range, meta }) {
             <button className={`preset-btn ${view === 'mtd' ? 'active' : ''}`} onClick={() => setView('mtd')} title="Acumulado da janela, com os valores fixos pró-rateados pelos dias decorridos">MTD (pró-rata)</button>
             <button className={`preset-btn ${view === 'diario' ? 'active' : ''}`} onClick={() => setView('diario')} title="Uma coluna por dia — os fixos entram como mensal ÷ dias do mês">Diário</button>
           </div>
+          <span style={{ fontSize: 12, color: 'var(--text-muted)', marginLeft: 6 }}>Detalhe</span>
+          <div className="slicer-presets">
+            <button className="preset-btn" onClick={() => setCollapsed(allOn ? [] : CF_GROUP_KEYS.slice())}
+              title={allOn ? 'Abrir todos os subtotais' : 'Deixar só as linhas grandes do PnL — clique no subtotal para abrir de novo'}>
+              {allOn ? 'Expandir tudo' : 'Recolher tudo'}
+            </button>
+          </div>
         </div>
         {loading && <div className="ch-note">Carregando do BigQuery…</div>}
         {error && <div className="ch-note" style={{ color: 'var(--accent-red, #ef4444)' }}>Erro: {error}</div>}
@@ -4047,9 +4108,9 @@ function TabDailyCashflow({ range, meta }) {
               </tr>
             </thead>
             <tbody>
-              {CF_LINES.map(l => (
+              {visLines.map(l => (
                 <tr key={l.k} className={rowCls(l)}>
-                  <td style={{ textAlign: 'left' }}>{l.label}</td>
+                  <td style={{ textAlign: 'left' }}>{cfLabel(l)}</td>
                   <td style={{ textAlign: 'left' }}>{srcTag(l)}</td>
                   <td className={valCls(tot[l.k])}>{cfBRL(tot[l.k])}</td>
                   <td className="cf-dim">{l.k === 'ggr' ? '100%' : fmtPct(pctGgr(tot[l.k]), 1)}</td>
@@ -4083,9 +4144,9 @@ function TabDailyCashflow({ range, meta }) {
               </tr>
             </thead>
             <tbody>
-              {CF_LINES.map(l => (
+              {visLines.map(l => (
                 <tr key={l.k} className={rowCls(l)}>
-                  <td style={{ textAlign: 'left' }}>{l.label} {srcTag(l)}</td>
+                  <td style={{ textAlign: 'left' }}>{cfLabel(l)} {srcTag(l)}</td>
                   {days.map(x => <td key={x.d} className={valCls(x.v[l.k])}>{cfBRL(x.v[l.k])}</td>)}
                   <td className={'cf-total-col ' + valCls(tot[l.k])}>{cfBRL(tot[l.k])}</td>
                 </tr>

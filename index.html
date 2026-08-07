@@ -402,6 +402,24 @@
   /* subtotal: fundo levemente destacado + rótulo forte; a cor do VALOR segue o sinal (cf-neg/cf-pos) */
   .cf-table tr.cf-strong td { background: var(--surface-2); font-weight: 700; color: var(--text); }
   .cf-table tr.cf-strong td:first-child { color: var(--text); }
+  /* subtotal recolhível: o rótulo vira botão inline (herda fonte/cor, não muda a caixa da célula) */
+  .cf-table .cf-toggle {
+    background: none; border: 0; padding: 0; margin: 0; cursor: pointer;
+    font: inherit; color: inherit; text-align: left;
+    display: inline-flex; align-items: center; gap: 6px;
+  }
+  .cf-table .cf-toggle:hover, .cf-table .cf-toggle:hover .cf-chev { color: var(--accent-orange); }
+  .cf-table .cf-chev {
+    display: inline-block; width: 9px; font-size: 9px; line-height: 1;
+    color: var(--text-dim); transition: transform .12s ease;
+  }
+  .cf-table .cf-chev.is-on { transform: rotate(-90deg); }   /* recolhido = seta pra direita */
+  /* quantas linhas estão escondidas atrás do subtotal */
+  .cf-table .cf-count {
+    font-size: 9px; font-weight: 600; color: var(--text-dim);
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: 999px; padding: 0 5px; line-height: 14px;
+  }
   /* linha de detalhe dentro de Investimento Total */
   .cf-table tr.cf-sub td { color: var(--text-muted); font-size: 11px; }
   .cf-table tr.cf-sub td:first-child { padding-left: 28px; }
@@ -7632,6 +7650,57 @@ const CF_LINES = [{
   label: 'Meta gasta no mês (sai no mês seguinte)',
   src: 'memo'
 }];
+// BLOCOS RECOLHÍVEIS — num PnL as linhas que compõem um subtotal vêm ACIMA dele, então cada
+// subtotal fecha (e manda em) o bloco que está logo acima. Recolher = esconder o detalhe e deixar
+// só a linha grande. Regra: TODO subtotal `calc` é recolhível, inclusive os aninhados
+// (Investimento Total dentro de Lucro c/ Mkt; LAI dentro de Resultado Líquido) — recolher o pai
+// leva os filhos junto (ver cfHiddenBy_). Recolher tudo = a leitura de PnL em 7 linhas.
+const CF_GROUPS = [{
+  k: 'ggr',
+  of: ['ggrBruto', 'freespin']
+}, {
+  k: 'ngr',
+  of: ['bonif', 'repasse', 'imposto', 'credito']
+}, {
+  k: 'mc',
+  of: ['custoVar']
+}, {
+  k: 'lbSemMkt',
+  of: ['custosFixos']
+}, {
+  k: 'investTotal',
+  of: ['trafego', 'metaPago', 'influencer', 'creator']
+}, {
+  k: 'lbComMkt',
+  of: ['investTotal']
+}, {
+  k: 'ebitda',
+  of: ['despesas']
+}, {
+  k: 'lai',
+  of: ['resFin', 'depre']
+}, {
+  k: 'resLiq',
+  of: ['lai', 'irpj']
+}];
+// linha → subtotal que a esconde, e subtotal → quantas linhas ele engole (contando as aninhadas)
+const CF_OWNER = {};
+CF_GROUPS.forEach(g => g.of.forEach(k => {
+  CF_OWNER[k] = g.k;
+}));
+const CF_GROUP_KEYS = CF_GROUPS.map(g => g.k);
+const CF_GROUP_SIZE = {};
+CF_GROUP_KEYS.forEach(k => {
+  CF_GROUP_SIZE[k] = Object.keys(CF_OWNER).filter(x => {
+    for (let o = CF_OWNER[x]; o; o = CF_OWNER[o]) if (o === k) return true;
+    return false;
+  }).length;
+});
+// Está escondida se QUALQUER ancestral estiver recolhido (Lucro c/ Mkt recolhido some com Tráfego).
+function cfHiddenBy_(k, isOn) {
+  for (let o = CF_OWNER[k]; o; o = CF_OWNER[o]) if (isOn(o)) return true;
+  return false;
+}
 const CF_SRC_LBL = {
   act: 'BQ',
   pct: '% GGR',
@@ -7703,7 +7772,8 @@ function TabDailyCashflow({
   const [loading, setLoading] = React.useState(!!ENDPOINT_URL);
   const [error, setError] = React.useState(null);
   const [view, setView] = usePersistedState('rvops:cfView', 'mtd'); // 'mtd' | 'diario'
-
+  // Subtotais recolhidos (array de chaves, persistido). Vazio = tudo aberto, que é o default.
+  const [collapsed, setCollapsed] = usePersistedState('rvops:cfCollapsed', []);
   React.useEffect(() => {
     if (!ENDPOINT_URL || !range) {
       setLoading(false);
@@ -7780,6 +7850,27 @@ function TabDailyCashflow({
     title: CF_SRC_TIP[l.src]
   }, CF_SRC_LBL[l.src]);
   const dayLbl = iso => iso.slice(8, 10) + '/' + iso.slice(5, 7);
+
+  // Recolher/expandir. Os TOTAIS acima já foram somados sobre CF_LINES inteiro — esconder linha
+  // é só apresentação, nenhum subtotal muda de valor.
+  const isOn = k => collapsed.indexOf(k) >= 0;
+  const toggle = k => setCollapsed(c => c.indexOf(k) >= 0 ? c.filter(x => x !== k) : c.concat([k]));
+  const allOn = CF_GROUP_KEYS.every(isOn);
+  const visLines = CF_LINES.filter(l => !cfHiddenBy_(l.k, isOn));
+  const cfLabel = l => {
+    if (CF_GROUP_SIZE[l.k] == null) return l.label;
+    const on = isOn(l.k);
+    return /*#__PURE__*/React.createElement("button", {
+      type: "button",
+      className: "cf-toggle",
+      onClick: () => toggle(l.k),
+      title: on ? `Expandir as ${CF_GROUP_SIZE[l.k]} linhas que compõem ${l.label}` : `Recolher as ${CF_GROUP_SIZE[l.k]} linhas que compõem ${l.label}`
+    }, /*#__PURE__*/React.createElement("span", {
+      className: 'cf-chev' + (on ? ' is-on' : '')
+    }, "\u25BE"), l.label, on && /*#__PURE__*/React.createElement("span", {
+      className: "cf-count"
+    }, "+", CF_GROUP_SIZE[l.k]));
+  };
   return /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("div", {
     className: "tab-header"
   }, /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("h1", null, "Daily Cashflow"), /*#__PURE__*/React.createElement("div", {
@@ -7811,7 +7902,19 @@ function TabDailyCashflow({
     className: `preset-btn ${view === 'diario' ? 'active' : ''}`,
     onClick: () => setView('diario'),
     title: "Uma coluna por dia \u2014 os fixos entram como mensal \xF7 dias do m\xEAs"
-  }, "Di\xE1rio"))), loading && /*#__PURE__*/React.createElement("div", {
+  }, "Di\xE1rio")), /*#__PURE__*/React.createElement("span", {
+    style: {
+      fontSize: 12,
+      color: 'var(--text-muted)',
+      marginLeft: 6
+    }
+  }, "Detalhe"), /*#__PURE__*/React.createElement("div", {
+    className: "slicer-presets"
+  }, /*#__PURE__*/React.createElement("button", {
+    className: "preset-btn",
+    onClick: () => setCollapsed(allOn ? [] : CF_GROUP_KEYS.slice()),
+    title: allOn ? 'Abrir todos os subtotais' : 'Deixar só as linhas grandes do PnL — clique no subtotal para abrir de novo'
+  }, allOn ? 'Expandir tudo' : 'Recolher tudo'))), loading && /*#__PURE__*/React.createElement("div", {
     className: "ch-note"
   }, "Carregando do BigQuery\u2026"), error && /*#__PURE__*/React.createElement("div", {
     className: "ch-note",
@@ -7837,14 +7940,14 @@ function TabDailyCashflow({
     title: "Participa\xE7\xE3o da linha no GGR do per\xEDodo \u2014 mesma leitura da coluna B da aba PnL"
   }, "% do GGR"), /*#__PURE__*/React.createElement("th", {
     title: "Valor \xF7 dias da janela \u2014 quanto essa linha custa/rende por dia"
-  }, "M\xE9dia/dia"))), /*#__PURE__*/React.createElement("tbody", null, CF_LINES.map(l => /*#__PURE__*/React.createElement("tr", {
+  }, "M\xE9dia/dia"))), /*#__PURE__*/React.createElement("tbody", null, visLines.map(l => /*#__PURE__*/React.createElement("tr", {
     key: l.k,
     className: rowCls(l)
   }, /*#__PURE__*/React.createElement("td", {
     style: {
       textAlign: 'left'
     }
-  }, l.label), /*#__PURE__*/React.createElement("td", {
+  }, cfLabel(l)), /*#__PURE__*/React.createElement("td", {
     style: {
       textAlign: 'left'
     }
@@ -7873,14 +7976,14 @@ function TabDailyCashflow({
     title: fmtBR_(x.d)
   }, dayLbl(x.d))), /*#__PURE__*/React.createElement("th", {
     className: "cf-total-col"
-  }, "Total"))), /*#__PURE__*/React.createElement("tbody", null, CF_LINES.map(l => /*#__PURE__*/React.createElement("tr", {
+  }, "Total"))), /*#__PURE__*/React.createElement("tbody", null, visLines.map(l => /*#__PURE__*/React.createElement("tr", {
     key: l.k,
     className: rowCls(l)
   }, /*#__PURE__*/React.createElement("td", {
     style: {
       textAlign: 'left'
     }
-  }, l.label, " ", srcTag(l)), days.map(x => /*#__PURE__*/React.createElement("td", {
+  }, cfLabel(l), " ", srcTag(l)), days.map(x => /*#__PURE__*/React.createElement("td", {
     key: x.d,
     className: valCls(x.v[l.k])
   }, cfBRL(x.v[l.k]))), /*#__PURE__*/React.createElement("td", {
