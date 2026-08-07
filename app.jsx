@@ -2918,6 +2918,10 @@ function buildFarolGroups_(MM, f, range, useYtd, sparkByKey, scenLabel) {
   const roasFtdCard = dressPlain(MM.roasFtd ? { ...MM.roasFtd, m1: roasFtdM1 != null ? roasFtdM1 : (MM.roasFtd.m1 != null ? MM.roasFtd.m1 : null) } : null);
   const roasM0M1 = div_(MM.depM0Total && MM.depM0Total.m1, MM.invest && MM.invest.m1);
   const roasDepM0Card = dressPlain(f.roasDepM0 ? { ...f.roasDepM0, m1: roasM0M1 != null ? roasM0M1 : (f.roasDepM0.m1 != null ? f.roasDepM0.m1 : null) } : null);
+  // Multiplicador M0 = Dep M0 ÷ FTD Amount (ao lado do ROAS Dep M0, que divide pelo investimento).
+  // Mesmo tratamento do M-1: razão dos M-1 dos componentes, com fallback pro m1 do próprio card.
+  const multM0M1 = div_(MM.depM0Total && MM.depM0Total.m1, MM.ftdAmount && MM.ftdAmount.m1);
+  const multM0Card = dressPlain(f.multM0 ? { ...f.multM0, m1: multM0M1 != null ? multM0M1 : (f.multM0.m1 != null ? f.multM0.m1 : null) } : null);
   // Retenção agora rotula a BASE (Depósito) em cada card — deixa espaço p/ os cards de GGR virem depois na mesma
   // seção. Relabel SÓ no Farol (não toca o label global do metric → a aba Retenções segue "Retenção M0→M1").
   const relabelRet = (m, label) => (m ? { ...m, label } : m);
@@ -2931,10 +2935,15 @@ function buildFarolGroups_(MM, f, range, useYtd, sparkByKey, scenLabel) {
   // Retenção/FreeSpins/Bonif NÃO mudam por cenário, então continuam "Orçado" mesmo em Conservador/Forecast).
   const scenL = scenLabel || SCEN_BP_LABEL;
   const bl = (m, label) => m ? { ...m, bpLabel: label } : m;
+  // Rótulo POR CARD, não por tela: só quem foi de fato re-anchorado pelo cenário (scenBp, do
+  // applyScenarioBp_) ou pelas razões do Forecast (fcBp, do applyFcRatios_) leva o nome do cenário.
+  // O resto continua "Orçado" — é o BP base, e chamá-lo de "Forecast" seria mentira. Isso passou a
+  // importar quando a janela pode ter plano de receita sem plano de aquisição (coberturas diferentes).
+  const blS = (m) => bl(m, (m && (m.scenBp || m.fcBp)) ? scenL : SCEN_BP_LABEL);
   return [
-    { title: 'Aquisição', cards: [bl(ws(dress(MM.invest), 'invest'), scenL), bl(ws(dress(MM.ftdAmount), 'ftdAmount'), scenL), bl(ws(roasFtdCard, 'roasFtd'), scenL), bl(ws(dressPlain(f.roasDepD0), 'roasDepD0'), scenL), bl(ws(dressPlain(f.cac), 'cac'), scenL), bl(ws(dressPlain(f.ticketFtd), 'ticketFtd'), scenL)] },
-    { title: 'Depósito M0', cards: [bl(dress(MM.depM0Total), scenL), bl(roasDepM0Card, scenL)] },
-    { title: 'Volume & GGR', cards: [bl(ws(dress(MM.depTotal), 'depTotal'), scenL), bl(ws(dress(turnoverCard), 'turnover'), scenL), bl(ws(dress(MM.ggr), 'ggr'), scenL), bl(ws(dressPlain(MM.ggrPerDep), 'ggrPerDep'), scenL), bl(ws(dressPlain(holdCard), 'hold'), scenL), bl(ws(rolloverCard, 'rollover'), scenL), bl(ws(dressPlain(f.freespinDep), 'freespinDep'), (f.freespinDep && f.freespinDep.fcBp) ? scenL : SCEN_BP_LABEL), bl(ws(dressPlain(f.bonusDep), 'bonusDep'), (f.bonusDep && f.bonusDep.fcBp) ? scenL : SCEN_BP_LABEL)] },
+    { title: 'Aquisição', cards: [blS(ws(dress(MM.invest), 'invest')), blS(ws(dress(MM.ftdAmount), 'ftdAmount')), blS(ws(roasFtdCard, 'roasFtd')), blS(ws(dressPlain(f.roasDepD0), 'roasDepD0')), blS(ws(dressPlain(f.cac), 'cac')), blS(ws(dressPlain(f.ticketFtd), 'ticketFtd'))] },
+    { title: 'Depósito M0', cards: [blS(dress(MM.depM0Total)), blS(roasDepM0Card), blS(multM0Card)] },
+    { title: 'Volume & GGR', cards: [blS(ws(dress(MM.depTotal), 'depTotal')), blS(ws(dress(turnoverCard), 'turnover')), blS(ws(dress(MM.ggr), 'ggr')), blS(ws(dressPlain(MM.ggrPerDep), 'ggrPerDep')), blS(ws(dressPlain(holdCard), 'hold')), blS(ws(rolloverCard, 'rollover')), blS(ws(dressPlain(f.freespinDep), 'freespinDep')), blS(ws(dressPlain(f.bonusDep), 'bonusDep'))] },
     // Retenção: Depósito (view de coorte, meta fixa do plano) + GGR (ngr net, mesma fórmula/janela, SEM meta).
     // ⚠️ o Depósito M3+ usa o residual da FAROL; o GGR M3+ é ratio de coorte puro — ver tooltip/nota.
     { title: 'Retenção', cards: [
@@ -3000,7 +3009,11 @@ const SCEN_BP_LABEL = (CENARIOS.find(c => c.id === 'bp') || CENARIOS[0]).label;
 function applyScenarioBp_(M, farol, scenData, chFilter) {
   if (!scenData) return { M, farol };
   const pos = (v) => (v != null && isFinite(v) && v !== 0) ? v : null;
-  const setBp = (m, v) => m ? { ...m, bp: pos(v) } : m;
+  // scenBp marca que ESTE card foi re-anchorado pelo cenário. O rótulo do card segue isso: sem a
+  // marca, o "Orçado/Conservador/Forecast" seria mentira — o card estaria mostrando o BP base.
+  // Importa desde que a janela pode cobrir meses que só têm plano de receita (DB Plan_RevOps vai de
+  // abr a dez) e nenhum plano de aquisição (DB Plan_Growth Mkt só tem agosto).
+  const setBp = (m, v) => m ? { ...m, bp: pos(v), scenBp: pos(v) != null } : m;
   let newM = M, newFarol = farol;
   const sel = chList_(chFilter);
   // --- Aquisição + Dep M0 (DB Plan_Growth Mkt, por canal) — reescopa por chFilter ---
@@ -3029,6 +3042,7 @@ function applyScenarioBp_(M, farol, scenData, chFilter) {
       ticketFtd:  setBp(newFarol.ticketFtd,  ftd ? ftdAmt / ftd : null),
       roasDepD0:  setBp(newFarol.roasDepD0,  inv ? depD0 / inv : null),
       roasDepM0:  setBp(newFarol.roasDepM0,  inv ? depM0 / inv : null),
+      multM0:     setBp(newFarol.multM0,     ftdAmt ? depM0 / ftdAmt : null),
     };
   }
   // --- Receita / Volume de depósito (DB Plan_RevOps, house-level) — SÓ Total da Casa (a aba não tem canal) ---
@@ -3049,10 +3063,15 @@ function applyScenarioBp_(M, farol, scenData, chFilter) {
     // Grupo "Depósito M0" (SÓ Total da Casa): Dep M0 Total = M0 tt do Plan_RevOps (house.m0tt) e ROAS Dep M0 =
     // m0tt ÷ Investimento do Plan_RevOps (house.invest) = ~1,9x. O allAgg do Plan_Growth subconta o invest e
     // inflava esse ROAS (2,55x). ⚠️ NÃO mexe na AQUISIÇÃO (Investimento/ROAS FTD/CAC/Tkt/Dep D0 seguem no allAgg).
-    const m0 = house.m0tt || 0, hInv = house.invest || 0;
+    const m0 = house.m0tt || 0, hInv = house.invest || 0, hFtdAmt = house.ftdAmountTt || 0;
     if (m0 > 0) {
       newM = { ...newM, depM0Total: setBp(newM.depM0Total, m0) };
-      newFarol = { ...newFarol, roasDepM0: setBp(newFarol.roasDepM0, hInv ? m0 / hInv : null) };
+      newFarol = { ...newFarol,
+        roasDepM0: setBp(newFarol.roasDepM0, hInv ? m0 / hInv : null),
+        // Multiplicador M0 house = M0 tt ÷ FTD amount tt do MESMO bloco do Plan_RevOps. Não usa o
+        // ftdAmount do Plan_Growth: aquela aba subconta (é por canal) e inflaria o multiplicador.
+        multM0:    setBp(newFarol.multM0,    hFtdAmt ? m0 / hFtdAmt : null),
+      };
     }
   }
   return { M: newM, farol: newFarol };
@@ -3101,7 +3120,16 @@ function TabFarol({ M, farol, range, ytd, ftdByRegister, chFilter, planScenarios
   const scenAllowed = (id) => !allowedScen || allowedScen.indexOf(id) >= 0;
   const visCenarios = CENARIOS.filter(c => scenAllowed(c.id));   // só os cenários permitidos p/ este usuário
   const scenAvail = {};
-  CENARIOS.forEach(c => { const s = planScenarios && planScenarios[c.id]; scenAvail[c.id] = !!(s && s.allAgg && s.allAgg.invest > 0); });
+  // Um cenário está disponível se tem plano de AQUISIÇÃO (DB Plan_Growth Mkt, por canal) OU de
+  // RECEITA (DB Plan_RevOps, house) na janela. ⚠️ Antes o gate olhava só `allAgg.invest > 0`, e as
+  // duas abas têm COBERTURA DIFERENTE: Growth Mkt só tem 2026-08; Plan_RevOps vai de abr a dez/26.
+  // Resultado: qualquer janela sem agosto (ex.: 01/04→30/06) derrubava hasScen, o switcher sumia da
+  // tela e NENHUM cenário era aplicado — os cards caíam no BP base, que só tem junho embutido
+  // (BP_DATA) e por isso mostrava 30 dias de plano numa janela de 91, com Dep M0 e Depósitos Totais
+  // no mesmo R$ 28,20M (no BP de junho depTotal == m0tt). Olhando as duas fontes, a janela passa a
+  // usar o plano de receita dia a dia e o switcher volta.
+  const scenHasHouse = (s) => { const h = s && s.house; return !!(h && ((h.totalDeposit || 0) > 0 || (h.ggr || 0) > 0 || (h.turnover || 0) > 0 || (h.m0tt || 0) > 0)); };
+  CENARIOS.forEach(c => { const s = planScenarios && planScenarios[c.id]; scenAvail[c.id] = !!(s && ((s.allAgg && s.allAgg.invest > 0) || scenHasHouse(s))); });
   const hasScen = visCenarios.some(c => scenAvail[c.id]);   // só conta cenário permitido E com plano na janela
   const firstScen = (visCenarios.find(c => scenAvail[c.id]) || visCenarios[0] || CENARIOS[0]).id;   // default respeita o acesso
   const activeScen = (scenAllowed(scen) && scenAvail[scen]) ? scen : firstScen;   // cenário persistido só vale se permitido
@@ -4610,12 +4638,32 @@ function buildFarolMetrics_(M, comp, channels, ggrChannels, bp, filter, ggrSafra
       if (hh.invest > 0) roasDepM0Bp = (hh.m0tt || 0) / hh.invest;
     }
   }
+  // BP do Multiplicador M0 = mesma regra do ROAS Dep M0, trocando o denominador INVESTIMENTO pelo
+  // FTD AMOUNT: razão do MÊS INTEIRO do plano, nunca a soma prorateada da janela.
+  let multM0Bp = div(dm0.bp, fa.bp);
+  if (bpM) {
+    if (sel.length) {
+      let dm = 0, fam = 0;
+      sel.forEach(ch => { const b = bpM.byChannel && bpM.byChannel[ch]; if (b) { dm += b.depM0 || 0; fam += b.ftdAmount || 0; } });
+      if (fam > 0) multM0Bp = dm / fam;
+    } else if (filter && filter.scope === 'growth') {
+      const g = bpM.growthAgg || {};
+      if (g.ftdAmount > 0) multM0Bp = (g.depM0 || 0) / g.ftdAmount;
+    } else {
+      const hh = bpM.house || {};
+      if (hh.ftdAmountTt > 0) multM0Bp = (hh.m0tt || 0) / hh.ftdAmountTt;
+    }
+  }
   return {
     cac:         mk('CAC', 'brl', div(inv.act, ftdQtyM), div(B.invest, B.ftd), div(inv.m1, ftdQtyL), true),   // custo: menor=melhor
     ticketFtd:   mk('Tkt Médio FTD', 'brl', div(fa.act, ftdQtyM), div(B.ftdAmount, B.ftd), div(fa.m1, ftdQtyL)),
     roasDepD0:   mk('ROAS Dep D0', 'multiple', div(depD0M, inv.act), div(B.depD0, B.invest), div(depD0Lm, inv.m1)),
     // BP = razão do MÊS INTEIRO do plano (roasDepM0Bp, calculado acima) — NÃO prorateada pela janela.
     roasDepM0:   mk('ROAS Dep M0', 'multiple', div(dm0.act, inv.act), roasDepM0Bp, div(dm0.m1, inv.m1)),
+    // Multiplicador M0 = Dep M0 ÷ FTD Amount — quanto cada R$ de PRIMEIRO depósito virou de depósito
+    // no mês. Mesma família do ROAS Dep M0 (que divide pelo investimento); aqui a base é o próprio FTD,
+    // então mede reciclagem do depositante e não eficiência de mídia.
+    multM0:      mk('Multiplicador M0', 'multiple', div(dm0.act, fa.act), multM0Bp, div(dm0.m1, fa.m1)),
     ...safraMargem,
     // FreeSpins/Bonif = custos (menor=melhor). BP plano: meta fixa (flat) de % sobre depósitos. Sem trend (pedido do Luis).
     // M-1 = freespin/bonus do mês anterior (mesma janela) ÷ Depósitos Totais do mês anterior (dt.m1).
