@@ -6045,23 +6045,10 @@ function buildFarolGroups_(MM, f, range, useYtd, sparkByKey, scenLabel) {
     ...f.multM0,
     m1: multM0M1 != null ? multM0M1 : f.multM0.m1 != null ? f.multM0.m1 : null
   } : null);
-  // ROAS GGR M0 — meta DERIVADA do plano, não constante: ROAS Dep M0 do plano × GGR/Dep do plano.
-  // (quanto depósito M0 cada real de mídia compra) × (quanto daquele depósito vira receita). Assim ela
-  // se move junto com o toggle de cenário, em vez de ficar num número solto. Ago/26 Forecast: 1,70 ×
-  // 15,0% = 25,5% — bate com os 23,72% que a aba Multiplicadores já usava como meta editável.
-  // ⚠️ CAVEAT: o GGR/Dep do plano é BLEND da casa (todas as safras); aqui ele é aplicado a um numerador
-  // só de M0. Sem meta de margem POR SAFRA no plano, é a melhor âncora disponível — e é transparente.
-  // Herda scenBp/fcBp dos dois componentes p/ o rótulo dizer "Forecast" só quando de fato é o do cenário.
-  const rdm = f.roasDepM0 || {},
-    gpd = MM.ggrPerDep || {};
-  const roasGgrM0Bp = rdm.bp != null && gpd.bp != null ? rdm.bp * gpd.bp : null;
-  const roasGgrM0Card = dressPlain(f.roasGgrM0 ? {
-    ...f.roasGgrM0,
-    bp: roasGgrM0Bp,
-    pctBp: roasGgrM0Bp && f.roasGgrM0.act != null ? f.roasGgrM0.act / roasGgrM0Bp : null,
-    scenBp: !!(rdm.scenBp || gpd.scenBp),
-    fcBp: !!(rdm.fcBp || gpd.fcBp)
-  } : null);
+  // ROAS GGR M0 — meta FIXA por escopo (ROAS_GGR_M0_BP), já resolvida em buildFarolMetrics_. Sem scenBp/
+  // fcBp de propósito: a meta não muda por cenário, então o card diz "Orçado" mesmo em Forecast — igual
+  // FreeSpins/Dep e Bonificação/Dep. Maior=melhor, então o farol acende sem inverter.
+  const roasGgrM0Card = dressPlain(f.roasGgrM0);
   // Retenção agora rotula a BASE (Depósito) em cada card — deixa espaço p/ os cards de GGR virem depois na mesma
   // seção. Relabel SÓ no Farol (não toca o label global do metric → a aba Retenções segue "Retenção M0→M1").
   const relabelRet = (m, label) => m ? {
@@ -9048,6 +9035,21 @@ function deriveLiveM_(M, filter, comp, retCh, depCh, bp, ggrRetCh, turnRetCh) {
 // D0 e FreeSpins/Bonif = dep_d0/freespin/bonus do mês anterior POR CANAL (depD0Lm/freespinLm/bonusLm do
 // backend) ÷ invest/depTotal do M-1 → some no mock (sem *Lm) e no YTD.
 // BP: CAC/Tkt/ROAS Dep D0/M0 saem do plano per-canal (bp.byChannel); FreeSpins/Bonif não têm meta → farol off.
+// Meta do ROAS GGR M0 — FIXA e por ESCOPO (definida pelo Luis, 2026-08-07). Não vem do plano: a DB
+// Plan_RevOps tem meta de GGR/Dep só no blend da casa (todas as safras), e ancorar um numerador de M0
+// numa margem de blend seria aproximação disfarçada de BP. Constante, na mesma linha de FreeSpins/Dep
+// e Bonificação/Dep — por isso o card diz "Orçado" em qualquer cenário.
+// Total da Casa (0,25) > Growth (0,15) porque o numerador do Total soma o GGR de orgânico/afiliados em
+// cima do MESMO denominador (só existe mídia paga) — é ROAS blended, e é esse o ponto do slicer.
+// Sanidade: 0,25 bate com ROAS Dep M0 do plano × GGR/Dep do plano (1,70 × 15,0% = 25,5%, ago/26 fc) e
+// com os 23,72% que a aba Multiplicadores já usa como meta editável.
+const ROAS_GGR_M0_BP = {
+  all: 0.25,
+  growth: 0.15
+};
+// Qualquer recorte (canal específico ou escopo Growth) usa a meta de growth: 0,25 só faz sentido pra casa
+// inteira, onde o GGR não-growth entra no numerador.
+const ROAS_GGR_M0_META = filter => chList_(filter).length || filter && filter.scope === 'growth' ? ROAS_GGR_M0_BP.growth : ROAS_GGR_M0_BP.all;
 function buildFarolMetrics_(M, comp, channels, ggrChannels, bp, filter, ggrSafra) {
   const sel = chList_(filter);
   const inSel = sel.length ? ch => sel.includes(ch) : filter && filter.scope === 'growth' ? ch => isGrowthCh_(ch) : () => true;
@@ -9225,9 +9227,7 @@ function buildFarolMetrics_(M, comp, channels, ggrChannels, bp, filter, ggrSafra
     // no mês. Mesma família do ROAS Dep M0 (que divide pelo investimento); aqui a base é o próprio FTD,
     // então mede reciclagem do depositante e não eficiência de mídia.
     multM0: mk('Multiplicador M0', 'multiple', div(dm0.act, fa.act), multM0Bp, div(dm0.m1, fa.m1)),
-    // Meta fica null aqui: ela é DERIVADA do plano (ROAS Dep M0 × GGR/Dep) e só dá pra montar depois que o
-    // cenário foi aplicado — ver roasGgrM0Card em buildFarolGroups_.
-    roasGgrM0: mk('ROAS GGR M0', 'multiple', div(ggrM0Sum, inv.act), null, div(ggrM0SumL, inv.m1)),
+    roasGgrM0: mk('ROAS GGR M0', 'multiple', div(ggrM0Sum, inv.act), ROAS_GGR_M0_META(filter), div(ggrM0SumL, inv.m1)),
     ...safraMargem,
     // FreeSpins/Bonif = custos (menor=melhor). BP plano: meta fixa (flat) de % sobre depósitos. Sem trend (pedido do Luis).
     // M-1 = freespin/bonus do mês anterior (mesma janela) ÷ Depósitos Totais do mês anterior (dt.m1).
