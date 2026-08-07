@@ -8203,10 +8203,20 @@ function TabMetricasDia({
     // As colunas T+1 (P75) e T+2 (P90) — percentis da distribuição das safras diárias — saíram da
     // tabela a pedido do Luis (06/08). A distribuição (`dist`) continua sendo montada porque é ela
     // que separa safra com base > 0; se um dia os degraus voltarem, é só reinserir mddPct_ aqui.
+    // Por que a linha está vazia: sem safra madura (`imatura`) é MUITO diferente de "não tem dado".
+    // A tela mostrava só "—" nos dois casos e a pergunta voltava ("pq tem uns q ainda faltam a
+    // info?"). `faltamDias` = quantos dias a safra mais nova ainda precisa envelhecer p/ a primeira
+    // entrar na conta; se nem isso dá pra saber (janela toda velha demais), fica só o motivo.
+    const imatura = !missing && days.length === 0 && byDay.length > 0;
+    const ultima = byDay.length ? byDay[byDay.length - 1].date : null;
+    // isoDiffDays_(a, b) = b − a. Idade da safra MAIS VELHA da janela = dataMax − primeiro dia.
+    const faltamDias = imatura && ultima && dataMax ? Math.max(1, row.mat - isoDiffDays_(byDay[0].date, dataMax)) : null;
     return {
       ...row,
       n: days.length,
       real,
+      imatura,
+      faltamDias,
       bpVal: row.bp && bpScope ? bpScope[row.bp] : null
     };
   });
@@ -8293,7 +8303,15 @@ function TabMetricasDia({
     style: {
       fontWeight: 600
     }
-  }, val(r.real, r.fmt)), /*#__PURE__*/React.createElement("td", {
+  }, val(r.real, r.fmt), r.imatura && /*#__PURE__*/React.createElement("span", {
+    style: {
+      fontWeight: 400,
+      fontSize: '11px',
+      color: 'var(--text-muted)',
+      marginLeft: 6
+    },
+    title: `Esta métrica precisa de ${r.mat} dia(s) de maturação: uma safra só entra na conta depois de fechar a janela dela. Nenhuma safra da janela selecionada chegou lá (dado vai até ${dataMax ? fmtBR_(dataMax) : '—'}). Contar as safras novas afundaria a métrica com numerador incompleto. Amplie a janela para trás para ver esta linha.`
+  }, "matura em ", r.faltamDias != null ? r.faltamDias + 'd' : r.mat + 'd')), /*#__PURE__*/React.createElement("td", {
     style: {
       fontWeight: 700,
       color: r.bpVal != null ? 'var(--accent-yellow)' : 'var(--text-muted)'
