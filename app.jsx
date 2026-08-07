@@ -4123,8 +4123,9 @@ function TabDailyCashflow({ range, meta }) {
 // ============================================================
 // MÉTRICAS DO DIA A DIA — a escada do estudo "Ponte BP × Métricas de Retenção" ao vivo.
 //   Realizado = agregado do período (soma as bases, depois divide — não é média de %).
-//   T+1 (P75) / T+2 (P90) = percentis da DISTRIBUIÇÃO das safras diárias do período. São degraus
-//     internos: "replicar no todo o que o melhor quartil/decil dos nossos próprios dias já faz".
+//   (As colunas T+1 (P75) / T+2 (P90) — percentis da distribuição das safras diárias, "degraus
+//     internos" — foram REMOVIDAS da tabela em 06/08/2026 a pedido do Luis. O helper mddPct_ ficou,
+//     é o único ponto a religar se voltarem.)
 //   Meta BP = nível exigido pela curva calibrada na Lottu (constante do estudo, não sai do nosso dado).
 //     Só existe p/ Geral/Google/Meta — outros recortes mostram "—". As 3 taxas de passagem têm meta
 //     DERIVADA (marcada com †) — ver o bloco MDD_DERIV logo abaixo.
@@ -4257,18 +4258,14 @@ function TabMetricasDia({ retencaoFaixa, chFilter, meta, retFaixaLive }) {
     const missing = (row.needs === 'pass' && !(tot._pass > 0)) || (row.needs === 'sem' && !(tot.vs0 > 0) && !(tot.cs1 > 0));
     const real = missing ? null : row.of(tot);
     const dist = missing ? [] : days.filter(d => d.qtd > 0).map(row.of);
+    // As colunas T+1 (P75) e T+2 (P90) — percentis da distribuição das safras diárias — saíram da
+    // tabela a pedido do Luis (06/08). A distribuição (`dist`) continua sendo montada porque é ela
+    // que separa safra com base > 0; se um dia os degraus voltarem, é só reinserir mddPct_ aqui.
     return {
       ...row, n: days.length, real,
-      p75: missing ? null : mddPct_(dist, 0.75),
-      p90: missing ? null : mddPct_(dist, 0.90),
       bpVal: (row.bp && bpScope) ? bpScope[row.bp] : null,
     };
   });
-  const gapCell = (v, base, fmt) => {
-    if (v == null || base == null) return null;
-    const d = fmt === 'pct' ? (v - base) : (v - base);
-    return <span style={{ color: 'var(--text-muted)', fontSize: '11px', marginLeft: '6px' }}>{(d >= 0 ? '+' : '') + (fmt === 'pct' ? fmtPct(d, 1) : fmtMultiple(d))}</span>;
-  };
   const val = (v, fmt) => v == null ? '—' : (fmt === 'pct' ? fmtPct(v, 1) : fmtMultiple(v));
   const chLbl = chLabel_(chFilter);
   const faixaLbl = faixaSel.length === 0 ? 'todas as faixas' : (faixaSel.length <= 2 ? faixaSel.map(fxLabel_).join(' + ') : faixaSel.length + ' faixas');
@@ -4278,7 +4275,7 @@ function TabMetricasDia({ retencaoFaixa, chFilter, meta, retFaixaLive }) {
       <div className="tab-header">
         <div>
           <h1>Métricas do dia a dia</h1>
-          <div className="subtitle">A escada que sustenta a curva de depósito do BP — realizado, os degraus internos (P75/P90 das safras diárias) e o nível que a curva-meta exige</div>
+          <div className="subtitle">A escada que sustenta a curva de depósito do BP — realizado do período e o nível que a curva-meta exige</div>
         </div>
       </div>
       {!retFaixaLive && (
@@ -4310,8 +4307,6 @@ function TabMetricasDia({ retencaoFaixa, chFilter, meta, retFaixaLive }) {
             <tr>
               <th>Métrica do dia a dia</th>
               <th title="Agregado do período: soma as bases e divide (não é média das % diárias). Só safras já maduras p/ a janela da métrica.">Realizado</th>
-              <th title="Percentil 75 da distribuição das safras diárias do período — o degrau alcançável replicando internamente o melhor quartil dos nossos próprios dias.">T+1 (P75)</th>
-              <th title="Percentil 90 das safras diárias do período.">T+2 (P90)</th>
               <th title="Nível exigido pela curva-meta calibrada na Lottu (constante do estudo, não deriva do nosso dado). Só Geral/Google/Meta.">Meta BP</th>
               <th title="Nº de safras diárias que já fecharam a janela da métrica e entraram na conta.">Safras</th>
             </tr>
@@ -4321,8 +4316,6 @@ function TabMetricasDia({ retencaoFaixa, chFilter, meta, retFaixaLive }) {
               <tr key={r.key}>
                 <td className="ch-name">{r.label}</td>
                 <td style={{ fontWeight: 600 }}>{val(r.real, r.fmt)}</td>
-                <td>{val(r.p75, r.fmt)}{gapCell(r.p75, r.real, r.fmt)}</td>
-                <td>{val(r.p90, r.fmt)}{gapCell(r.p90, r.real, r.fmt)}</td>
                 <td style={{ fontWeight: 700, color: r.bpVal != null ? 'var(--accent-yellow)' : 'var(--text-muted)' }}>
                   {r.bp == null ? <span style={{ fontWeight: 400, fontStyle: 'italic' }}>indicativo</span> : (
                     <React.Fragment>
@@ -4341,13 +4334,11 @@ function TabMetricasDia({ retencaoFaixa, chFilter, meta, retFaixaLive }) {
         </table></div>
         <div className="ch-note">
           <strong>Realizado</strong> = agregado do período (soma as bases, depois divide — não é média das % diárias).
-          <strong> T+1 (P75)</strong> e <strong>T+2 (P90)</strong> são percentis da distribuição das <strong>safras
-          diárias</strong> do período, sem ponderar por volume: são degraus internos — “replicar no todo o que o melhor
-          quartil dos nossos próprios dias já faz”, não uma meta externa. <strong>Meta BP</strong> é o nível exigido pela
+          {' '}<strong>Meta BP</strong> é o nível exigido pela
           curva calibrada na Lottu; é constante do estudo, <strong>não deriva do nosso dado</strong>, e só existe p/ Geral,
           Google e Meta — em qualquer outro canal, ou com 2+ canais selecionados, fica “—”.
           {' '}<strong>⚠️ A Meta BP não muda com Faixa nem com Grupo</strong>: o estudo calibrou a curva no nível do canal,
-          não por faixa de FTD nem por grupo de risco. Ao filtrar, Realizado e P75/P90 seguem o recorte, mas a meta continua
+          não por faixa de FTD nem por grupo de risco. Ao filtrar, o Realizado segue o recorte, mas a meta continua
           sendo a do canal inteiro — use como referência de direção, não como alvo daquele segmento.
           {' '}<strong>As 3 taxas de passagem trazem meta DERIVADA (marcada com †)</strong>: o estudo não mede passagem —
           a curva Lottu só tem retenção, multiplicador e semanal. O alvo é construído como <em>passagem realizada em

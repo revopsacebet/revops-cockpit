@@ -7906,8 +7906,9 @@ function TabDailyCashflow({
 // ============================================================
 // MÉTRICAS DO DIA A DIA — a escada do estudo "Ponte BP × Métricas de Retenção" ao vivo.
 //   Realizado = agregado do período (soma as bases, depois divide — não é média de %).
-//   T+1 (P75) / T+2 (P90) = percentis da DISTRIBUIÇÃO das safras diárias do período. São degraus
-//     internos: "replicar no todo o que o melhor quartil/decil dos nossos próprios dias já faz".
+//   (As colunas T+1 (P75) / T+2 (P90) — percentis da distribuição das safras diárias, "degraus
+//     internos" — foram REMOVIDAS da tabela em 06/08/2026 a pedido do Luis. O helper mddPct_ ficou,
+//     é o único ponto a religar se voltarem.)
 //   Meta BP = nível exigido pela curva calibrada na Lottu (constante do estudo, não sai do nosso dado).
 //     Só existe p/ Geral/Google/Meta — outros recortes mostram "—". As 3 taxas de passagem têm meta
 //     DERIVADA (marcada com †) — ver o bloco MDD_DERIV logo abaixo.
@@ -8199,26 +8200,16 @@ function TabMetricasDia({
     const missing = row.needs === 'pass' && !(tot._pass > 0) || row.needs === 'sem' && !(tot.vs0 > 0) && !(tot.cs1 > 0);
     const real = missing ? null : row.of(tot);
     const dist = missing ? [] : days.filter(d => d.qtd > 0).map(row.of);
+    // As colunas T+1 (P75) e T+2 (P90) — percentis da distribuição das safras diárias — saíram da
+    // tabela a pedido do Luis (06/08). A distribuição (`dist`) continua sendo montada porque é ela
+    // que separa safra com base > 0; se um dia os degraus voltarem, é só reinserir mddPct_ aqui.
     return {
       ...row,
       n: days.length,
       real,
-      p75: missing ? null : mddPct_(dist, 0.75),
-      p90: missing ? null : mddPct_(dist, 0.90),
       bpVal: row.bp && bpScope ? bpScope[row.bp] : null
     };
   });
-  const gapCell = (v, base, fmt) => {
-    if (v == null || base == null) return null;
-    const d = fmt === 'pct' ? v - base : v - base;
-    return /*#__PURE__*/React.createElement("span", {
-      style: {
-        color: 'var(--text-muted)',
-        fontSize: '11px',
-        marginLeft: '6px'
-      }
-    }, (d >= 0 ? '+' : '') + (fmt === 'pct' ? fmtPct(d, 1) : fmtMultiple(d)));
-  };
   const val = (v, fmt) => v == null ? '—' : fmt === 'pct' ? fmtPct(v, 1) : fmtMultiple(v);
   const chLbl = chLabel_(chFilter);
   const faixaLbl = faixaSel.length === 0 ? 'todas as faixas' : faixaSel.length <= 2 ? faixaSel.map(fxLabel_).join(' + ') : faixaSel.length + ' faixas';
@@ -8227,7 +8218,7 @@ function TabMetricasDia({
     className: "tab-header"
   }, /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("h1", null, "M\xE9tricas do dia a dia"), /*#__PURE__*/React.createElement("div", {
     className: "subtitle"
-  }, "A escada que sustenta a curva de dep\xF3sito do BP \u2014 realizado, os degraus internos (P75/P90 das safras di\xE1rias) e o n\xEDvel que a curva-meta exige"))), !retFaixaLive && /*#__PURE__*/React.createElement("div", {
+  }, "A escada que sustenta a curva de dep\xF3sito do BP \u2014 realizado do per\xEDodo e o n\xEDvel que a curva-meta exige"))), !retFaixaLive && /*#__PURE__*/React.createElement("div", {
     style: {
       background: 'rgba(239,68,68,.12)',
       border: '1px solid rgba(239,68,68,.45)',
@@ -8291,10 +8282,6 @@ function TabMetricasDia({
   }, /*#__PURE__*/React.createElement("thead", null, /*#__PURE__*/React.createElement("tr", null, /*#__PURE__*/React.createElement("th", null, "M\xE9trica do dia a dia"), /*#__PURE__*/React.createElement("th", {
     title: "Agregado do per\xEDodo: soma as bases e divide (n\xE3o \xE9 m\xE9dia das % di\xE1rias). S\xF3 safras j\xE1 maduras p/ a janela da m\xE9trica."
   }, "Realizado"), /*#__PURE__*/React.createElement("th", {
-    title: "Percentil 75 da distribui\xE7\xE3o das safras di\xE1rias do per\xEDodo \u2014 o degrau alcan\xE7\xE1vel replicando internamente o melhor quartil dos nossos pr\xF3prios dias."
-  }, "T+1 (P75)"), /*#__PURE__*/React.createElement("th", {
-    title: "Percentil 90 das safras di\xE1rias do per\xEDodo."
-  }, "T+2 (P90)"), /*#__PURE__*/React.createElement("th", {
     title: "N\xEDvel exigido pela curva-meta calibrada na Lottu (constante do estudo, n\xE3o deriva do nosso dado). S\xF3 Geral/Google/Meta."
   }, "Meta BP"), /*#__PURE__*/React.createElement("th", {
     title: "N\xBA de safras di\xE1rias que j\xE1 fecharam a janela da m\xE9trica e entraram na conta."
@@ -8306,7 +8293,7 @@ function TabMetricasDia({
     style: {
       fontWeight: 600
     }
-  }, val(r.real, r.fmt)), /*#__PURE__*/React.createElement("td", null, val(r.p75, r.fmt), gapCell(r.p75, r.real, r.fmt)), /*#__PURE__*/React.createElement("td", null, val(r.p90, r.fmt), gapCell(r.p90, r.real, r.fmt)), /*#__PURE__*/React.createElement("td", {
+  }, val(r.real, r.fmt)), /*#__PURE__*/React.createElement("td", {
     style: {
       fontWeight: 700,
       color: r.bpVal != null ? 'var(--accent-yellow)' : 'var(--text-muted)'
@@ -8329,7 +8316,7 @@ function TabMetricasDia({
     }
   }, fmtQty(r.n))))))), /*#__PURE__*/React.createElement("div", {
     className: "ch-note"
-  }, /*#__PURE__*/React.createElement("strong", null, "Realizado"), " = agregado do per\xEDodo (soma as bases, depois divide \u2014 n\xE3o \xE9 m\xE9dia das % di\xE1rias).", /*#__PURE__*/React.createElement("strong", null, " T+1 (P75)"), " e ", /*#__PURE__*/React.createElement("strong", null, "T+2 (P90)"), " s\xE3o percentis da distribui\xE7\xE3o das ", /*#__PURE__*/React.createElement("strong", null, "safras di\xE1rias"), " do per\xEDodo, sem ponderar por volume: s\xE3o degraus internos \u2014 \u201Creplicar no todo o que o melhor quartil dos nossos pr\xF3prios dias j\xE1 faz\u201D, n\xE3o uma meta externa. ", /*#__PURE__*/React.createElement("strong", null, "Meta BP"), " \xE9 o n\xEDvel exigido pela curva calibrada na Lottu; \xE9 constante do estudo, ", /*#__PURE__*/React.createElement("strong", null, "n\xE3o deriva do nosso dado"), ", e s\xF3 existe p/ Geral, Google e Meta \u2014 em qualquer outro canal, ou com 2+ canais selecionados, fica \u201C\u2014\u201D.", ' ', /*#__PURE__*/React.createElement("strong", null, "\u26A0\uFE0F A Meta BP n\xE3o muda com Faixa nem com Grupo"), ": o estudo calibrou a curva no n\xEDvel do canal, n\xE3o por faixa de FTD nem por grupo de risco. Ao filtrar, Realizado e P75/P90 seguem o recorte, mas a meta continua sendo a do canal inteiro \u2014 use como refer\xEAncia de dire\xE7\xE3o, n\xE3o como alvo daquele segmento.", ' ', /*#__PURE__*/React.createElement("strong", null, "As 3 taxas de passagem trazem meta DERIVADA (marcada com \u2020)"), ": o estudo n\xE3o mede passagem \u2014 a curva Lottu s\xF3 tem reten\xE7\xE3o, multiplicador e semanal. O alvo \xE9 constru\xEDdo como ", /*#__PURE__*/React.createElement("em", null, "passagem realizada em julho/26 \xD7 (BP de reten\xE7\xE3o de jogadores D1 \xF7 D1 realizado em julho)"), ", ou seja, a escada inteira do come\xE7o do funil sobe na propor\xE7\xE3o que a curva exige no D1, preservando a forma do funil. Ancora em m\xE9trica de contagem (passagem \xE9 contagem \u2014 ancorar no R$ misturaria ticket com frequ\xEAncia). Fatores: Geral 1,166 \xB7 Google 1,225 \xB7 Meta 1,047. ", /*#__PURE__*/React.createElement("strong", null, "\xC9 meta constru\xEDda sobre uma refer\xEAncia de 1 m\xEAs"), " \u2014 se julho foi at\xEDpico, o alvo herda o desvio. Lembrando que a passagem mede qualidade de aquisi\xE7\xE3o/ativa\xE7\xE3o, n\xE3o reten\xE7\xE3o de cauda (r = \u22120,28 no Geral).", ' ', /*#__PURE__*/React.createElement("strong", null, "Matura\xE7\xE3o:"), " cada linha s\xF3 usa safras que j\xE1 fecharam a janela dela \u2014 D14 exige 14 dias, S1/S0 exige 13. Por isso a coluna ", /*#__PURE__*/React.createElement("strong", null, "Safras"), " muda de linha pra linha; quando ela fica", /*#__PURE__*/React.createElement("span", {
+  }, /*#__PURE__*/React.createElement("strong", null, "Realizado"), " = agregado do per\xEDodo (soma as bases, depois divide \u2014 n\xE3o \xE9 m\xE9dia das % di\xE1rias).", ' ', /*#__PURE__*/React.createElement("strong", null, "Meta BP"), " \xE9 o n\xEDvel exigido pela curva calibrada na Lottu; \xE9 constante do estudo, ", /*#__PURE__*/React.createElement("strong", null, "n\xE3o deriva do nosso dado"), ", e s\xF3 existe p/ Geral, Google e Meta \u2014 em qualquer outro canal, ou com 2+ canais selecionados, fica \u201C\u2014\u201D.", ' ', /*#__PURE__*/React.createElement("strong", null, "\u26A0\uFE0F A Meta BP n\xE3o muda com Faixa nem com Grupo"), ": o estudo calibrou a curva no n\xEDvel do canal, n\xE3o por faixa de FTD nem por grupo de risco. Ao filtrar, o Realizado segue o recorte, mas a meta continua sendo a do canal inteiro \u2014 use como refer\xEAncia de dire\xE7\xE3o, n\xE3o como alvo daquele segmento.", ' ', /*#__PURE__*/React.createElement("strong", null, "As 3 taxas de passagem trazem meta DERIVADA (marcada com \u2020)"), ": o estudo n\xE3o mede passagem \u2014 a curva Lottu s\xF3 tem reten\xE7\xE3o, multiplicador e semanal. O alvo \xE9 constru\xEDdo como ", /*#__PURE__*/React.createElement("em", null, "passagem realizada em julho/26 \xD7 (BP de reten\xE7\xE3o de jogadores D1 \xF7 D1 realizado em julho)"), ", ou seja, a escada inteira do come\xE7o do funil sobe na propor\xE7\xE3o que a curva exige no D1, preservando a forma do funil. Ancora em m\xE9trica de contagem (passagem \xE9 contagem \u2014 ancorar no R$ misturaria ticket com frequ\xEAncia). Fatores: Geral 1,166 \xB7 Google 1,225 \xB7 Meta 1,047. ", /*#__PURE__*/React.createElement("strong", null, "\xC9 meta constru\xEDda sobre uma refer\xEAncia de 1 m\xEAs"), " \u2014 se julho foi at\xEDpico, o alvo herda o desvio. Lembrando que a passagem mede qualidade de aquisi\xE7\xE3o/ativa\xE7\xE3o, n\xE3o reten\xE7\xE3o de cauda (r = \u22120,28 no Geral).", ' ', /*#__PURE__*/React.createElement("strong", null, "Matura\xE7\xE3o:"), " cada linha s\xF3 usa safras que j\xE1 fecharam a janela dela \u2014 D14 exige 14 dias, S1/S0 exige 13. Por isso a coluna ", /*#__PURE__*/React.createElement("strong", null, "Safras"), " muda de linha pra linha; quando ela fica", /*#__PURE__*/React.createElement("span", {
     style: {
       color: 'var(--accent-red)'
     }
