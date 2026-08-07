@@ -4220,14 +4220,14 @@ function mddByDay_(rows, selCh, selFx, selGr) {
   });
   return Object.values(m).sort((a, b) => a.date < b.date ? -1 : 1);
 }
-// Span do fallback de coorte: 7 DIAS CORRIDOS terminando na última safra madura — fixo, não segue o
-// tamanho da janela do slicer (decisão do Luis 06/08: "não precisa ser calendário, pode ser 7 dias
-// corridos"). Fixo é melhor que espelhar a janela: o número da linha em fallback não muda de base
-// toda vez que alguém mexe no slicer.
-const MDD_COORTE_DIAS = 7;
-// Quantos dias antes da janela buscar para achar essas safras. Precisa cobrir a maior maturação da
-// escada (D30) MAIS os 7 dias do span — senão numa janela curta o D30 acha só 2 ou 3 safras maduras.
-const MDD_LOOKBACK = 30 + MDD_COORTE_DIAS;
+// Fallback de coorte: dias corridos terminando na última safra madura, NUNCA amarrado ao tamanho da
+// janela do slicer (assim o número não muda de base toda vez que alguém mexe no período). O span é a
+// MÉDIA MÓVEL DA PRÓPRIA JANELA DA MÉTRICA — D7 lê 7 dias de safra, D14 lê 14, D30 lê 30 —, com este
+// piso para as linhas de maturação curta não lerem 1 único dia.
+const MDD_COORTE_MIN = 7;
+// Quantos dias antes da janela buscar. Pior caso = a métrica mais longa: 30 dias de maturação + 30 de
+// span. Sem folga suficiente o D30 acharia meia dúzia de safras em vez da média móvel inteira.
+const MDD_LOOKBACK = 30 + 30;
 
 function TabMetricasDia({ retencaoFaixa, chFilter, meta, retFaixaLive }) {
   const [faixaSel, setFaixaSel] = React.useState([]);   // multi-select de faixa de FTD; [] = todas
@@ -4282,15 +4282,21 @@ function TabMetricasDia({ retencaoFaixa, chFilter, meta, retFaixaLive }) {
     // Só safras que já fecharam a janela da métrica (maturação).
     const cut = dataMax ? isoAddDays_(dataMax, -row.mat) : null;
     const naJanela = byDay.filter(d => !cut || d.date <= cut);
-    // FALLBACK DE COORTE: se NENHUMA safra da janela maturou, cai nas safras maduras mais recentes
-    // que existem no dado (a cauda anterior à janela). Pega a MESMA quantidade de dias da janela
-    // escolhida, terminando na última safra que maturou — é leitura de coorte, não da janela, então a
-    // célula sai marcada com o período usado. Nunca mistura: ou é tudo da janela, ou é tudo da cauda.
+    // FALLBACK DE COORTE: se NENHUMA safra da janela maturou, cai nas safras maduras mais recentes do
+    // dado (a cauda anterior à janela). O SPAN é MÉDIA MÓVEL DA PRÓPRIA JANELA DA MÉTRICA (regra do
+    // Luis 06/08): D7 lê 7 dias de safra, D14 lê 14, D30 lê 30. Com span fixo de 7 o D30 caía em cima
+    // de uma única semana e herdava a volatilidade dela — no teste, o D7 vinha de 24–30/07 (a semana
+    // mais forte, 1,94x) e o D30 de 01–07/07 (que inclui a mais fraca, 1,41x no D7), e a escada dava a
+    // impressão de que a cauda tinha desabado quando era só ruído de semana. Com span = janela, cada
+    // linha é uma média móvel do próprio horizonte e a comparação entre elas volta a significar algo.
+    // Piso de 7 dias: linhas de maturação curta (D1/D3) quase nunca caem aqui, mas se caírem 1 dia de
+    // safra seria ruído puro.
+    const span = Math.max(row.mat, MDD_COORTE_MIN);
     let days = naJanela, coorte = null;
     if (!naJanela.length && byDayTail.length) {
       const maduras = byDayTail.filter(d => !cut || d.date <= cut);
       if (maduras.length) {
-        days = maduras.slice(-MDD_COORTE_DIAS);
+        days = maduras.slice(-span);
         coorte = { de: days[0].date, ate: days[days.length - 1].date };
       }
     }
@@ -4372,7 +4378,7 @@ function TabMetricasDia({ retencaoFaixa, chFilter, meta, retFaixaLive }) {
                     diferente das demais. */}
                 <td style={{ fontWeight: 600 }}
                     title={r.coorte
-                      ? `Leitura de COORTE: nenhuma safra da janela selecionada fechou os ${r.mat} dia(s) de maturação desta métrica, então este número usa as ${r.n} safras maduras mais recentes do dado (${fmtBR_(r.coorte.de)} a ${fmtBR_(r.coorte.ate)}), fora da janela do topo. Não some com as demais linhas.`
+                      ? `Leitura de COORTE: nenhuma safra da janela selecionada fechou os ${r.mat} dia(s) de maturação desta métrica. Este número é a MÉDIA MÓVEL de ${r.n} dias de safra (o próprio horizonte da métrica), de ${fmtBR_(r.coorte.de)} a ${fmtBR_(r.coorte.ate)} — fora da janela do topo.`
                       : (r.n > 0 ? `${r.n} safra(s) da janela entraram na conta (as que já fecharam os ${r.mat} dia(s) de maturação desta métrica).` : undefined)}>
                   {val(r.real, r.fmt)}
                   {r.imatura && (
@@ -4408,11 +4414,15 @@ function TabMetricasDia({ retencaoFaixa, chFilter, meta, retFaixaLive }) {
           {' '}<strong>Maturação:</strong> cada linha só usa safras que já fecharam a janela dela — D30 exige 30 dias,
           D14 exige 14, S1/S0 exige 13. Ou seja, <strong>cada linha lê um nº diferente de safras</strong>: passe o mouse
           no valor pra ver quantas entraram e de que período.
-          {' '}<strong>Fallback de coorte:</strong> se
-          NENHUMA safra da janela escolhida fechou a maturação da linha, ela não fica mais vazia — passa a ler as safras
-          maduras mais recentes que existem no dado (mesma quantidade de dias da janela, terminando na última safra que
-          maturou), buscadas até {MDD_LOOKBACK} dias antes do início da janela. <strong>É leitura de coorte, não da janela</strong>:
-          a linha marcada e as demais não somam entre si, e o recorte de canal/faixa/grupo é o mesmo dos dois lados.
+          {' '}<strong>Fallback de coorte (média móvel do próprio horizonte):</strong> se NENHUMA safra da janela
+          escolhida fechou a maturação da linha, ela não fica vazia — passa a ler safras maduras de fora da janela,
+          num span igual à janela da métrica: <strong>D7 lê 7 dias de safra, D14 lê 14, D30 lê 30</strong> (busca até
+          {' '}{MDD_LOOKBACK} dias antes do início da janela). O span acompanhar o horizonte é o que faz a escada
+          significar algo: com span fixo de 7 dias o D30 caía em cima de uma semana só e herdava a volatilidade dela —
+          num teste o D7 vinha da semana mais forte do período (1,94x) e o D30 da mais fraca (1,41x no D7), dando a
+          impressão de que a cauda tinha desabado quando era ruído de semana. <strong>É leitura de coorte, não da
+          janela</strong>: passe o mouse no valor pra ver o período exato; o recorte de canal/faixa/grupo é o mesmo dos
+          dois lados.
           {' '}Multiplicadores aqui são <strong>sobre o depósito do D0</strong> (D0 = 1,00x), não sobre o FTD$ — é a base do estudo.
           {' '}<strong>S0/S1 são semanas de calendário</strong> (seg–dom): S0 = depósito na semana do FTD, S1 = na semana
           seguinte — mesma lógica do M0/M+1, um nível acima. Não é janela de 7 dias corridos.
