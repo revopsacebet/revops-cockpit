@@ -6210,8 +6210,25 @@ function applyScenarioBp_(M, farol, scenData, chFilter) {
   } else if (chFilter && chFilter.scope === 'growth') {
     agg = scenData.growthAgg || {};
   } else {
-    agg = scenData.allAgg || {}; // Total da Casa: AQUISIÇÃO segue no Plan_Growth Mkt (não muda). Só o Dep M0 (grupo
-  } // "Depósito M0") é sobrescrito abaixo p/ o Plan_RevOps (house) — ver bloco isTotal.
+    // Total da Casa = plano growth × UPLIFT não-growth (orgânico/afiliados/social). A aba DB Plan_Growth Mkt
+    // só tem canais de mídia paga, então allAgg == growthAgg — sem o uplift os dois escopos mostravam o MESMO
+    // plano. O uplift (tt ÷ growth) vem da DB Plan_RevOps; é RAZÃO, não nível, porque as duas abas estão em
+    // paces diferentes (ver houseUplift no backend). Investimento não leva uplift: não há mídia fora do growth.
+    const up = scenData.houseUplift;
+    const a = scenData.allAgg || {};
+    if (up) {
+      const upl = (k, r) => (a[k] || 0) * (up[r] > 0 ? up[r] : 1);
+      agg = {
+        invest: a.invest || 0,
+        ftd: upl('ftd', 'ftd'),
+        ftdAmount: upl('ftdAmount', 'ftdAmount'),
+        depD0: upl('depD0', 'depM0'),
+        depM0: upl('depM0', 'depM0')
+      }; // D0 herda o uplift do M0 (mesma população)
+    } else {
+      agg = a; // backend < v70 (sem houseUplift) → comportamento antigo; o bloco isTotal lá embaixo repõe o Dep M0
+    }
+  }
   const inv = agg.invest || 0,
     ftd = agg.ftd || 0,
     ftdAmt = agg.ftdAmount || 0,
@@ -6254,13 +6271,15 @@ function applyScenarioBp_(M, farol, scenData, chFilter) {
         rollover: setBp(newM.rollover, td ? turn / td : null)
       };
     }
-    // Grupo "Depósito M0" (SÓ Total da Casa): Dep M0 Total = M0 tt do Plan_RevOps (house.m0tt) e ROAS Dep M0 =
-    // m0tt ÷ Investimento do Plan_RevOps (house.invest) = ~1,9x. O allAgg do Plan_Growth subconta o invest e
-    // inflava esse ROAS (2,55x). ⚠️ NÃO mexe na AQUISIÇÃO (Investimento/ROAS FTD/CAC/Tkt/Dep D0 seguem no allAgg).
+    // Grupo "Depósito M0" no Total da Casa: SÓ no fallback (backend < v70, sem houseUplift). Com uplift o grupo
+    // já sai certo lá em cima e sobrescrever aqui MISTURARIA PACES — Dep M0/ROAS Dep M0/Mult M0 viriam do
+    // Plan_RevOps (ago fc: 3,0M/mês) enquanto Investimento/ROAS FTD/CAC seguem no Plan_Growth (3,72M/mês),
+    // dois planos de mídia na mesma tela. As razões do uplift batem com o Plan_RevOps tt de qualquer forma
+    // (ago fc: ROAS Dep M0 1,69 vs 1,70 · Mult M0 3,58 vs 3,57); só o nível fica no pace do Plan_Growth.
     const m0 = house.m0tt || 0,
       hInv = house.invest || 0,
       hFtdAmt = house.ftdAmountTt || 0;
-    if (m0 > 0) {
+    if (m0 > 0 && !scenData.houseUplift) {
       newM = {
         ...newM,
         depM0Total: setBp(newM.depM0Total, m0)
@@ -6268,8 +6287,6 @@ function applyScenarioBp_(M, farol, scenData, chFilter) {
       newFarol = {
         ...newFarol,
         roasDepM0: setBp(newFarol.roasDepM0, hInv ? m0 / hInv : null),
-        // Multiplicador M0 house = M0 tt ÷ FTD amount tt do MESMO bloco do Plan_RevOps. Não usa o
-        // ftdAmount do Plan_Growth: aquela aba subconta (é por canal) e inflaria o multiplicador.
         multM0: setBp(newFarol.multM0, hFtdAmt ? m0 / hFtdAmt : null)
       };
     }
