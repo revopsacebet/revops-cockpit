@@ -4208,10 +4208,13 @@ function mddByDay_(rows, selCh, selFx, selGr) {
   rows.forEach(r => {
     if (!selCh(r.canal) || !selFx(r.faixa) || !selGr(r.grupo)) return;
     const k = String(r.date);
-    if (!m[k]) m[k] = { date: k, qtd: 0, d0: 0, cd1: 0, vd1: 0, vd3: 0, vw1: 0, vw2: 0, vs0: 0, vs1: 0, cs1: 0, cstd: 0, cttd: 0, cqtd4: 0, _pass: 0 };
+    // ⚠️ Toda métrica nova precisa da sua base AQUI. O Multiplicador D30 entrou em MDD_ROWS lendo
+    // `a.vd30` sem que vd30 fosse somado nesta função — resultado: undefined, `of()` devolvia null e a
+    // linha ficava "—" como se fosse falta de maturação. O dado sempre esteve no payload.
+    if (!m[k]) m[k] = { date: k, qtd: 0, d0: 0, cd1: 0, vd1: 0, vd3: 0, vw1: 0, vw2: 0, vd30: 0, vs0: 0, vs1: 0, cs1: 0, cstd: 0, cttd: 0, cqtd4: 0, _pass: 0 };
     const a = m[k];
     a.qtd += r.qtd || 0; a.d0 += r.d0 || 0; a.cd1 += r.cd1 || 0; a.vd1 += r.vd1 || 0;
-    a.vd3 += r.vd3 || 0; a.vw1 += r.vw1 || 0; a.vw2 += r.vw2 || 0;
+    a.vd3 += r.vd3 || 0; a.vw1 += r.vw1 || 0; a.vw2 += r.vw2 || 0; a.vd30 += r.vd30 || 0;
     a.vs0 += r.vs0 || 0; a.vs1 += r.vs1 || 0; a.cs1 += r.cs1 || 0;
     a.cstd += r.cstd || 0; a.cttd += r.cttd || 0; a.cqtd4 += r.cqtd4 || 0; a._pass += r._pass || 0;
   });
