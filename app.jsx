@@ -4126,9 +4126,9 @@ function TabDailyCashflow({ range, meta }) {
 //   (As colunas T+1 (P75) / T+2 (P90) — percentis da distribuição das safras diárias, "degraus
 //     internos" — foram REMOVIDAS da tabela em 06/08/2026 a pedido do Luis. O helper mddPct_ ficou,
 //     é o único ponto a religar se voltarem.)
-//   Meta BP = nível exigido pela curva calibrada na Lottu (constante do estudo, não sai do nosso dado).
-//     Só existe p/ Geral/Google/Meta — outros recortes mostram "—". O D30 não tem meta: a curva do
-//     estudo termina no D14.
+//   Planejado = nível exigido pela curva calibrada na Lottu (constante do estudo, não sai do nosso dado).
+//     Só existe p/ Geral/Google/Meta — outros recortes mostram "—". A curva do estudo (metaCurva.cum)
+//     é diária e vai até o dia 90, então dá pra estender a escada sem derivar nada.
 //
 // ⚠️ MATURAÇÃO: cada métrica só usa safras que já fecharam a janela dela (D30 precisa de 30 dias).
 // Sem isso as safras novas entram com numerador incompleto e afundam D7/D14/D30/S1. A coluna "safras"
@@ -4138,12 +4138,19 @@ function TabDailyCashflow({ range, meta }) {
 // Curva-meta do estudo (Lottu-calibrada), por escopo. null = sem meta declarada.
 // ⚠️ pStd/pTtd/pQtd ficaram órfãs quando as taxas de passagem saíram da tabela (06/08) — mantidas
 // aqui de propósito, é o que permite religar as 3 linhas sem recalcular nada.
+// FONTE: `Metas de Retenção Rev Ops.html` → `DATA.metaCurva.<escopo>`. A curva `cum` é indexada por DIA
+// e vai até o dia 90 (cum[0] = 1 → é multiplicador sobre o D0, a mesma régua da tabela); `jogDia[1]` e
+// `rsSem[1]` saem dos outros dois nós. Reconferido contra o arquivo em 06/08/2026: m1/m3/m7, jogD1,
+// rsD1 e rsS1 batem EXATO nos 3 escopos.
+// ⚠️ Duas mudanças nessa reconferência: (a) entrou **m30** = cum[30] — o estudo NÃO para no D14, era
+// engano meu; (b) o **m14 de Google e Meta subiu 3,5%** (3,1264→3,2351 e 2,5162→2,6049), o arquivo
+// atual traz outro número. Geral não se moveu em nada.
 const MDD_BP = {
-  Geral:  { jogD1: 0.1111, rsD1: 0.2976, m1: 1.2976, m3: 1.6804, m7: 2.2307, m14: 2.9155, rsS1: 0.6256, jogS1: 0.2806,
+  Geral:  { jogD1: 0.1111, rsD1: 0.2976, m1: 1.2976, m3: 1.6804, m7: 2.2307, m14: 2.9155, m30: 4.0646, rsS1: 0.6256, jogS1: 0.2806,
             pStd: 0.2642, pTtd: 0.4700, pQtd: 0.6289 },
-  Google: { jogD1: 0.1566, rsD1: 0.3672, m1: 1.3672, m3: 1.8204, m7: 2.4569, m14: 3.1264, rsS1: 0.6119, jogS1: 0.3863,
+  Google: { jogD1: 0.1566, rsD1: 0.3672, m1: 1.3672, m3: 1.8204, m7: 2.4569, m14: 3.2351, m30: 4.5219, rsS1: 0.6119, jogS1: 0.3863,
             pStd: 0.3664, pTtd: 0.5656, pQtd: 0.7588 },
-  Meta:   { jogD1: 0.0943, rsD1: 0.2603, m1: 1.2603, m3: 1.5571, m7: 2.0197, m14: 2.5162, rsS1: 0.5432, jogS1: 0.2385,
+  Meta:   { jogD1: 0.0943, rsD1: 0.2603, m1: 1.2603, m3: 1.5571, m7: 2.0197, m14: 2.6049, m30: 3.6286, rsS1: 0.5432, jogS1: 0.2385,
             pStd: 0.2343, pTtd: 0.4121, pQtd: 0.5460 },
 };
 // As 3 TAXAS DE PASSAGEM (FTD→STD, STD→TTD, TTD→QTD) saíram da tabela em 06/08/2026 a pedido do Luis
@@ -4164,8 +4171,7 @@ const MDD_ROWS = [
   { key: 'm7',    label: 'Multiplicador D7',                   mat: 7,  fmt: 'multiple', of: a => (a.d0 && a.vw1) ? (a.d0 + a.vw1) / a.d0 : null, bp: 'm7' },
   { key: 'm14',   label: 'Multiplicador D14',                  mat: 14, fmt: 'multiple', of: a => (a.d0 && a.vw2) ? (a.d0 + a.vw2) / a.d0 : null, bp: 'm14' },
   // D30 = depósitos dos dias 1..30 da safra (val_d30 do backend), mesma régua dos demais: sobre o D0.
-  // SEM Meta BP: a curva do estudo termina no D14 — pôr um alvo aqui seria inventar. Fica "indicativo".
-  { key: 'm30',   label: 'Multiplicador D30',                  mat: 30, fmt: 'multiple', of: a => (a.d0 && a.vd30) ? (a.d0 + a.vd30) / a.d0 : null, bp: null },
+  { key: 'm30',   label: 'Multiplicador D30',                  mat: 30, fmt: 'multiple', of: a => (a.d0 && a.vd30) ? (a.d0 + a.vd30) / a.d0 : null, bp: 'm30' },
   { key: 'rsS1',  label: 'Retenção de depósito R$ S1/S0 (semanal)', mat: 13, fmt: 'pct', of: a => a.vs0  ? a.vs1 / a.vs0 : null,         bp: 'rsS1', needs: "sem" },
   // ⚠️ SEM Meta BP de propósito. A curva semanal de JOGADORES do estudo é ESTIMADA (jogadores únicos na
   // semana inferidos das taxas diárias assumindo independência entre dias) — o que infla o número: o
@@ -4396,8 +4402,6 @@ function TabMetricasDia({ retencaoFaixa, chFilter, meta, retFaixaLive }) {
           {' '}<strong>⚠️ A Meta BP não muda com Faixa nem com Grupo</strong>: o estudo calibrou a curva no nível do canal,
           não por faixa de FTD nem por grupo de risco. Ao filtrar, o Realizado segue o recorte, mas a meta continua
           sendo a do canal inteiro — use como referência de direção, não como alvo daquele segmento.
-          {' '}<strong>Multiplicador D30 sai sem meta (“indicativo”)</strong>: a curva do estudo termina no D14 — pôr um
-          alvo ali seria inventar número.
           {' '}<strong>Maturação:</strong> cada linha só usa safras que já fecharam a janela dela — D30 exige 30 dias,
           D14 exige 14, S1/S0 exige 13. Ou seja, <strong>cada linha lê um nº diferente de safras</strong>: passe o mouse
           no valor pra ver quantas entraram e de que período.

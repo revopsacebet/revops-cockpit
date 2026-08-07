@@ -7909,9 +7909,9 @@ function TabDailyCashflow({
 //   (As colunas T+1 (P75) / T+2 (P90) — percentis da distribuição das safras diárias, "degraus
 //     internos" — foram REMOVIDAS da tabela em 06/08/2026 a pedido do Luis. O helper mddPct_ ficou,
 //     é o único ponto a religar se voltarem.)
-//   Meta BP = nível exigido pela curva calibrada na Lottu (constante do estudo, não sai do nosso dado).
-//     Só existe p/ Geral/Google/Meta — outros recortes mostram "—". O D30 não tem meta: a curva do
-//     estudo termina no D14.
+//   Planejado = nível exigido pela curva calibrada na Lottu (constante do estudo, não sai do nosso dado).
+//     Só existe p/ Geral/Google/Meta — outros recortes mostram "—". A curva do estudo (metaCurva.cum)
+//     é diária e vai até o dia 90, então dá pra estender a escada sem derivar nada.
 //
 // ⚠️ MATURAÇÃO: cada métrica só usa safras que já fecharam a janela dela (D30 precisa de 30 dias).
 // Sem isso as safras novas entram com numerador incompleto e afundam D7/D14/D30/S1. A coluna "safras"
@@ -7921,6 +7921,13 @@ function TabDailyCashflow({
 // Curva-meta do estudo (Lottu-calibrada), por escopo. null = sem meta declarada.
 // ⚠️ pStd/pTtd/pQtd ficaram órfãs quando as taxas de passagem saíram da tabela (06/08) — mantidas
 // aqui de propósito, é o que permite religar as 3 linhas sem recalcular nada.
+// FONTE: `Metas de Retenção Rev Ops.html` → `DATA.metaCurva.<escopo>`. A curva `cum` é indexada por DIA
+// e vai até o dia 90 (cum[0] = 1 → é multiplicador sobre o D0, a mesma régua da tabela); `jogDia[1]` e
+// `rsSem[1]` saem dos outros dois nós. Reconferido contra o arquivo em 06/08/2026: m1/m3/m7, jogD1,
+// rsD1 e rsS1 batem EXATO nos 3 escopos.
+// ⚠️ Duas mudanças nessa reconferência: (a) entrou **m30** = cum[30] — o estudo NÃO para no D14, era
+// engano meu; (b) o **m14 de Google e Meta subiu 3,5%** (3,1264→3,2351 e 2,5162→2,6049), o arquivo
+// atual traz outro número. Geral não se moveu em nada.
 const MDD_BP = {
   Geral: {
     jogD1: 0.1111,
@@ -7929,6 +7936,7 @@ const MDD_BP = {
     m3: 1.6804,
     m7: 2.2307,
     m14: 2.9155,
+    m30: 4.0646,
     rsS1: 0.6256,
     jogS1: 0.2806,
     pStd: 0.2642,
@@ -7941,7 +7949,8 @@ const MDD_BP = {
     m1: 1.3672,
     m3: 1.8204,
     m7: 2.4569,
-    m14: 3.1264,
+    m14: 3.2351,
+    m30: 4.5219,
     rsS1: 0.6119,
     jogS1: 0.3863,
     pStd: 0.3664,
@@ -7954,7 +7963,8 @@ const MDD_BP = {
     m1: 1.2603,
     m3: 1.5571,
     m7: 2.0197,
-    m14: 2.5162,
+    m14: 2.6049,
+    m30: 3.6286,
     rsS1: 0.5432,
     jogS1: 0.2385,
     pStd: 0.2343,
@@ -8017,14 +8027,13 @@ const MDD_ROWS = [{
   bp: 'm14'
 },
 // D30 = depósitos dos dias 1..30 da safra (val_d30 do backend), mesma régua dos demais: sobre o D0.
-// SEM Meta BP: a curva do estudo termina no D14 — pôr um alvo aqui seria inventar. Fica "indicativo".
 {
   key: 'm30',
   label: 'Multiplicador D30',
   mat: 30,
   fmt: 'multiple',
   of: a => a.d0 && a.vd30 ? (a.d0 + a.vd30) / a.d0 : null,
-  bp: null
+  bp: 'm30'
 }, {
   key: 'rsS1',
   label: 'Retenção de depósito R$ S1/S0 (semanal)',
@@ -8369,7 +8378,7 @@ function TabMetricasDia({
     title: "Meta DERIVADA: o estudo n\xE3o traz taxa de passagem. Alvo = passagem de julho/26 \xD7 (BP de reten\xE7\xE3o de jogadores D1 \xF7 D1 realizado em julho) \u2014 sobe a escada inteira na propor\xE7\xE3o exigida pela curva, preservando a forma do funil."
   }, "\u2020")))))))), /*#__PURE__*/React.createElement("div", {
     className: "ch-note"
-  }, /*#__PURE__*/React.createElement("strong", null, "Realizado"), " = agregado do per\xEDodo (soma as bases, depois divide \u2014 n\xE3o \xE9 m\xE9dia das % di\xE1rias).", ' ', /*#__PURE__*/React.createElement("strong", null, "Meta BP"), " \xE9 o n\xEDvel exigido pela curva calibrada na Lottu; \xE9 constante do estudo, ", /*#__PURE__*/React.createElement("strong", null, "n\xE3o deriva do nosso dado"), ", e s\xF3 existe p/ Geral, Google e Meta \u2014 em qualquer outro canal, ou com 2+ canais selecionados, fica \u201C\u2014\u201D.", ' ', /*#__PURE__*/React.createElement("strong", null, "\u26A0\uFE0F A Meta BP n\xE3o muda com Faixa nem com Grupo"), ": o estudo calibrou a curva no n\xEDvel do canal, n\xE3o por faixa de FTD nem por grupo de risco. Ao filtrar, o Realizado segue o recorte, mas a meta continua sendo a do canal inteiro \u2014 use como refer\xEAncia de dire\xE7\xE3o, n\xE3o como alvo daquele segmento.", ' ', /*#__PURE__*/React.createElement("strong", null, "Multiplicador D30 sai sem meta (\u201Cindicativo\u201D)"), ": a curva do estudo termina no D14 \u2014 p\xF4r um alvo ali seria inventar n\xFAmero.", ' ', /*#__PURE__*/React.createElement("strong", null, "Matura\xE7\xE3o:"), " cada linha s\xF3 usa safras que j\xE1 fecharam a janela dela \u2014 D30 exige 30 dias, D14 exige 14, S1/S0 exige 13. Ou seja, ", /*#__PURE__*/React.createElement("strong", null, "cada linha l\xEA um n\xBA diferente de safras"), ": passe o mouse no valor pra ver quantas entraram e de que per\xEDodo.", ' ', /*#__PURE__*/React.createElement("strong", null, "Fallback de coorte:"), " se NENHUMA safra da janela escolhida fechou a matura\xE7\xE3o da linha, ela n\xE3o fica mais vazia \u2014 passa a ler as safras maduras mais recentes que existem no dado (mesma quantidade de dias da janela, terminando na \xFAltima safra que maturou), buscadas at\xE9 ", MDD_LOOKBACK, " dias antes do in\xEDcio da janela. ", /*#__PURE__*/React.createElement("strong", null, "\xC9 leitura de coorte, n\xE3o da janela"), ": a linha marcada e as demais n\xE3o somam entre si, e o recorte de canal/faixa/grupo \xE9 o mesmo dos dois lados.", ' ', "Multiplicadores aqui s\xE3o ", /*#__PURE__*/React.createElement("strong", null, "sobre o dep\xF3sito do D0"), " (D0 = 1,00x), n\xE3o sobre o FTD$ \u2014 \xE9 a base do estudo.", ' ', /*#__PURE__*/React.createElement("strong", null, "S0/S1 s\xE3o semanas de calend\xE1rio"), " (seg\u2013dom): S0 = dep\xF3sito na semana do FTD, S1 = na semana seguinte \u2014 mesma l\xF3gica do M0/M+1, um n\xEDvel acima. N\xE3o \xE9 janela de 7 dias corridos.", ' ', "A linha de ", /*#__PURE__*/React.createElement("strong", null, "jogadores S1/S0 fica sem Meta BP de prop\xF3sito"), ": a curva semanal de jogadores do estudo \xE9 ", /*#__PURE__*/React.createElement("em", null, "estimada"), " (infere jogadores \xFAnicos das taxas di\xE1rias assumindo independ\xEAncia entre dias), o que infla o n\xEDvel \u2014 a mesma coorte medida de forma exata d\xE1 bem menos. Comparar a contagem exata daqui com aquela meta mostraria um gap de defini\xE7\xE3o, n\xE3o de performance. A linha de R$ n\xE3o tem esse problema.", out.some(r => r.real == null) ? ' · alguma linha sem base: payload anterior ao v60, recarregue com Atualizar.' : '')));
+  }, /*#__PURE__*/React.createElement("strong", null, "Realizado"), " = agregado do per\xEDodo (soma as bases, depois divide \u2014 n\xE3o \xE9 m\xE9dia das % di\xE1rias).", ' ', /*#__PURE__*/React.createElement("strong", null, "Meta BP"), " \xE9 o n\xEDvel exigido pela curva calibrada na Lottu; \xE9 constante do estudo, ", /*#__PURE__*/React.createElement("strong", null, "n\xE3o deriva do nosso dado"), ", e s\xF3 existe p/ Geral, Google e Meta \u2014 em qualquer outro canal, ou com 2+ canais selecionados, fica \u201C\u2014\u201D.", ' ', /*#__PURE__*/React.createElement("strong", null, "\u26A0\uFE0F A Meta BP n\xE3o muda com Faixa nem com Grupo"), ": o estudo calibrou a curva no n\xEDvel do canal, n\xE3o por faixa de FTD nem por grupo de risco. Ao filtrar, o Realizado segue o recorte, mas a meta continua sendo a do canal inteiro \u2014 use como refer\xEAncia de dire\xE7\xE3o, n\xE3o como alvo daquele segmento.", ' ', /*#__PURE__*/React.createElement("strong", null, "Matura\xE7\xE3o:"), " cada linha s\xF3 usa safras que j\xE1 fecharam a janela dela \u2014 D30 exige 30 dias, D14 exige 14, S1/S0 exige 13. Ou seja, ", /*#__PURE__*/React.createElement("strong", null, "cada linha l\xEA um n\xBA diferente de safras"), ": passe o mouse no valor pra ver quantas entraram e de que per\xEDodo.", ' ', /*#__PURE__*/React.createElement("strong", null, "Fallback de coorte:"), " se NENHUMA safra da janela escolhida fechou a matura\xE7\xE3o da linha, ela n\xE3o fica mais vazia \u2014 passa a ler as safras maduras mais recentes que existem no dado (mesma quantidade de dias da janela, terminando na \xFAltima safra que maturou), buscadas at\xE9 ", MDD_LOOKBACK, " dias antes do in\xEDcio da janela. ", /*#__PURE__*/React.createElement("strong", null, "\xC9 leitura de coorte, n\xE3o da janela"), ": a linha marcada e as demais n\xE3o somam entre si, e o recorte de canal/faixa/grupo \xE9 o mesmo dos dois lados.", ' ', "Multiplicadores aqui s\xE3o ", /*#__PURE__*/React.createElement("strong", null, "sobre o dep\xF3sito do D0"), " (D0 = 1,00x), n\xE3o sobre o FTD$ \u2014 \xE9 a base do estudo.", ' ', /*#__PURE__*/React.createElement("strong", null, "S0/S1 s\xE3o semanas de calend\xE1rio"), " (seg\u2013dom): S0 = dep\xF3sito na semana do FTD, S1 = na semana seguinte \u2014 mesma l\xF3gica do M0/M+1, um n\xEDvel acima. N\xE3o \xE9 janela de 7 dias corridos.", ' ', "A linha de ", /*#__PURE__*/React.createElement("strong", null, "jogadores S1/S0 fica sem Meta BP de prop\xF3sito"), ": a curva semanal de jogadores do estudo \xE9 ", /*#__PURE__*/React.createElement("em", null, "estimada"), " (infere jogadores \xFAnicos das taxas di\xE1rias assumindo independ\xEAncia entre dias), o que infla o n\xEDvel \u2014 a mesma coorte medida de forma exata d\xE1 bem menos. Comparar a contagem exata daqui com aquela meta mostraria um gap de defini\xE7\xE3o, n\xE3o de performance. A linha de R$ n\xE3o tem esse problema.", out.some(r => r.real == null) ? ' · alguma linha sem base: payload anterior ao v60, recarregue com Atualizar.' : '')));
 }
 const TABS = [{
   id: 'farol',
