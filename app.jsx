@@ -4206,6 +4206,26 @@ function mddPct_(vals, p) {
   const i = (v.length - 1) * p, lo = Math.floor(i), hi = Math.ceil(i);
   return lo === hi ? v[lo] : v[lo] + (v[hi] - v[lo]) * (i - lo);
 }
+// Uma linha por DIA de safra (soma canais/faixas/grupos dentro do recorte). Fora do componente porque
+// roda em DUAS bases: as safras da janela escolhida e a cauda anterior (fallback de coorte).
+function mddByDay_(rows, selCh, selFx, selGr) {
+  const m = {};
+  rows.forEach(r => {
+    if (!selCh(r.canal) || !selFx(r.faixa) || !selGr(r.grupo)) return;
+    const k = String(r.date);
+    if (!m[k]) m[k] = { date: k, qtd: 0, d0: 0, cd1: 0, vd1: 0, vd3: 0, vw1: 0, vw2: 0, vs0: 0, vs1: 0, cs1: 0, cstd: 0, cttd: 0, cqtd4: 0, _pass: 0 };
+    const a = m[k];
+    a.qtd += r.qtd || 0; a.d0 += r.d0 || 0; a.cd1 += r.cd1 || 0; a.vd1 += r.vd1 || 0;
+    a.vd3 += r.vd3 || 0; a.vw1 += r.vw1 || 0; a.vw2 += r.vw2 || 0;
+    a.vs0 += r.vs0 || 0; a.vs1 += r.vs1 || 0; a.cs1 += r.cs1 || 0;
+    a.cstd += r.cstd || 0; a.cttd += r.cttd || 0; a.cqtd4 += r.cqtd4 || 0; a._pass += r._pass || 0;
+  });
+  return Object.values(m).sort((a, b) => a.date < b.date ? -1 : 1);
+}
+// Quantos dias antes da janela buscar para o fallback de coorte. 14 = a maior maturação da escada
+// (Multiplicador D14); com isso toda linha consegue achar safra madura mesmo numa janela recém-aberta.
+const MDD_LOOKBACK = 14;
+
 function TabMetricasDia({ retencaoFaixa, chFilter, meta, retFaixaLive }) {
   const [faixaSel, setFaixaSel] = React.useState([]);   // multi-select de faixa de FTD; [] = todas
   const [grupoSel, setGrupoSel] = React.useState([]);   // multi-select de grupo de risco; [] = todos
@@ -4232,27 +4252,45 @@ function TabMetricasDia({ retencaoFaixa, chFilter, meta, retFaixaLive }) {
   const selCh = chSelector_(chFilter);
   const selFx = (fx) => faixaSel.length === 0 || faixaSel.includes(fx);
   const selGr = (g) => !grupoActive || grupoSel.indexOf(g || 'sem grupo') >= 0;
-  // Uma linha por DIA de safra (soma canais/faixas/grupos dentro do recorte) — base dos percentis.
-  const byDay = React.useMemo(() => {
-    const m = {};
-    rows.forEach(r => {
-      if (!selCh(r.canal) || !selFx(r.faixa) || !selGr(r.grupo)) return;
-      const k = String(r.date);
-      if (!m[k]) m[k] = { date: k, qtd: 0, d0: 0, cd1: 0, vd1: 0, vd3: 0, vw1: 0, vw2: 0, vs0: 0, vs1: 0, cs1: 0, cstd: 0, cttd: 0, cqtd4: 0, _pass: 0 };
-      const a = m[k];
-      a.qtd += r.qtd || 0; a.d0 += r.d0 || 0; a.cd1 += r.cd1 || 0; a.vd1 += r.vd1 || 0;
-      a.vd3 += r.vd3 || 0; a.vw1 += r.vw1 || 0; a.vw2 += r.vw2 || 0;
-      a.vs0 += r.vs0 || 0; a.vs1 += r.vs1 || 0; a.cs1 += r.cs1 || 0;
-      a.cstd += r.cstd || 0; a.cttd += r.cttd || 0; a.cqtd4 += r.cqtd4 || 0; a._pass += r._pass || 0;
-    });
-    return Object.values(m).sort((a, b) => a.date < b.date ? -1 : 1);
-  }, [srcRows, chFilter && chFilter.scope, JSON.stringify(chFilter && chFilter.canals),
-      JSON.stringify(faixaSel), JSON.stringify(grupoSel)]);
+  const byDay = React.useMemo(() => mddByDay_(rows, selCh, selFx, selGr),
+    [srcRows, chFilter && chFilter.scope, JSON.stringify(chFilter && chFilter.canals),
+     JSON.stringify(faixaSel), JSON.stringify(grupoSel)]);
+  // Cauda ANTERIOR à janela — só serve de fallback de coorte quando nenhuma safra da janela fechou a
+  // maturação da linha (pedido do Luis 06/08: "pega a última safra que maturou nesse dado"). Nunca
+  // entra no agregado da janela; é uma base separada, e a tabela marca a linha que caiu nela.
+  const tailFrom = winFrom ? isoAddDays_(winFrom, -MDD_LOOKBACK) : null;
+  const tailTo   = winFrom ? isoAddDays_(winFrom, -1) : null;
+  const [tail, setTail] = React.useState({ rows: null, loading: false, error: null });
+  React.useEffect(() => {
+    if (!ENDPOINT_URL || !tailFrom || !tailTo) return;
+    let live = true;
+    setTail(s => ({ ...s, loading: true, error: null }));
+    fetch(`${ENDPOINT_URL}?${authParam_()}&from=${tailFrom}&to=${tailTo}&only=retfaixa${grupoActive ? '&byGrupo=1' : ''}`)
+      .then(r => r.ok ? r.json() : Promise.reject(new Error('HTTP ' + r.status)))
+      .then(j => { if (!live) return; if (j.error) throw new Error(j.error); setTail({ rows: j.retencaoFaixa || [], loading: false, error: null }); })
+      .catch(e => { if (live) setTail({ rows: null, loading: false, error: String(e.message || e) }); });
+    return () => { live = false; };
+  }, [tailFrom, tailTo, grupoActive]);
+  const byDayTail = React.useMemo(() => mddByDay_(benchApostouRows_(tail.rows || []), selCh, selFx, selGr),
+    [tail.rows, chFilter && chFilter.scope, JSON.stringify(chFilter && chFilter.canals),
+     JSON.stringify(faixaSel), JSON.stringify(grupoSel)]);
   const bpScope = mddBpScope_(chFilter);
   const out = MDD_ROWS.map(row => {
     // Só safras que já fecharam a janela da métrica (maturação).
     const cut = dataMax ? isoAddDays_(dataMax, -row.mat) : null;
-    const days = byDay.filter(d => !cut || d.date <= cut);
+    const naJanela = byDay.filter(d => !cut || d.date <= cut);
+    // FALLBACK DE COORTE: se NENHUMA safra da janela maturou, cai nas safras maduras mais recentes
+    // que existem no dado (a cauda anterior à janela). Pega a MESMA quantidade de dias da janela
+    // escolhida, terminando na última safra que maturou — é leitura de coorte, não da janela, então a
+    // célula sai marcada com o período usado. Nunca mistura: ou é tudo da janela, ou é tudo da cauda.
+    let days = naJanela, coorte = null;
+    if (!naJanela.length && byDayTail.length) {
+      const maduras = byDayTail.filter(d => !cut || d.date <= cut);
+      if (maduras.length) {
+        days = maduras.slice(-Math.max(1, byDay.length));
+        coorte = { de: days[0].date, ate: days[days.length - 1].date };
+      }
+    }
     const tot = days.reduce((acc, d) => { for (const k in d) if (k !== 'date') acc[k] = (acc[k] || 0) + d[k]; return acc; }, {});
     // Passagem depende do backend v58+; S1/S0 do v60+. Sem base → linha inteira "—" (não 0).
     const missing = (row.needs === 'pass' && !(tot._pass > 0)) || (row.needs === 'sem' && !(tot.vs0 > 0) && !(tot.cs1 > 0));
@@ -4265,12 +4303,12 @@ function TabMetricasDia({ retencaoFaixa, chFilter, meta, retFaixaLive }) {
     // A tela mostrava só "—" nos dois casos e a pergunta voltava ("pq tem uns q ainda faltam a
     // info?"). `faltamDias` = quantos dias a safra mais nova ainda precisa envelhecer p/ a primeira
     // entrar na conta; se nem isso dá pra saber (janela toda velha demais), fica só o motivo.
+    // Só sobra "—" quando nem a cauda tem safra madura (janela muito antiga, ou dado ainda não chegou).
     const imatura = !missing && days.length === 0 && byDay.length > 0;
-    const ultima = byDay.length ? byDay[byDay.length - 1].date : null;
     // isoDiffDays_(a, b) = b − a. Idade da safra MAIS VELHA da janela = dataMax − primeiro dia.
-    const faltamDias = (imatura && ultima && dataMax) ? Math.max(1, row.mat - isoDiffDays_(byDay[0].date, dataMax)) : null;
+    const faltamDias = (imatura && dataMax) ? Math.max(1, row.mat - isoDiffDays_(byDay[0].date, dataMax)) : null;
     return {
-      ...row, n: days.length, real, imatura, faltamDias,
+      ...row, n: days.length, real, imatura, faltamDias, coorte,
       bpVal: (row.bp && bpScope) ? bpScope[row.bp] : null,
     };
   });
@@ -4325,6 +4363,12 @@ function TabMetricasDia({ retencaoFaixa, chFilter, meta, retFaixaLive }) {
                 <td className="ch-name">{r.label}</td>
                 <td style={{ fontWeight: 600 }}>
                   {val(r.real, r.fmt)}
+                  {r.coorte && (
+                    <span style={{ fontWeight: 400, fontSize: '11px', color: 'var(--accent-yellow)', marginLeft: 6, opacity: 0.85 }}
+                          title={`Nenhuma safra da janela selecionada fechou os ${r.mat} dia(s) de maturação desta métrica. Este número é leitura de COORTE: as ${r.n} safra(s) maduras mais recentes que existem no dado (${fmtBR_(r.coorte.de)} a ${fmtBR_(r.coorte.ate)}), FORA da janela do topo. As demais linhas seguem a janela — não some as duas leituras.`}>
+                      coorte {r.coorte.de.slice(8, 10)}/{r.coorte.de.slice(5, 7)}–{r.coorte.ate.slice(8, 10)}/{r.coorte.ate.slice(5, 7)}
+                    </span>
+                  )}
                   {r.imatura && (
                     <span style={{ fontWeight: 400, fontSize: '11px', color: 'var(--text-muted)', marginLeft: 6 }}
                           title={`Esta métrica precisa de ${r.mat} dia(s) de maturação: uma safra só entra na conta depois de fechar a janela dela. Nenhuma safra da janela selecionada chegou lá (dado vai até ${dataMax ? fmtBR_(dataMax) : '—'}). Contar as safras novas afundaria a métrica com numerador incompleto. Amplie a janela para trás para ver esta linha.`}>
@@ -4365,7 +4409,12 @@ function TabMetricasDia({ retencaoFaixa, chFilter, meta, retFaixaLive }) {
           o desvio. Lembrando que a passagem mede qualidade de aquisição/ativação, não retenção de cauda (r = −0,28 no Geral).
           {' '}<strong>Maturação:</strong> cada linha só usa safras que já fecharam a janela dela — D14 exige 14 dias,
           S1/S0 exige 13. Por isso a coluna <strong>Safras</strong> muda de linha pra linha; quando ela fica
-          <span style={{ color: 'var(--accent-red)' }}> vermelha (&lt;14)</span> o percentil está frágil, amplie o período no slicer.
+          <span style={{ color: 'var(--accent-red)' }}> vermelha (&lt;14)</span> a base está frágil, amplie o período no slicer.
+          {' '}<strong>Fallback de coorte (marca <span style={{ color: 'var(--accent-yellow)' }}>coorte dd/mm–dd/mm</span>):</strong> se
+          NENHUMA safra da janela escolhida fechou a maturação da linha, ela não fica mais vazia — passa a ler as safras
+          maduras mais recentes que existem no dado (mesma quantidade de dias da janela, terminando na última safra que
+          maturou), buscadas até {MDD_LOOKBACK} dias antes do início da janela. <strong>É leitura de coorte, não da janela</strong>:
+          a linha marcada e as demais não somam entre si, e o recorte de canal/faixa/grupo é o mesmo dos dois lados.
           {' '}Multiplicadores aqui são <strong>sobre o depósito do D0</strong> (D0 = 1,00x), não sobre o FTD$ — é a base do estudo.
           {' '}<strong>S0/S1 são semanas de calendário</strong> (seg–dom): S0 = depósito na semana do FTD, S1 = na semana
           seguinte — mesma lógica do M0/M+1, um nível acima. Não é janela de 7 dias corridos.

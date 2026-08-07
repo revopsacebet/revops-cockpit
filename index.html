@@ -8100,6 +8100,51 @@ function mddPct_(vals, p) {
     hi = Math.ceil(i);
   return lo === hi ? v[lo] : v[lo] + (v[hi] - v[lo]) * (i - lo);
 }
+// Uma linha por DIA de safra (soma canais/faixas/grupos dentro do recorte). Fora do componente porque
+// roda em DUAS bases: as safras da janela escolhida e a cauda anterior (fallback de coorte).
+function mddByDay_(rows, selCh, selFx, selGr) {
+  const m = {};
+  rows.forEach(r => {
+    if (!selCh(r.canal) || !selFx(r.faixa) || !selGr(r.grupo)) return;
+    const k = String(r.date);
+    if (!m[k]) m[k] = {
+      date: k,
+      qtd: 0,
+      d0: 0,
+      cd1: 0,
+      vd1: 0,
+      vd3: 0,
+      vw1: 0,
+      vw2: 0,
+      vs0: 0,
+      vs1: 0,
+      cs1: 0,
+      cstd: 0,
+      cttd: 0,
+      cqtd4: 0,
+      _pass: 0
+    };
+    const a = m[k];
+    a.qtd += r.qtd || 0;
+    a.d0 += r.d0 || 0;
+    a.cd1 += r.cd1 || 0;
+    a.vd1 += r.vd1 || 0;
+    a.vd3 += r.vd3 || 0;
+    a.vw1 += r.vw1 || 0;
+    a.vw2 += r.vw2 || 0;
+    a.vs0 += r.vs0 || 0;
+    a.vs1 += r.vs1 || 0;
+    a.cs1 += r.cs1 || 0;
+    a.cstd += r.cstd || 0;
+    a.cttd += r.cttd || 0;
+    a.cqtd4 += r.cqtd4 || 0;
+    a._pass += r._pass || 0;
+  });
+  return Object.values(m).sort((a, b) => a.date < b.date ? -1 : 1);
+}
+// Quantos dias antes da janela buscar para o fallback de coorte. 14 = a maior maturação da escada
+// (Multiplicador D14); com isso toda linha consegue achar safra madura mesmo numa janela recém-aberta.
+const MDD_LOOKBACK = 14;
 function TabMetricasDia({
   retencaoFaixa,
   chFilter,
@@ -8146,52 +8191,66 @@ function TabMetricasDia({
   const selCh = chSelector_(chFilter);
   const selFx = fx => faixaSel.length === 0 || faixaSel.includes(fx);
   const selGr = g => !grupoActive || grupoSel.indexOf(g || 'sem grupo') >= 0;
-  // Uma linha por DIA de safra (soma canais/faixas/grupos dentro do recorte) — base dos percentis.
-  const byDay = React.useMemo(() => {
-    const m = {};
-    rows.forEach(r => {
-      if (!selCh(r.canal) || !selFx(r.faixa) || !selGr(r.grupo)) return;
-      const k = String(r.date);
-      if (!m[k]) m[k] = {
-        date: k,
-        qtd: 0,
-        d0: 0,
-        cd1: 0,
-        vd1: 0,
-        vd3: 0,
-        vw1: 0,
-        vw2: 0,
-        vs0: 0,
-        vs1: 0,
-        cs1: 0,
-        cstd: 0,
-        cttd: 0,
-        cqtd4: 0,
-        _pass: 0
-      };
-      const a = m[k];
-      a.qtd += r.qtd || 0;
-      a.d0 += r.d0 || 0;
-      a.cd1 += r.cd1 || 0;
-      a.vd1 += r.vd1 || 0;
-      a.vd3 += r.vd3 || 0;
-      a.vw1 += r.vw1 || 0;
-      a.vw2 += r.vw2 || 0;
-      a.vs0 += r.vs0 || 0;
-      a.vs1 += r.vs1 || 0;
-      a.cs1 += r.cs1 || 0;
-      a.cstd += r.cstd || 0;
-      a.cttd += r.cttd || 0;
-      a.cqtd4 += r.cqtd4 || 0;
-      a._pass += r._pass || 0;
+  const byDay = React.useMemo(() => mddByDay_(rows, selCh, selFx, selGr), [srcRows, chFilter && chFilter.scope, JSON.stringify(chFilter && chFilter.canals), JSON.stringify(faixaSel), JSON.stringify(grupoSel)]);
+  // Cauda ANTERIOR à janela — só serve de fallback de coorte quando nenhuma safra da janela fechou a
+  // maturação da linha (pedido do Luis 06/08: "pega a última safra que maturou nesse dado"). Nunca
+  // entra no agregado da janela; é uma base separada, e a tabela marca a linha que caiu nela.
+  const tailFrom = winFrom ? isoAddDays_(winFrom, -MDD_LOOKBACK) : null;
+  const tailTo = winFrom ? isoAddDays_(winFrom, -1) : null;
+  const [tail, setTail] = React.useState({
+    rows: null,
+    loading: false,
+    error: null
+  });
+  React.useEffect(() => {
+    if (!ENDPOINT_URL || !tailFrom || !tailTo) return;
+    let live = true;
+    setTail(s => ({
+      ...s,
+      loading: true,
+      error: null
+    }));
+    fetch(`${ENDPOINT_URL}?${authParam_()}&from=${tailFrom}&to=${tailTo}&only=retfaixa${grupoActive ? '&byGrupo=1' : ''}`).then(r => r.ok ? r.json() : Promise.reject(new Error('HTTP ' + r.status))).then(j => {
+      if (!live) return;
+      if (j.error) throw new Error(j.error);
+      setTail({
+        rows: j.retencaoFaixa || [],
+        loading: false,
+        error: null
+      });
+    }).catch(e => {
+      if (live) setTail({
+        rows: null,
+        loading: false,
+        error: String(e.message || e)
+      });
     });
-    return Object.values(m).sort((a, b) => a.date < b.date ? -1 : 1);
-  }, [srcRows, chFilter && chFilter.scope, JSON.stringify(chFilter && chFilter.canals), JSON.stringify(faixaSel), JSON.stringify(grupoSel)]);
+    return () => {
+      live = false;
+    };
+  }, [tailFrom, tailTo, grupoActive]);
+  const byDayTail = React.useMemo(() => mddByDay_(benchApostouRows_(tail.rows || []), selCh, selFx, selGr), [tail.rows, chFilter && chFilter.scope, JSON.stringify(chFilter && chFilter.canals), JSON.stringify(faixaSel), JSON.stringify(grupoSel)]);
   const bpScope = mddBpScope_(chFilter);
   const out = MDD_ROWS.map(row => {
     // Só safras que já fecharam a janela da métrica (maturação).
     const cut = dataMax ? isoAddDays_(dataMax, -row.mat) : null;
-    const days = byDay.filter(d => !cut || d.date <= cut);
+    const naJanela = byDay.filter(d => !cut || d.date <= cut);
+    // FALLBACK DE COORTE: se NENHUMA safra da janela maturou, cai nas safras maduras mais recentes
+    // que existem no dado (a cauda anterior à janela). Pega a MESMA quantidade de dias da janela
+    // escolhida, terminando na última safra que maturou — é leitura de coorte, não da janela, então a
+    // célula sai marcada com o período usado. Nunca mistura: ou é tudo da janela, ou é tudo da cauda.
+    let days = naJanela,
+      coorte = null;
+    if (!naJanela.length && byDayTail.length) {
+      const maduras = byDayTail.filter(d => !cut || d.date <= cut);
+      if (maduras.length) {
+        days = maduras.slice(-Math.max(1, byDay.length));
+        coorte = {
+          de: days[0].date,
+          ate: days[days.length - 1].date
+        };
+      }
+    }
     const tot = days.reduce((acc, d) => {
       for (const k in d) if (k !== 'date') acc[k] = (acc[k] || 0) + d[k];
       return acc;
@@ -8207,16 +8266,17 @@ function TabMetricasDia({
     // A tela mostrava só "—" nos dois casos e a pergunta voltava ("pq tem uns q ainda faltam a
     // info?"). `faltamDias` = quantos dias a safra mais nova ainda precisa envelhecer p/ a primeira
     // entrar na conta; se nem isso dá pra saber (janela toda velha demais), fica só o motivo.
+    // Só sobra "—" quando nem a cauda tem safra madura (janela muito antiga, ou dado ainda não chegou).
     const imatura = !missing && days.length === 0 && byDay.length > 0;
-    const ultima = byDay.length ? byDay[byDay.length - 1].date : null;
     // isoDiffDays_(a, b) = b − a. Idade da safra MAIS VELHA da janela = dataMax − primeiro dia.
-    const faltamDias = imatura && ultima && dataMax ? Math.max(1, row.mat - isoDiffDays_(byDay[0].date, dataMax)) : null;
+    const faltamDias = imatura && dataMax ? Math.max(1, row.mat - isoDiffDays_(byDay[0].date, dataMax)) : null;
     return {
       ...row,
       n: days.length,
       real,
       imatura,
       faltamDias,
+      coorte,
       bpVal: row.bp && bpScope ? bpScope[row.bp] : null
     };
   });
@@ -8303,7 +8363,16 @@ function TabMetricasDia({
     style: {
       fontWeight: 600
     }
-  }, val(r.real, r.fmt), r.imatura && /*#__PURE__*/React.createElement("span", {
+  }, val(r.real, r.fmt), r.coorte && /*#__PURE__*/React.createElement("span", {
+    style: {
+      fontWeight: 400,
+      fontSize: '11px',
+      color: 'var(--accent-yellow)',
+      marginLeft: 6,
+      opacity: 0.85
+    },
+    title: `Nenhuma safra da janela selecionada fechou os ${r.mat} dia(s) de maturação desta métrica. Este número é leitura de COORTE: as ${r.n} safra(s) maduras mais recentes que existem no dado (${fmtBR_(r.coorte.de)} a ${fmtBR_(r.coorte.ate)}), FORA da janela do topo. As demais linhas seguem a janela — não some as duas leituras.`
+  }, "coorte ", r.coorte.de.slice(8, 10), "/", r.coorte.de.slice(5, 7), "\u2013", r.coorte.ate.slice(8, 10), "/", r.coorte.ate.slice(5, 7)), r.imatura && /*#__PURE__*/React.createElement("span", {
     style: {
       fontWeight: 400,
       fontSize: '11px',
@@ -8338,7 +8407,11 @@ function TabMetricasDia({
     style: {
       color: 'var(--accent-red)'
     }
-  }, " vermelha (<14)"), " o percentil est\xE1 fr\xE1gil, amplie o per\xEDodo no slicer.", ' ', "Multiplicadores aqui s\xE3o ", /*#__PURE__*/React.createElement("strong", null, "sobre o dep\xF3sito do D0"), " (D0 = 1,00x), n\xE3o sobre o FTD$ \u2014 \xE9 a base do estudo.", ' ', /*#__PURE__*/React.createElement("strong", null, "S0/S1 s\xE3o semanas de calend\xE1rio"), " (seg\u2013dom): S0 = dep\xF3sito na semana do FTD, S1 = na semana seguinte \u2014 mesma l\xF3gica do M0/M+1, um n\xEDvel acima. N\xE3o \xE9 janela de 7 dias corridos.", ' ', "A linha de ", /*#__PURE__*/React.createElement("strong", null, "jogadores S1/S0 fica sem Meta BP de prop\xF3sito"), ": a curva semanal de jogadores do estudo \xE9 ", /*#__PURE__*/React.createElement("em", null, "estimada"), " (infere jogadores \xFAnicos das taxas di\xE1rias assumindo independ\xEAncia entre dias), o que infla o n\xEDvel \u2014 a mesma coorte medida de forma exata d\xE1 bem menos. Comparar a contagem exata daqui com aquela meta mostraria um gap de defini\xE7\xE3o, n\xE3o de performance. A linha de R$ n\xE3o tem esse problema.", out.some(r => r.real == null) ? ' · alguma linha sem base: payload anterior ao v60, recarregue com Atualizar.' : '')));
+  }, " vermelha (<14)"), " a base est\xE1 fr\xE1gil, amplie o per\xEDodo no slicer.", ' ', /*#__PURE__*/React.createElement("strong", null, "Fallback de coorte (marca ", /*#__PURE__*/React.createElement("span", {
+    style: {
+      color: 'var(--accent-yellow)'
+    }
+  }, "coorte dd/mm\u2013dd/mm"), "):"), " se NENHUMA safra da janela escolhida fechou a matura\xE7\xE3o da linha, ela n\xE3o fica mais vazia \u2014 passa a ler as safras maduras mais recentes que existem no dado (mesma quantidade de dias da janela, terminando na \xFAltima safra que maturou), buscadas at\xE9 ", MDD_LOOKBACK, " dias antes do in\xEDcio da janela. ", /*#__PURE__*/React.createElement("strong", null, "\xC9 leitura de coorte, n\xE3o da janela"), ": a linha marcada e as demais n\xE3o somam entre si, e o recorte de canal/faixa/grupo \xE9 o mesmo dos dois lados.", ' ', "Multiplicadores aqui s\xE3o ", /*#__PURE__*/React.createElement("strong", null, "sobre o dep\xF3sito do D0"), " (D0 = 1,00x), n\xE3o sobre o FTD$ \u2014 \xE9 a base do estudo.", ' ', /*#__PURE__*/React.createElement("strong", null, "S0/S1 s\xE3o semanas de calend\xE1rio"), " (seg\u2013dom): S0 = dep\xF3sito na semana do FTD, S1 = na semana seguinte \u2014 mesma l\xF3gica do M0/M+1, um n\xEDvel acima. N\xE3o \xE9 janela de 7 dias corridos.", ' ', "A linha de ", /*#__PURE__*/React.createElement("strong", null, "jogadores S1/S0 fica sem Meta BP de prop\xF3sito"), ": a curva semanal de jogadores do estudo \xE9 ", /*#__PURE__*/React.createElement("em", null, "estimada"), " (infere jogadores \xFAnicos das taxas di\xE1rias assumindo independ\xEAncia entre dias), o que infla o n\xEDvel \u2014 a mesma coorte medida de forma exata d\xE1 bem menos. Comparar a contagem exata daqui com aquela meta mostraria um gap de defini\xE7\xE3o, n\xE3o de performance. A linha de R$ n\xE3o tem esse problema.", out.some(r => r.real == null) ? ' · alguma linha sem base: payload anterior ao v60, recarregue com Atualizar.' : '')));
 }
 const TABS = [{
   id: 'farol',
