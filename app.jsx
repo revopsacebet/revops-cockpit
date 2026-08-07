@@ -4153,12 +4153,31 @@ const MDD_BP = {
   Meta:   { jogD1: 0.0943, rsD1: 0.2603, m1: 1.2603, m3: 1.5571, m7: 2.0197, m14: 2.6049, m30: 3.6286, rsS1: 0.5432, jogS1: 0.2385,
             pStd: 0.2343, pTtd: 0.4121, pQtd: 0.5460 },
 };
+// ------------------------------------------------------------
+// A MESMA escada, com o multiplicador SOBRE O FTD — `DATA.comp.canais.<escopo>.cumFTD` (base declarada
+// no próprio arquivo: `comp.base = "M0/FTD"`), também indexada por dia, 0..90. cumFTD[0] é o alvo de
+// D0/FTD, então a escada aqui já começa acima de 1.
+// ⚠️ NÃO é a curva sobre D0 reescalada: a razão cumFTD[i]/cum[i] cai de 1,46 (D1) para 1,20 (D30) no
+// Geral — são duas calibragens distintas do estudo. Por isso duas tabelas, e não um fator.
+// Só os multiplicadores mudam de base; retenção/passagem/semanal são razões que não têm D0 no
+// denominador, então herdam MDD_BP.
+const MDD_BP_FTD_MULT = {
+  Geral:  { m1: 1.8901, m3: 2.3302, m7: 2.9323, m14: 3.6590, m30: 4.8742 },
+  Google: { m1: 2.6401, m3: 3.4072, m7: 4.3960, m14: 5.4943, m30: 7.2639 },
+  Meta:   { m1: 1.8956, m3: 2.2817, m7: 2.8407, m14: 3.5360, m30: 4.7543 },
+};
+const MDD_BP_FTD = {};
+Object.keys(MDD_BP).forEach(k => { MDD_BP_FTD[k] = Object.assign({}, MDD_BP[k], MDD_BP_FTD_MULT[k]); });
 // As 3 TAXAS DE PASSAGEM (FTD→STD, STD→TTD, TTD→QTD) saíram da tabela em 06/08/2026 a pedido do Luis
 // ("não vamos mais olhar"), junto com a derivação † que dava meta pra elas. As constantes pStd/pTtd/
 // pQtd continuam no MDD_BP acima e o backend segue mandando cntStd/cntTtd/cntQtd4 — pra religar,
 // basta devolver as 3 linhas em MDD_ROWS. O racional da derivação está no histórico do git (commit
 // "Metricas do dia a dia: meta BP derivada para as 3 taxas de passagem").
-const MDD_DERIV = {};   // chaves de bp que levam o marcador † de "derivada" — vazio desde que as passagens saíram
+const MDD_DERIV = { jogS1: 1 };   // chaves de bp que levam o marcador † de "meta ajustada de régua"
+// Fator estimado→exato da retenção SEMANAL de jogadores (ver comentário na linha jogS1 de MDD_ROWS).
+// Medido no BQ sobre as safras de julho/26: exato 0,12233 ÷ estimado do estudo 0,21131.
+const MDD_JOGSEM_K = 0.12233 / 0.21131;
+[MDD_BP, MDD_BP_FTD].forEach(T => Object.keys(T).forEach(k => { T[k] = Object.assign({}, T[k], { jogS1: T[k].jogS1 * MDD_JOGSEM_K }); }));
 // mat = dias que a safra precisa ter completado p/ a métrica ser legível.
 const MDD_ROWS = [
   { key: 'jogD1', label: 'Retenção de jogadores D1/D0',        mat: 1,  fmt: 'pct',      of: a => a.qtd  ? a.cd1 / a.qtd : null,         bp: 'jogD1' },
@@ -4166,19 +4185,25 @@ const MDD_ROWS = [
   // ⚠️ Os multiplicadores exigem d0 > 0 E o incremento da janela > 0. Uma safra real SEMPRE tem algum
   // depósito depois do D0 — um multiplicador exatamente 1,00x não é "não cresceu", é BASE AUSENTE
   // (payload sem o campo). Sem esta guarda a tela mostrava "1,00x · +0,00x" com cara de dado bom.
-  { key: 'm1',    label: 'Multiplicador D1',                   mat: 1,  fmt: 'multiple', of: a => (a.d0 && a.vd1) ? (a.d0 + a.vd1) / a.d0 : null, bp: 'm1' },
-  { key: 'm3',    label: 'Multiplicador D3',                   mat: 3,  fmt: 'multiple', of: a => (a.d0 && a.vd3) ? (a.d0 + a.vd3) / a.d0 : null, bp: 'm3' },
-  { key: 'm7',    label: 'Multiplicador D7',                   mat: 7,  fmt: 'multiple', of: a => (a.d0 && a.vw1) ? (a.d0 + a.vw1) / a.d0 : null, bp: 'm7' },
-  { key: 'm14',   label: 'Multiplicador D14',                  mat: 14, fmt: 'multiple', of: a => (a.d0 && a.vw2) ? (a.d0 + a.vw2) / a.d0 : null, bp: 'm14' },
+  // `mult: true` = a linha muda de BASE com o toggle (sobre D0 ↔ sobre FTD). O NUMERADOR é sempre
+  // D0 + depósitos da janela; só o denominador troca. `den` chega do componente já resolvido.
+  { key: 'm1',    label: 'Multiplicador D1',                   mat: 1,  fmt: 'multiple', mult: true, of: (a, den) => (a.d0 && den && a.vd1) ? (a.d0 + a.vd1) / den : null, bp: 'm1' },
+  { key: 'm3',    label: 'Multiplicador D3',                   mat: 3,  fmt: 'multiple', mult: true, of: (a, den) => (a.d0 && den && a.vd3) ? (a.d0 + a.vd3) / den : null, bp: 'm3' },
+  { key: 'm7',    label: 'Multiplicador D7',                   mat: 7,  fmt: 'multiple', mult: true, of: (a, den) => (a.d0 && den && a.vw1) ? (a.d0 + a.vw1) / den : null, bp: 'm7' },
+  { key: 'm14',   label: 'Multiplicador D14',                  mat: 14, fmt: 'multiple', mult: true, of: (a, den) => (a.d0 && den && a.vw2) ? (a.d0 + a.vw2) / den : null, bp: 'm14' },
   // D30 = depósitos dos dias 1..30 da safra (val_d30 do backend), mesma régua dos demais: sobre o D0.
-  { key: 'm30',   label: 'Multiplicador D30',                  mat: 30, fmt: 'multiple', of: a => (a.d0 && a.vd30) ? (a.d0 + a.vd30) / a.d0 : null, bp: 'm30' },
+  { key: 'm30',   label: 'Multiplicador D30',                  mat: 30, fmt: 'multiple', mult: true, of: (a, den) => (a.d0 && den && a.vd30) ? (a.d0 + a.vd30) / den : null, bp: 'm30' },
   { key: 'rsS1',  label: 'Retenção de depósito R$ S1/S0 (semanal)', mat: 13, fmt: 'pct', of: a => a.vs0  ? a.vs1 / a.vs0 : null,         bp: 'rsS1', needs: "sem" },
-  // ⚠️ SEM Meta BP de propósito. A curva semanal de JOGADORES do estudo é ESTIMADA (jogadores únicos na
-  // semana inferidos das taxas diárias assumindo independência entre dias) — o que infla o número: o
-  // "realizado" do estudo dá 20,7% e a MESMA coorte medida de forma exata dá ~12,0%. Como a meta (28,1%)
-  // foi construída sobre a régua estimada, pôr ela ao lado da contagem exata mostraria um gap que é
-  // definição, não performance. A linha de R$ não tem esse problema (bate: 26,5% medido vs 26,9% do estudo).
-  { key: 'jogS1', label: 'Retenção de jogadores S1/S0 (semanal)',   mat: 13, fmt: 'pct', of: a => a.qtd  ? a.cs1 / a.qtd : null,         bp: null, needs: "sem" },
+  // Meta RECALIBRADA (marcada com †, decisão do Luis 06/08). A curva semanal de JOGADORES do estudo é
+  // ESTIMADA — jogadores únicos na semana inferidos das taxas diárias assumindo independência entre
+  // dias —, e isso INFLA: quem depositou terça e quinta é contado duas vezes. Medido: para as safras de
+  // julho/26 o estudo estima 21,13% e a contagem EXATA (mesma definição do backend: ≥1 depósito na
+  // semana ISO seguinte) dá 12,23% no BQ → fator 0,5789. A meta do cockpit é a do estudo × esse fator,
+  // senão a tela cobraria 28,1% de uma métrica medida noutra régua e mostraria 44% de atingimento onde
+  // dois terços do buraco é definição. O fator é medido no Geral e aplicado aos 3 escopos (o viés é de
+  // definição, não de canal). A linha de R$ não precisa disso: soma de reais não duplica (26,5% medido
+  // vs 26,9% do estudo).
+  { key: 'jogS1', label: 'Retenção de jogadores S1/S0 (semanal)',   mat: 13, fmt: 'pct', of: a => a.qtd  ? a.cs1 / a.qtd : null,         bp: 'jogS1', needs: "sem" },
 ];
 // Resolve o escopo do slicer de canal p/ uma chave de MDD_BP. ⚠️ NÃO dá pra usar chLabel_ direto: ele
 // devolve 'Total Casa'/'Canais Growth' e a curva do estudo se chama 'Geral' — o mismatch fazia a coluna
@@ -4186,10 +4211,11 @@ const MDD_ROWS = [
 // Sem canal selecionado (Total Casa ou Growth) = a curva Geral do estudo. Um canal só: Google/Meta têm
 // curva própria; qualquer outro (TikTok, Kwai, Programática…) não tem meta declarada → null.
 // Faixa/grupo NÃO entram: o estudo não calibrou curva por faixa nem por grupo de risco.
-function mddBpScope_(chFilter) {
+function mddBpScope_(chFilter, base) {
+  const T = (base === 'ftd') ? MDD_BP_FTD : MDD_BP;
   const sel = chList_(chFilter);
-  if (sel.length === 0) return MDD_BP.Geral;
-  if (sel.length === 1) return MDD_BP[sel[0]] || null;
+  if (sel.length === 0) return T.Geral;
+  if (sel.length === 1) return T[sel[0]] || null;
   return null;
 }
 // Percentil linear-interpolado sobre os valores diários ordenados (mesma régua do estudo: safras
@@ -4211,9 +4237,9 @@ function mddByDay_(rows, selCh, selFx, selGr) {
     // ⚠️ Toda métrica nova precisa da sua base AQUI. O Multiplicador D30 entrou em MDD_ROWS lendo
     // `a.vd30` sem que vd30 fosse somado nesta função — resultado: undefined, `of()` devolvia null e a
     // linha ficava "—" como se fosse falta de maturação. O dado sempre esteve no payload.
-    if (!m[k]) m[k] = { date: k, qtd: 0, d0: 0, cd1: 0, vd1: 0, vd3: 0, vw1: 0, vw2: 0, vd30: 0, vs0: 0, vs1: 0, cs1: 0, cstd: 0, cttd: 0, cqtd4: 0, _pass: 0 };
+    if (!m[k]) m[k] = { date: k, qtd: 0, ftd: 0, d0: 0, cd1: 0, vd1: 0, vd3: 0, vw1: 0, vw2: 0, vd30: 0, vs0: 0, vs1: 0, cs1: 0, cstd: 0, cttd: 0, cqtd4: 0, _pass: 0 };
     const a = m[k];
-    a.qtd += r.qtd || 0; a.d0 += r.d0 || 0; a.cd1 += r.cd1 || 0; a.vd1 += r.vd1 || 0;
+    a.qtd += r.qtd || 0; a.ftd += r.ftd || 0; a.d0 += r.d0 || 0; a.cd1 += r.cd1 || 0; a.vd1 += r.vd1 || 0;
     a.vd3 += r.vd3 || 0; a.vw1 += r.vw1 || 0; a.vw2 += r.vw2 || 0; a.vd30 += r.vd30 || 0;
     a.vs0 += r.vs0 || 0; a.vs1 += r.vs1 || 0; a.cs1 += r.cs1 || 0;
     a.cstd += r.cstd || 0; a.cttd += r.cttd || 0; a.cqtd4 += r.cqtd4 || 0; a._pass += r._pass || 0;
@@ -4232,6 +4258,9 @@ const MDD_LOOKBACK = 30 + 30;
 function TabMetricasDia({ retencaoFaixa, chFilter, meta, retFaixaLive }) {
   const [faixaSel, setFaixaSel] = React.useState([]);   // multi-select de faixa de FTD; [] = todas
   const [grupoSel, setGrupoSel] = React.useState([]);   // multi-select de grupo de risco; [] = todos
+  // Base do multiplicador: 'd0' (default, régua do estudo, D0 = 1,00x) ou 'ftd' (sobre o 1º depósito,
+  // igual ao toggle da aba Multiplicadores). Troca o denominador do realizado E a tabela de Planejado.
+  const [multBase, setMultBase] = usePersistedState('rvops:mddMultBase', 'd0');
   const dataMax = meta && meta.dataMaxDate;
   const grupoActive = grupoSel.length > 0;
   // A base `retencaoFaixa` do payload NÃO traz grupo de risco — precisa do fetch com &byGrupo=1 (mesma
@@ -4277,7 +4306,7 @@ function TabMetricasDia({ retencaoFaixa, chFilter, meta, retFaixaLive }) {
   const byDayTail = React.useMemo(() => mddByDay_(benchApostouRows_(tail.rows || []), selCh, selFx, selGr),
     [tail.rows, chFilter && chFilter.scope, JSON.stringify(chFilter && chFilter.canals),
      JSON.stringify(faixaSel), JSON.stringify(grupoSel)]);
-  const bpScope = mddBpScope_(chFilter);
+  const bpScope = mddBpScope_(chFilter, multBase);
   const out = MDD_ROWS.map(row => {
     // Só safras que já fecharam a janela da métrica (maturação).
     const cut = dataMax ? isoAddDays_(dataMax, -row.mat) : null;
@@ -4303,7 +4332,10 @@ function TabMetricasDia({ retencaoFaixa, chFilter, meta, retFaixaLive }) {
     const tot = days.reduce((acc, d) => { for (const k in d) if (k !== 'date') acc[k] = (acc[k] || 0) + d[k]; return acc; }, {});
     // Passagem depende do backend v58+; S1/S0 do v60+. Sem base → linha inteira "—" (não 0).
     const missing = (row.needs === 'pass' && !(tot._pass > 0)) || (row.needs === 'sem' && !(tot.vs0 > 0) && !(tot.cs1 > 0));
-    const real = missing ? null : row.of(tot);
+    // Denominador dos multiplicadores: D0 (default) ou FTD$, conforme o toggle. As demais linhas
+    // ignoram — são razões que não têm D0 no denominador.
+    const den = (multBase === 'ftd') ? tot.ftd : tot.d0;
+    const real = missing ? null : row.of(tot, den);
     const dist = missing ? [] : days.filter(d => d.qtd > 0).map(row.of);
     // As colunas T+1 (P75) e T+2 (P90) — percentis da distribuição das safras diárias — saíram da
     // tabela a pedido do Luis (06/08). A distribuição (`dist`) continua sendo montada porque é ela
@@ -4351,12 +4383,19 @@ function TabMetricasDia({ retencaoFaixa, chFilter, meta, retFaixaLive }) {
         <ChannelMultiSelect options={FAIXA_LIST} selected={faixaSel} onChange={setFaixaSel} labelOf={fxLabel_} allLabel="Todas" countNoun="faixas" />
         <label style={{ fontSize: '11px', color: 'var(--text-muted)', marginLeft: '8px' }}>Grupo de risco</label>
         <ChannelMultiSelect options={grupoOptions} selected={grupoSel} onChange={setGrupoSel} labelOf={grupoLabel_} allLabel="Todos" countNoun="grupos" />
+        <span style={{ fontSize: '11px', color: 'var(--text-muted)', marginLeft: '10px' }}>Multiplicador</span>
+        <div className="slicer-presets" style={{ marginLeft: 6 }}>
+          <button className={`preset-btn ${multBase === 'ftd' ? 'active' : ''}`} onClick={() => setMultBase('ftd')}
+                  title="Multiplicador sobre o FTD$ (valor do 1º depósito). O D0 já entra acima de 1.">sobre FTD</button>
+          <button className={`preset-btn ${multBase === 'd0' ? 'active' : ''}`} onClick={() => setMultBase('d0')}
+                  title="Multiplicador sobre o depósito do D0 (D0 = 1,00x) — a régua do estudo.">sobre D0</button>
+        </div>
         <span style={{ fontSize: '11px', color: 'var(--text-muted)', marginLeft: '10px' }}>
           Canal: <strong style={{ color: 'var(--text)' }}>{chLbl}</strong> — use o slicer <em>Canal</em> do topo
         </span>
       </div>
       <div className="support">
-        <div className="support-title">Escada de retenção precoce · {chLbl} · {faixaLbl} · {grupoLbl} · safras do período{dataMax ? ' (até ' + dataMax.slice(8, 10) + '/' + dataMax.slice(5, 7) + ')' : ''}{grFetch.loading ? ' · carregando grupos…' : ''}{grFetch.error ? ' · erro ao carregar grupos' : ''}
+        <div className="support-title">Escada de retenção precoce · {chLbl} · {faixaLbl} · {grupoLbl} · mult {multBase === 'ftd' ? 'sobre FTD' : 'sobre D0'} · safras do período{dataMax ? ' (até ' + dataMax.slice(8, 10) + '/' + dataMax.slice(5, 7) + ')' : ''}{grFetch.loading ? ' · carregando grupos…' : ''}{grFetch.error ? ' · erro ao carregar grupos' : ''}
           {/* Sem isto, uma falha no fetch da cauda derruba o fallback de coorte em silêncio e as linhas
               de maturação longa (D14, D30, S1/S0) voltam a aparecer vazias "sem motivo". */}
           {tail.loading ? ' · carregando safras maduras…' : ''}
@@ -4394,7 +4433,7 @@ function TabMetricasDia({ retencaoFaixa, chFilter, meta, retFaixaLive }) {
                       {val(r.bpVal, r.fmt)}
                       {r.bpVal != null && MDD_DERIV[r.bp] && (
                         <span style={{ fontWeight: 400, opacity: 0.65, marginLeft: 3 }}
-                              title="Meta DERIVADA: o estudo não traz taxa de passagem. Alvo = passagem de julho/26 × (BP de retenção de jogadores D1 ÷ D1 realizado em julho) — sobe a escada inteira na proporção exigida pela curva, preservando a forma do funil.">†</span>
+                              title="Meta AJUSTADA DE RÉGUA: a curva semanal de jogadores do estudo é ESTIMADA (jogadores únicos inferidos das taxas diárias assumindo independência entre dias), e isso infla — quem depositou terça e quinta conta duas vezes. Nas safras de julho/26 o estudo estima 21,13% onde a contagem exata dá 12,23%. A meta aqui é a do estudo × 0,579 para ficar na mesma régua do realizado; sem isso a tela cobraria 28,1% de um número medido de outro jeito.">†</span>
                       )}
                     </React.Fragment>
                   )}
@@ -4411,6 +4450,14 @@ function TabMetricasDia({ retencaoFaixa, chFilter, meta, retFaixaLive }) {
           {' '}<strong>⚠️ A Meta BP não muda com Faixa nem com Grupo</strong>: o estudo calibrou a curva no nível do canal,
           não por faixa de FTD nem por grupo de risco. Ao filtrar, o Realizado segue o recorte, mas a meta continua
           sendo a do canal inteiro — use como referência de direção, não como alvo daquele segmento.
+          {' '}<strong>Base do multiplicador:</strong> o toggle <em>sobre D0 / sobre FTD</em> troca o denominador do
+          realizado <strong>e a curva do Planejado junto</strong> — o estudo traz as duas escadas calibradas
+          separadamente (sobre D0 a razão começa em 1,00x; sobre FTD o próprio D0 já entra acima de 1). Não é uma
+          reescala: no Geral, a razão entre as duas curvas cai de 1,46 no D1 para 1,20 no D30. Só as linhas de
+          multiplicador mudam; retenção e semanal não têm D0 no denominador.
+          {' '}<strong>Retenção de jogadores S1/S0 traz meta ajustada de régua (†)</strong>: a curva semanal de
+          jogadores do estudo é estimada e infla ~1,7× vs a contagem exata — a meta entra corrigida pelo fator medido
+          (0,579), senão o atingimento seria definição, não performance.
           {' '}<strong>Maturação:</strong> cada linha só usa safras que já fecharam a janela dela — D30 exige 30 dias,
           D14 exige 14, S1/S0 exige 13. Ou seja, <strong>cada linha lê um nº diferente de safras</strong>: passe o mouse
           no valor pra ver quantas entraram e de que período.
