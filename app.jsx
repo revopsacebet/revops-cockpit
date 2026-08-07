@@ -4013,7 +4013,17 @@ function TabDailyCashflow({ range, meta }) {
               ))}
             </tbody>
             <tfoot>
-              <tr><td style={{ textAlign: 'left' }}>Resultado Líquido / GGR</td><td /><td colSpan={3} style={{ textAlign: 'right' }}>{fmtPct(pctGgr(tot.resLiq), 0)}</td></tr>
+              {/* Linha de fechamento. Antes era um colSpan={3} com só o % — o número caía embaixo de
+                  "Média/dia", com "Valor" e "% do GGR" vazios, e lia como linha quebrada/sem soma.
+                  Agora cada célula fica na SUA coluna, igual às demais: é o mesmo total da linha
+                  Resultado Líquido, repetido no pé como fecha um PnL. */}
+              <tr>
+                <td style={{ textAlign: 'left' }}>Margem Líquida</td>
+                <td />
+                <td className={valCls(tot.resLiq)}>{cfBRL(tot.resLiq)}</td>
+                <td>{fmtPct(pctGgr(tot.resLiq), 1)}</td>
+                <td>{cfBRL(tot.resLiq / days.length)}</td>
+              </tr>
             </tfoot>
           </table></div>
         )}
@@ -4039,16 +4049,26 @@ function TabDailyCashflow({ range, meta }) {
           </table></div>
         )}
 
+        {/* Rodapé enxuto: fica à vista só o que muda a leitura do número na janela escolhida
+            (alertas condicionais + até quando o dado foi carregado). O textão de premissas saiu da
+            vista a pedido do Luis (06/08) e virou um "Premissas e método" recolhido — apagar de vez
+            tiraria do cockpit a definição de cada linha (o que é realizado, o que é premissa, por que
+            a Meta é defasada), que é justamente o que evita discussão sobre o número. */}
         <div className="ch-note">
+          {metaPrevFora.length > 0 && <div><strong>⚠️ Fatura fora da janela:</strong> o período toca {metaPrevFora.join(', ')} mas não inclui o dia {CF_ASSUM.metaPayDay} desse(s) mês(es) — a fatura da Meta <strong>não</strong> está no total. Amplie a janela para o início do mês para vê-la.</div>}
+          {metaPrevZero.length > 0 && <div><strong>Atenção:</strong> não há spend de Meta no mês anterior a {metaPrevZero.join(', ')} — nada a pagar nesse(s) mês(es).</div>}
+          {monthsTouched.length > 1 && <div><strong>Atenção:</strong> a janela cruza {monthsTouched.length} meses — cada dia é pró-rateado pelos dias do <em>seu</em> mês, então o total dos fixos não é múltiplo redondo de um mês só.</div>}
+          {meta && meta.dataMaxDate && <div>Dado carregado no BQ até {fmtBR_(meta.dataMaxDate)} — o último dia da série costuma estar incompleto.</div>}
+          <details style={{ marginTop: 8 }}>
+            <summary style={{ cursor: 'pointer', color: 'var(--text-muted)' }}>Premissas e método</summary>
+            <div style={{ marginTop: 6 }}>
           <strong>Do BigQuery (realizado):</strong> GGR Bruto = <code>ggr_total</code> · FreeSpins = <code>valor_wins_freespin</code> · GGR = <code>ngr_total</code> (identidade validada: GGR = GGR Bruto − FreeSpins) · Bonificações = <code>valor_bonus_saldo_real_dia</code> — ou seja, o <strong>% de bonificação é o realizado do dia</strong>, não o −31,6% fixo da coluna B do arquivo. <strong>Tráfego</strong> = spend da performance com os mesmos ajustes do Farol (imposto de fechamento da Meta ×1,1383 e CPA manual de R$ 90 × FTD na Programática, que não tem spend rastreado).
           <br /><strong>Regime de caixa — Meta defasada em 1 mês:</strong> a Meta é paga só no <strong>mês seguinte</strong>; os demais canais são pagos dentro do próprio mês. O que sai do caixa aqui é <strong>Tráfego dos canais do mês + a fatura da Meta do mês anterior</strong>{metaPrevTot > 0 && <> ({cfBRL(metaPrevTot)} na janela)</>}. A fatura entra em <strong>parcela única no dia {CF_ASSUM.metaPayDay}</strong> de cada mês, não pró-rata — fatura é evento de caixa, e o pró-rata fazia uma janela terminada no meio do mês reconhecer só a fração decorrida (numa janela YTD isso sumia com quase um mês inteiro de Meta). A Meta gasta <em>neste</em> mês aparece só como linha <em>memo</em> no rodapé: é o que vai vencer no mês que vem, fora de Investimento Total, EBITDA e Resultado Líquido. Vale <strong>só aqui</strong>: no Farol e nas demais abas o investimento segue por competência, com a Meta do próprio mês dentro.
-          {metaPrevFora.length > 0 && <><br /><strong>⚠️ Fatura fora da janela:</strong> o período toca {metaPrevFora.join(', ')} mas não inclui o dia {CF_ASSUM.metaPayDay} desse(s) mês(es) — a fatura da Meta <strong>não</strong> está no total. Amplie a janela para o início do mês para vê-la.</>}
-          {metaPrevZero.length > 0 && <><br /><strong>Atenção:</strong> não há spend de Meta no mês anterior a {metaPrevZero.join(', ')} — nada a pagar nesse(s) mês(es).</>}
           <br /><strong>Premissas (% do GGR):</strong> Repasse Social {fmtPct(CF_ASSUM.pctRepasse, 0)} · Impostos {fmtPct(CF_ASSUM.pctImpostos, 1)} · Custos Variáveis {fmtPct(CF_ASSUM.pctCustoVar, 1)} (coluna B15 do arquivo). <strong>Créditos de PIS/COFINS e IRPJ/CSL estão em zero</strong> nesta versão.
           <br /><strong>Pró-rata:</strong> Custos Fixos ({cfBRL(CF_ASSUM.mensal.custosFixos)}/mês), Despesas ({cfBRL(CF_ASSUM.mensal.despesas)}), Resultado Financeiro ({cfBRL(CF_ASSUM.mensal.resultadoFin)}), Depreciação ({cfBRL(CF_ASSUM.mensal.depreciacao)}), Influencer ({cfBRL(CF_ASSUM.mensal.influencer)}) e Creator ({cfBRL(CF_ASSUM.mensal.creator)}) entram como <strong>mensal ÷ dias do mês</strong> em cada dia; o MTD é a soma disso — é a regra "Pro-Rata" escrita na própria aba PnL do arquivo. Influencer e Creator não existem no BQ (são contrato), por isso ficam fixos dentro do Investimento Total.
-          {monthsTouched.length > 1 && <><br /><strong>Atenção:</strong> a janela cruza {monthsTouched.length} meses — cada dia é pró-rateado pelos dias do <em>seu</em> mês, então o total dos fixos não é múltiplo redondo de um mês só.</>}
           <br /><strong>Escopo:</strong> casa inteira — esta aba <strong>ignora o filtro de canal</strong> do topo (o PnL é da empresa; ratear custo fixo, despesa e depreciação por canal não tem regra definida). Sinal segue o arquivo: custo é negativo.
-          {meta && meta.dataMaxDate && <><br />Dado carregado no BQ até {fmtBR_(meta.dataMaxDate)} — o último dia da série costuma estar incompleto.</>}
+            </div>
+          </details>
         </div>
       </div>
     </React.Fragment>
