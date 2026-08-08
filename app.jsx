@@ -1501,7 +1501,7 @@ const RET_MULT_METRICS_D0 = [
 ];
 const retChartMetrics_ = (base) => base === 'd0' ? RET_MULT_METRICS_D0 : RET_MULT_METRICS;
 const RET_SERIES_COLORS = ['#FF8C00', '#60a5fa', '#4ade80', '#facc15', '#c084fc', '#22d3ee', '#fb7185', '#a3e635'];
-function RetMultChart({ chFilter, faixaSel, grupoSel, grupoActive, mode, gran, sameday, dataMax, fallbackRows, cohort, cohortDays, srcRF, srcLoading, srcError, base }) {
+function RetMultChart({ chFilter, faixaSel, grupoSel, grupoActive, mode, gran, sameday, dataMax, fallbackRows, cohort, cohortDays, srcRF, srcRFLead, coLo, srcLoading, srcError, base }) {
   const MET = retChartMetrics_(base);            // lista de séries conforme a base do toggle (FTD | D0)
   const bLbl = base === 'd0' ? 'D0' : 'FTD';     // sufixo dos rótulos: Mult D7/FTD vs Mult D7/D0
   const [seriesBy, setSeriesBy] = usePersistedState('rvops:retChartSeries', 'mult'); // 'mult' | 'canal' | 'faixa' | 'grupo' (grupo de risco, pede &byGrupo=1)
@@ -1530,20 +1530,26 @@ function RetMultChart({ chFilter, faixaSel, grupoSel, grupoActive, mode, gran, s
       .then(j => { if (j.error) throw new Error(j.error); setF30({ rows: j.retencaoFaixa || [], loading: false, error: null }); })
       .catch(e => setF30({ rows: null, loading: false, error: String(e.message || e) }));
   }, [fetchFrom, dataMax, sameday, cohort, grpMode]);
-  const rows30 = (cohort && !grpMode) ? (srcRF || []) : (f30.rows || (!ENDPOINT_URL ? (fallbackRows || []) : null));
+  // Na coorte com MA ligada, agrega sobre o srcRFLead (janela visível + CO_MA_LEAD dias de histórico ANTES
+  // dela) — a janela deslizante precisa desse passado p/ os 1ºs pontos visíveis terem janela CHEIA. Os pontos
+  // de lead-in são recortados depois da suavização (`coLo`), então não aparecem no eixo.
+  const maWanted = maDays > 0;
+  const coLead = (cohort && !grpMode && maWanted && srcRFLead && srcRFLead.length) ? srcRFLead : null;
+  const rows30 = (cohort && !grpMode) ? (coLead || srcRF || []) : (f30.rows || (!ENDPOINT_URL ? (fallbackRows || []) : null));
   const busy = (cohort && !grpMode) ? !!srcLoading : f30.loading;
   const err = (cohort && !grpMode) ? srcError : f30.error;
   const dmLabel = (s) => { const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(s)); return m ? `${m[3]}/${m[2]}` : String(s); };
   // UM multiplicador por vez (D0…D30). Coage valor inválido/legado (ex. "Todos" salvo antes) p/ D1.
   const effMetric = MET.some(m => m.id === metric) ? metric : 'D1';
   const mDef = MET.find(m => m.id === effMetric) || MET[0];
-  // Média móvel EFETIVA. Na Coorte 30d ela não roda: a fonte é a janela fechada da tabela (30 safras diárias,
-  // sem lead-in), então uma janela deslizante de N dias sairia parcial em quase todo ponto — suavização falsa.
+  // Média móvel EFETIVA. Roda nos DOIS modos: no Calendário sobre a busca de N+30 dias; na Coorte sobre o
+  // srcRFLead (janela visível + CO_MA_LEAD dias antes). Só cai pra 0 se o lead-in não veio (backend velho ou
+  // fetch da coorte ainda em voo) — aí suavizar sobre a janela fechada daria janela parcial em quase todo
+  // ponto, que é suavização falsa.
   // ⚠️ O `effGran` TEM que seguir o maEff, não o maDays: a MA só força resolução diária porque a janela
-  // deslizante é em dias. Quando ela não roda (Coorte), forçar 'day' jogava o gráfico pra diário ignorando o
-  // toggle Visão=Semanal E sem suavizar nada — a linha virava ruído de safra diária com o botão "Semanal"
-  // aceso. Era esse o bug do gráfico da Coorte 30d.
-  const maEff = (maDays > 0 && !cohort) ? maDays : 0;
+  // deslizante é em dias. Quando ela NÃO roda, forçar 'day' joga o gráfico pra diário ignorando o toggle
+  // Visão=Semanal E sem suavizar nada — a linha vira ruído de safra diária com o botão "Semanal" aceso.
+  const maEff = (maDays > 0 && (!cohort || !!coLead)) ? maDays : 0;
   const effGran = maEff > 0 ? 'day' : gran;   // média móvel opera em resolução DIÁRIA (janela deslizante em dias)
 
   // MATURIDADE no NÍVEL DA COORTE (dia do FTD), não da semana: mantém só FTDs que já fecharam a janela do
@@ -1625,6 +1631,16 @@ function RetMultChart({ chFilter, faixaSel, grupoSel, grupoActive, mode, gran, s
       xLabels = xLabels.slice(start); isoKeys = isoKeys.slice(start);
       series = series.map(s => ({ ...s, values: s.values.slice(start), ftd: s.ftd ? s.ftd.slice(start) : s.ftd }));
     }
+  } else if (coLead && coLo) {
+    // Coorte com lead-in: os dias anteriores a `coLo` entraram SÓ p/ encher a janela deslizante — corta-os do
+    // eixo agora que a MA já rodou, senão o gráfico mostraria um período que a tabela ao lado não mostra.
+    // No Semanal a chave é a 2ª-feira da semana → compara com a semana de coLo (a 1ª semana visível).
+    const lo = gran === 'week' ? weekStartISO_(coLo) : coLo;
+    const start = isoKeys.findIndex(k => k != null && String(k) >= lo);
+    if (start > 0) {
+      xLabels = xLabels.slice(start); isoKeys = isoKeys.slice(start);
+      series = series.map(s => ({ ...s, values: s.values.slice(start), ftd: s.ftd ? s.ftd.slice(start) : s.ftd }));
+    }
   }
   series = series.filter(s => s.values.some(v => v != null && !isNaN(v)));
 
@@ -1648,18 +1664,17 @@ function RetMultChart({ chFilter, faixaSel, grupoSel, grupoActive, mode, gran, s
           ))}
         </span>
       </span>
-      {/* Na Coorte a MA não roda → o controle fica DESABILITADO e apagado. Antes ele continuava aceso em "30d"
-          sem suavizar nada, o que fazia o gráfico parecer quebrado. O valor persiste p/ voltar no Calendário. */}
-      <span style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', opacity: cohort ? .45 : 1 }}
-        title={cohort ? `Média móvel indisponível na Coorte ${cohortDays}d: a fonte é a janela fechada da tabela (${cohortDays} safras diárias, sem histórico anterior), então a janela deslizante sairia parcial em quase todo ponto. Volte pro Calendário p/ suavizar.` : undefined}>
+      {/* O "active" segue o maEff, não o maDays: se por algum motivo a MA não estiver rodando (lead-in da
+          coorte ainda carregando), o botão não pode ficar aceso fingindo que está. */}
+      <span style={{ display: 'inline-flex', alignItems: 'center', gap: '6px' }}>
         <label style={{ fontSize: '11px', color: 'var(--text-muted)' }}>Média móvel</label>
         <span className="slicer-presets">
-          <button className={`preset-btn ${maEff === 0 ? 'active' : ''}`} disabled={cohort} onClick={() => setMaDays(0)} title="Sem média móvel (valor do período)">Off</button>
+          <button className={`preset-btn ${maEff === 0 ? 'active' : ''}`} onClick={() => setMaDays(0)} title="Sem média móvel (valor do período)">Off</button>
           {[7, 14, 30].map(d => (
-            <button key={d} className={`preset-btn ${maEff === d ? 'active' : ''}`} disabled={cohort} onClick={() => setMaDays(d)} title={`Média móvel de ${d} dias (janela deslizante diária, ponderada por FTD)`}>{d}d</button>
+            <button key={d} className={`preset-btn ${maEff === d ? 'active' : ''}`} onClick={() => setMaDays(d)} title={`Média móvel de ${d} dias (janela deslizante diária, ponderada pelo denominador ativo)${cohort ? ` — na Coorte usa os ${d} dias ANTERIORES à janela como histórico, então o 1º ponto já sai com janela cheia` : ''}`}>{d}d</button>
           ))}
         </span>
-        <input type="number" min="2" max="60" value={maDays || ''} placeholder="dias" disabled={cohort}
+        <input type="number" min="2" max="60" value={maDays || ''} placeholder="dias"
           onChange={e => { const v = parseInt(e.target.value, 10); setMaDays(isNaN(v) ? 0 : Math.max(0, Math.min(60, v))); }}
           title="Escolher N dias da média móvel (janela deslizante)"
           style={{ width: '62px', background: 'var(--surface)', border: '1px solid var(--border)', color: 'var(--text)', padding: '4px 6px', borderRadius: '6px', fontSize: '12px', fontFamily: 'inherit' }} />
@@ -1787,7 +1802,7 @@ function RetMultChart({ chFilter, faixaSel, grupoSel, grupoActive, mode, gran, s
       </div>
       <div className="ch-note">
         <strong>{cohort ? `Coorte de ${cohortDays} dias — mesma base/janela da tabela (só coortes fechadas)` : `Janela: ${gran === 'week' ? 'últimas 8 semanas' : '30 dias corridos'} terminando na ÚLTIMA safra MADURA${matCutId ? ` do ${matCutId}` : ''}${matCutISO ? ` (até ${dmLabel(matCutISO)})` : ''} — coortes ainda imaturas são cortadas${gran === 'week' ? ' (a semana mais recente entra com suas coortes já maduras)' : ''}`}</strong>. Eixo X = <strong>{gran === 'week' ? 'semana' : 'dia'} de FTD</strong>; {seriesBy === 'mult' ? <>evolução do <strong>multiplicador {effMetric}/{bLbl}</strong></> : <>uma linha por <strong>{seriesBy === 'canal' ? 'canal' : 'faixa de FTD'}</strong> (multiplicador {effMetric}/{bLbl})</>}. Cada ponto = média ponderada (Σ/Σ) do KPI no período. Segue canal/faixa/modo/same-day/M0.{busy ? ' · carregando…' : ''}{err ? ' · erro' : ''}
-        {maEff > 0 && <React.Fragment>{' '}<em style={{ color: 'var(--text-dim)' }}>Média móvel de {maEff} dias: janela deslizante ponderada pelo DENOMINADOR ativo (Σ mult×{bLbl}$ ÷ Σ {bLbl}$ = a própria razão pooled da janela) dos últimos {maEff} dias, calculada em dias e {gran === 'week' ? 'amostrada por semana (valor no último dia da semana)' : 'plotada por dia'} — segue o toggle Diário/Semanal e suaviza o ruído. É uma janela TRAILING (só passado): uma virada real aparece com ~{Math.ceil(maEff / 2)} dias de atraso, somados ao corte de maturidade acima.{maEff > 7 && gran === 'week' ? ' Com MM > 7d no Semanal, semanas vizinhas dividem parte da janela — a linha fica mais "tendenciosa" do que o dado.' : ''}</em></React.Fragment>}{cohort && <React.Fragment>{' '}<em style={{ color: 'var(--accent-yellow)' }}>Média móvel indisponível na Coorte {cohortDays}d: a fonte aqui é a MESMA janela fechada da tabela ({cohortDays} safras diárias, sem histórico antes dela), então a janela deslizante sairia parcial em quase todo ponto — o seletor fica desabilitado. Cada ponto é a safra do período, sem suavização; use o <strong>Semanal</strong> p/ tirar o ruído do dia a dia.</em></React.Fragment>}
+        {maEff > 0 && <React.Fragment>{' '}<em style={{ color: 'var(--text-dim)' }}>Média móvel de {maEff} dias: janela deslizante ponderada pelo DENOMINADOR ativo (Σ mult×{bLbl}$ ÷ Σ {bLbl}$ = a própria razão pooled da janela) dos últimos {maEff} dias, calculada em dias e {gran === 'week' ? 'amostrada por semana (valor no último dia da semana)' : 'plotada por dia'} — segue o toggle Diário/Semanal e suaviza o ruído. É uma janela TRAILING (só passado): uma virada real aparece com ~{Math.ceil(maEff / 2)} dias de atraso, somados ao corte de maturidade acima.{maEff > 7 && gran === 'week' ? ' Com MM > 7d no Semanal, semanas vizinhas dividem parte da janela — a linha fica mais "tendenciosa" do que o dado.' : ''}</em></React.Fragment>}{cohort && maEff > 0 && <React.Fragment>{' '}<em style={{ color: 'var(--text-dim)' }}>Na Coorte a janela deslizante puxa como histórico os dias ANTERIORES à janela visível (busca estendida em {maEff} dia{maEff > 1 ? 's' : ''}), então o 1º ponto já sai com janela cheia — o eixo continua mostrando só as safras fechadas da tabela.</em></React.Fragment>}{cohort && maDays > 0 && maEff === 0 && <React.Fragment>{' '}<em style={{ color: 'var(--accent-yellow)' }}>Média móvel esperando o histórico da coorte carregar — os pontos abaixo ainda são o valor bruto do período.</em></React.Fragment>}
         {!cohort && <React.Fragment>{' '}<em>Maturidade: o multiplicador só entra depois de a coorte ter os dias p/ fechar a janela (D0=0 · D1=1 · D7=7 · D14=14 · D30=30 dias após o FTD).</em></React.Fragment>}
       </div>
     </React.Fragment>
@@ -1830,10 +1845,17 @@ function TabRetencaoFaixa({ retencaoFaixa, chFilter, channels, bp, meta }) {
   // M0 da tabela pela janela fixa de N dias (cntD{N}/valD{N}). N = 30|60|90 pelo toggle.
   const dataMax = meta && meta.dataMaxDate;
   const completeBefore = (dataMax && cohort) ? isoAddDays_(dataMax, -cohortDays) : null;
+  // Início da janela VISÍVEL da coorte (as 31 safras que a tabela mostra). A busca vai CO_MA_LEAD dias mais
+  // atrás só p/ dar lead-in à média móvel do gráfico — sem isso a janela deslizante sairia parcial nos
+  // primeiros pontos e a MA ficaria desligada aqui. ⚠️ O `srcRF` da TABELA passou a ter piso explícito
+  // (`>= coLo`): antes o filtro era só o teto (`<= completeBefore`), então estender a busca pra trás
+  // alargaria a janela da tabela em silêncio.
+  const CO_MA_LEAD = 30;   // cobre a MA máxima do gráfico (30d)
+  const coLo = (dataMax && cohort) ? isoAddDays_(dataMax, -(cohortDays + 30)) : null;
   const [coFetch, setCoFetch] = React.useState({ rows: null, loading: false, error: null });
   React.useEffect(() => {
     if (!cohort || !dataMax || !ENDPOINT_URL) return;
-    const from = isoAddDays_(dataMax, -(cohortDays + 30)), to = dataMax;
+    const from = isoAddDays_(dataMax, -(cohortDays + 30 + CO_MA_LEAD)), to = dataMax;
     setCoFetch(s => ({ ...s, loading: true, error: null }));
     fetch(`${ENDPOINT_URL}?${authParam_()}&from=${from}&to=${to}&only=retfaixa${sameday ? '&sameday=1' : ''}`)
       .then(r => r.ok ? r.json() : Promise.reject(new Error('HTTP ' + r.status)))
@@ -1885,10 +1907,15 @@ function TabRetencaoFaixa({ retencaoFaixa, chFilter, channels, bp, meta }) {
     : (campDimFetch.rows || []);
   // Fonte: coorte (fetch próprio · só coortes fechadas · M0 = janela de 30 dias) · same-day · padrão (slicer global).
   let srcRF;
+  // Coorte, com lead-in: TUDO que veio do fetch (inclui os CO_MA_LEAD dias antes da janela visível), já
+  // maduro (<= completeBefore). Só o GRÁFICO usa — é o histórico que alimenta a janela deslizante da MA.
+  const srcRFLead = cohort
+    ? (coFetch.rows || [])
+      .filter(r => completeBefore && r.date <= completeBefore)
+      .map(r => ({ ...r, cntM0: r['cntD' + cohortDays], valM0: r['valD' + cohortDays] }))
+    : null;
   if (cohort) {
-    srcRF = (coFetch.rows || [])
-      .filter(r => completeBefore && r.date <= completeBefore)                             // só coortes que já fecharam os N dias
-      .map(r => ({ ...r, cntM0: r['cntD' + cohortDays], valM0: r['valD' + cohortDays] })); // M0 da tabela = janela fixa de N dias
+    srcRF = (srcRFLead || []).filter(r => coLo && r.date >= coLo);   // janela visível: piso + teto (ver coLo)   // janela visível: piso + teto (ver coLo)
   } else {
     srcRF = sameday ? (sdFetch.rows || []) : retencaoFaixa;
   }
@@ -2015,7 +2042,7 @@ function TabRetencaoFaixa({ retencaoFaixa, chFilter, channels, bp, meta }) {
       </div>
       <div className="support">
         <div className="support-title">Multiplicador por dimensão · sobre {baseLbl} · {cohort ? 'coorte ' + cohortDays + 'd' : 'últimos 30 dias corridos'} · {chLabel} · {faixaLabelTxt}{grupoActive ? ' · ' + grupoLabelTxt : ''}{sameday ? ' · same-day' : ''}</div>
-        <RetMultChart chFilter={chFilter} faixaSel={faixaSel} grupoSel={grupoSel} grupoActive={grupoActive} mode={mode} gran={gran} sameday={sameday} dataMax={dataMax} fallbackRows={retencaoFaixa} cohort={cohort} cohortDays={cohortDays} srcRF={srcRF} srcLoading={cohort && coFetch.loading} srcError={cohort ? coFetch.error : null} base={multBase} />
+        <RetMultChart chFilter={chFilter} faixaSel={faixaSel} grupoSel={grupoSel} grupoActive={grupoActive} mode={mode} gran={gran} sameday={sameday} dataMax={dataMax} fallbackRows={retencaoFaixa} cohort={cohort} cohortDays={cohortDays} srcRF={srcRF} srcRFLead={srcRFLead} coLo={coLo} srcLoading={cohort && coFetch.loading} srcError={cohort ? coFetch.error : null} base={multBase} />
       </div>
     </React.Fragment>
   );
