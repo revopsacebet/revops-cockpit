@@ -2966,6 +2966,11 @@ function retMultCols_(base, mL) {
     get: r => r.multD1D0,
     tip: '(D0 + dia 1) ÷ depósito do D0. O D0/D0 (=1,00x) é omitido por ser constante.'
   }, {
+    key: 'd3',
+    label: 'Mult D3/D0',
+    get: r => r.multD3D0,
+    tip: '(D0 + dias 1–3) ÷ depósito do D0.'
+  }, {
     key: 'd4',
     label: 'Mult D4/D0',
     get: r => r.multD4D0,
@@ -2991,6 +2996,11 @@ function retMultCols_(base, mL) {
     label: 'Mult D1/D1',
     get: r => r.multD1D1,
     tip: 'Nível D1 (D0 + dep do dia 1) ÷ ele mesmo = 1,00x (âncora da base D1).'
+  }, {
+    key: 'd3',
+    label: 'Mult D3/D1',
+    get: r => r.multD3D1,
+    tip: '(D0 + dias 1–3) ÷ nível D1.'
   }, {
     key: 'd4',
     label: 'Mult D4/D1',
@@ -3022,6 +3032,11 @@ function retMultCols_(base, mL) {
     label: 'Mult D1/FTD',
     get: r => r.multD1F,
     tip: '(D0 + dia 1) ÷ FTD.'
+  }, {
+    key: 'd3',
+    label: 'Mult D3/FTD',
+    get: r => r.multD3F,
+    tip: '(D0 + dias 1–3) ÷ FTD.'
   }, {
     key: 'd4',
     label: 'Mult D4/FTD',
@@ -3291,6 +3306,10 @@ const RET_MULT_METRICS = [{
   key: 'multD1F',
   desc: '(D0 + dia 1) ÷ FTD'
 }, {
+  id: 'D3',
+  key: 'multD3F',
+  desc: '(D0 + dias 1–3) ÷ FTD'
+}, {
   id: 'D7',
   key: 'multW1F',
   desc: '(D0 + dias 1–7) ÷ FTD'
@@ -3308,6 +3327,10 @@ const RET_MULT_METRICS_D0 = [{
   id: 'D1',
   key: 'multD1D0',
   desc: '(D0 + dia 1) ÷ dep D0'
+}, {
+  id: 'D3',
+  key: 'multD3D0',
+  desc: '(D0 + dias 1–3) ÷ dep D0'
 }, {
   id: 'D7',
   key: 'multW1D0',
@@ -3404,6 +3427,7 @@ function RetMultChart({
   const MAT_H = {
     D0: 0,
     D1: 1,
+    D3: 3,
     D7: 7,
     D14: 14,
     D30: 30
@@ -5008,6 +5032,7 @@ function benchMetrics_(a, mode) {
     // Mesmos acúmulos, mas divididos pelo NÍVEL D1 (toggle "sobre D1"): D1 vira a base (=1,00x), sem D0.
     multD1D1: multD1(a.d0 + (a.vd1 || 0)),
     // = 1,00x (âncora)
+    multD3D1: a._pass > 0 ? multD1(a.d0 + (a.vd3 || 0)) : null,
     multD4D1: multD1(a.d0 + (a.vd4 || 0)),
     multW1D1: multD1(a.d0 + a.vw1),
     multW2D1: multD1(a.d0 + (a.vw2 || 0)),
@@ -5015,6 +5040,9 @@ function benchMetrics_(a, mode) {
     // Mesmos acúmulos ÷ DEPÓSITO D0 (toggle "sobre D0"): D0 vira a base (=1,00x, não vai pra tela).
     // Quanto o dinheiro do primeiro dia se multiplicou — não depende do ticket de FTD.
     multD1D0: multD0(a.d0 + (a.vd1 || 0)),
+    // D3 tem a MESMA guarda do multD3F: sem a base vd3 (payload < v58, ou o Excel da Lottu, que não exporta
+    // janela D3) devolve null → tela mostra "—". Cair no nível D0 seria lido como "o D3 não cresceu".
+    multD3D0: a._pass > 0 ? multD0(a.d0 + (a.vd3 || 0)) : null,
     multD4D0: multD0(a.d0 + (a.vd4 || 0)),
     multW1D0: multD0(a.d0 + a.vw1),
     multW2D0: multD0(a.d0 + (a.vw2 || 0)),
@@ -5703,7 +5731,14 @@ function BenchmarkView({
     key: "d0f"
   }, fmtMultiple(m.multD0F)), /*#__PURE__*/React.createElement("td", {
     key: "d1f"
-  }, fmtMultiple(m.multD1F)), /*#__PURE__*/React.createElement("td", {
+  }, fmtMultiple(m.multD1F)),
+  /*#__PURE__*/
+  // D3 só existe do lado Apostou: o Excel da Lottu não exporta a janela D0+1–3 (não há ret_val_d3), então a
+  // célula dela sai "—" (guarda `_pass` no benchMetrics_) em vez de um número reconstruído. Nota explica.
+  React.createElement("td", {
+    key: "d3f",
+    title: m.multD3F == null ? 'Sem base D3 nesta fonte (o export da Lottu não traz a janela de 3 dias).' : undefined
+  }, fmtMultiple(m.multD3F)), /*#__PURE__*/React.createElement("td", {
     key: "w1f"
   }, fmtMultiple(m.multW1F)), /*#__PURE__*/React.createElement("td", {
     key: "m0f"
@@ -5724,7 +5759,9 @@ function BenchmarkView({
     background: 'rgba(250,204,21,0.20)',
     borderLeft: '2px solid rgba(250,204,21,0.55)'
   };
-  const head = /*#__PURE__*/React.createElement("thead", null, /*#__PURE__*/React.createElement("tr", null, /*#__PURE__*/React.createElement("th", null, "Casa"), /*#__PURE__*/React.createElement("th", null, "Qtd FTD"), /*#__PURE__*/React.createElement("th", null, "FTD $$"), /*#__PURE__*/React.createElement("th", null, "Dep D0 Med"), /*#__PURE__*/React.createElement("th", null, "Mult D0/FTD"), /*#__PURE__*/React.createElement("th", null, "Mult D1/FTD"), /*#__PURE__*/React.createElement("th", null, "Mult W1/FTD"), /*#__PURE__*/React.createElement("th", null, `Mult ${wLbl}/FTD`), /*#__PURE__*/React.createElement("th", {
+  const head = /*#__PURE__*/React.createElement("thead", null, /*#__PURE__*/React.createElement("tr", null, /*#__PURE__*/React.createElement("th", null, "Casa"), /*#__PURE__*/React.createElement("th", null, "Qtd FTD"), /*#__PURE__*/React.createElement("th", null, "FTD $$"), /*#__PURE__*/React.createElement("th", null, "Dep D0 Med"), /*#__PURE__*/React.createElement("th", null, "Mult D0/FTD"), /*#__PURE__*/React.createElement("th", null, "Mult D1/FTD"), /*#__PURE__*/React.createElement("th", {
+    title: "(D0 + dias 1\u20133) \xF7 FTD. S\xF3 a Apostou tem essa janela \u2014 o export da Lottu n\xE3o traz D3."
+  }, "Mult D3/FTD"), /*#__PURE__*/React.createElement("th", null, "Mult W1/FTD"), /*#__PURE__*/React.createElement("th", null, `Mult ${wLbl}/FTD`), /*#__PURE__*/React.createElement("th", {
     style: retThL
   }, `D1 ${retHdr}`), /*#__PURE__*/React.createElement("th", {
     style: retTh
@@ -5899,7 +5936,7 @@ function BenchmarkView({
       padding: '0 4px',
       borderRadius: '3px'
     }
-  }, "Saque %"), " = saque \xF7 dep\xF3sito. Net/saque s\xE3o ", /*#__PURE__*/React.createElement("strong", null, "totais da safra"), " (\u03A3 dep\xF3sitos \u2212 \u03A3 saques observados, n\xE3o por janela D0/D1/W1) \u2014 por isso o modo l\xEDquido n\xE3o tem a curva de reten\xE7\xE3o; troque pra ", /*#__PURE__*/React.createElement("strong", null, "Bruto"), " p/ ver D0\u2192M0. ", /*#__PURE__*/React.createElement("strong", null, "Apostou"), " vem do BQ ao vivo (mesma fonte da Multiplicadores e Reten\xE7\xE3o); ", /*#__PURE__*/React.createElement("strong", null, "Lottu"), " do Excel.") : /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("strong", null, "Qtd FTD"), " = n\xBA de 1\xBAs dep\xF3sitos \xB7 ", /*#__PURE__*/React.createElement("strong", null, "FTD $$"), " = ticket m\xE9dio do FTD (\u03A3 FTD \xF7 qtd) \xB7 ", /*#__PURE__*/React.createElement("strong", null, "Dep D0 Med"), " = dep\xF3sito m\xE9dio no D0 (\u03A3 D0 \xF7 qtd).", /*#__PURE__*/React.createElement("strong", null, " Mult X/FTD"), " = dep\xF3sito acumulado (incluindo o D0) at\xE9 a janela \xF7 valor do FTD: D0/FTD \xB7 (D0+dia 1)/FTD \xB7 (D0+dias 1\u20137)/FTD \xB7 ", cohort ? '(D0+dias 1–30)/FTD' : '(D0+resto do mês)/FTD', ".", /*#__PURE__*/React.createElement("strong", null, " D1/W1/", wLbl, " Ret"), " (colunas ", /*#__PURE__*/React.createElement("span", {
+  }, "Saque %"), " = saque \xF7 dep\xF3sito. Net/saque s\xE3o ", /*#__PURE__*/React.createElement("strong", null, "totais da safra"), " (\u03A3 dep\xF3sitos \u2212 \u03A3 saques observados, n\xE3o por janela D0/D1/W1) \u2014 por isso o modo l\xEDquido n\xE3o tem a curva de reten\xE7\xE3o; troque pra ", /*#__PURE__*/React.createElement("strong", null, "Bruto"), " p/ ver D0\u2192M0. ", /*#__PURE__*/React.createElement("strong", null, "Apostou"), " vem do BQ ao vivo (mesma fonte da Multiplicadores e Reten\xE7\xE3o); ", /*#__PURE__*/React.createElement("strong", null, "Lottu"), " do Excel.") : /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("strong", null, "Qtd FTD"), " = n\xBA de 1\xBAs dep\xF3sitos \xB7 ", /*#__PURE__*/React.createElement("strong", null, "FTD $$"), " = ticket m\xE9dio do FTD (\u03A3 FTD \xF7 qtd) \xB7 ", /*#__PURE__*/React.createElement("strong", null, "Dep D0 Med"), " = dep\xF3sito m\xE9dio no D0 (\u03A3 D0 \xF7 qtd).", /*#__PURE__*/React.createElement("strong", null, " Mult X/FTD"), " = dep\xF3sito acumulado (incluindo o D0) at\xE9 a janela \xF7 valor do FTD: D0/FTD \xB7 (D0+dia 1)/FTD \xB7 (D0+dias 1\u20133)/FTD \xB7 (D0+dias 1\u20137)/FTD \xB7 ", cohort ? '(D0+dias 1–30)/FTD' : '(D0+resto do mês)/FTD', ".", /*#__PURE__*/React.createElement("strong", null, " O Mult D3 da ", housesLabel, " sai \"\u2014\""), ": o export dela n\xE3o traz a janela de 3 dias (n\xE3o h\xE1 ", /*#__PURE__*/React.createElement("code", null, "ret_val_d3"), ") \u2014 pra preencher, pedir a coluna no pr\xF3ximo export.", /*#__PURE__*/React.createElement("strong", null, " D1/W1/", wLbl, " Ret"), " (colunas ", /*#__PURE__*/React.createElement("span", {
     style: {
       background: 'rgba(250,204,21,0.25)',
       padding: '0 4px',

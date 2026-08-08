@@ -1338,6 +1338,7 @@ function retMultCols_(base, mL) {
   const M = mL || 'M0';
   if (base === 'd0') return [
     { key: 'd1', label: 'Mult D1/D0', get: r => r.multD1D0, tip: '(D0 + dia 1) ÷ depósito do D0. O D0/D0 (=1,00x) é omitido por ser constante.' },
+    { key: 'd3', label: 'Mult D3/D0', get: r => r.multD3D0, tip: '(D0 + dias 1–3) ÷ depósito do D0.' },
     { key: 'd4', label: 'Mult D4/D0', get: r => r.multD4D0, tip: '(D0 + dias 1–4) ÷ depósito do D0.' },
     { key: 'w1', label: 'Mult W1/D0', get: r => r.multW1D0, tip: '(D0 + dias 1–7) ÷ depósito do D0.' },
     { key: 'w2', label: 'Mult W2/D0', get: r => r.multW2D0, tip: '(D0 + dias 1–14) ÷ depósito do D0.' },
@@ -1345,6 +1346,7 @@ function retMultCols_(base, mL) {
   ];
   if (base === 'd1') return [
     { key: 'd1', label: 'Mult D1/D1', get: r => r.multD1D1, tip: 'Nível D1 (D0 + dep do dia 1) ÷ ele mesmo = 1,00x (âncora da base D1).' },
+    { key: 'd3', label: 'Mult D3/D1', get: r => r.multD3D1, tip: '(D0 + dias 1–3) ÷ nível D1.' },
     { key: 'd4', label: 'Mult D4/D1', get: r => r.multD4D1, tip: '(D0 + dias 1–4) ÷ nível D1.' },
     { key: 'w1', label: 'Mult W1/D1', get: r => r.multW1D1, tip: '(D0 + dias 1–7) ÷ nível D1.' },
     { key: 'w2', label: 'Mult W2/D1', get: r => r.multW2D1, tip: '(D0 + dias 1–14) ÷ nível D1.' },
@@ -1353,6 +1355,7 @@ function retMultCols_(base, mL) {
   return [
     { key: 'd0', label: 'Mult D0/FTD', get: r => r.multD0F, tip: 'Dep do D0 ÷ FTD.' },
     { key: 'd1', label: 'Mult D1/FTD', get: r => r.multD1F, tip: '(D0 + dia 1) ÷ FTD.' },
+    { key: 'd3', label: 'Mult D3/FTD', get: r => r.multD3F, tip: '(D0 + dias 1–3) ÷ FTD.' },
     { key: 'd4', label: 'Mult D4/FTD', get: r => r.multD4F, tip: '(D0 + dias 1–4) ÷ FTD.' },
     { key: 'w1', label: 'Mult W1/FTD', get: r => r.multW1F, tip: '(D0 + dias 1–7) ÷ FTD.' },
     { key: 'w2', label: 'Mult W2/FTD', get: r => r.multW2F, tip: '(D0 + dias 1–14) ÷ FTD.' },
@@ -1483,6 +1486,7 @@ function RetFaixaPrevRow({ row, label, loading, error, base }) {
 const RET_MULT_METRICS = [
   { id: 'D0',  key: 'multD0F',  desc: 'Dep D0 ÷ FTD' },
   { id: 'D1',  key: 'multD1F',  desc: '(D0 + dia 1) ÷ FTD' },
+  { id: 'D3',  key: 'multD3F',  desc: '(D0 + dias 1–3) ÷ FTD' },
   { id: 'D7',  key: 'multW1F',  desc: '(D0 + dias 1–7) ÷ FTD' },
   { id: 'D14', key: 'multW2F',  desc: '(D0 + dias 1–14) ÷ FTD' },
   { id: 'D30', key: 'multD30F', desc: '(D0 + dias 1–30) ÷ FTD' },
@@ -1490,6 +1494,7 @@ const RET_MULT_METRICS = [
 // Mesmas séries na base D0 (toggle da aba). D0 sai da lista: D0/D0 = 1,00x constante, não é série.
 const RET_MULT_METRICS_D0 = [
   { id: 'D1',  key: 'multD1D0',  desc: '(D0 + dia 1) ÷ dep D0' },
+  { id: 'D3',  key: 'multD3D0',  desc: '(D0 + dias 1–3) ÷ dep D0' },
   { id: 'D7',  key: 'multW1D0',  desc: '(D0 + dias 1–7) ÷ dep D0' },
   { id: 'D14', key: 'multW2D0',  desc: '(D0 + dias 1–14) ÷ dep D0' },
   { id: 'D30', key: 'multD30D0', desc: '(D0 + dias 1–30) ÷ dep D0' },
@@ -1539,7 +1544,7 @@ function RetMultChart({ chFilter, faixaSel, grupoSel, grupoActive, mode, gran, s
   // D14=14·D30=30). Filtrar por DIA (e só depois agregar em semana) faz a SEMANA mais recente aparecer com
   // suas coortes maduras (ex.: semana 06–12/07 entra pelas coortes 06→11/07, sem esperar o domingo 12/07
   // maturar nem arrastar dia imaturo pra média). Só no modo calendário — coorte já traz coortes fechadas.
-  const MAT_H = { D0: 0, D1: 1, D7: 7, D14: 14, D30: 30 };
+  const MAT_H = { D0: 0, D1: 1, D3: 3, D7: 7, D14: 14, D30: 30 };
   const matDay = ((!cohort || grpMode) && dataMax) ? isoAddDays_(capTo, -(MAT_H[effMetric] || 0)) : null;
   const matRows = matDay ? (rows30 || []).filter(r => r && r.date != null && String(r.date) <= matDay) : (rows30 || []);
 
@@ -2351,6 +2356,7 @@ function benchMetrics_(a, mode) {
     multM0F: multF(a.d0 + a.vm0),              // (D0 + resto do mês do FTD) ÷ FTD
     // Mesmos acúmulos, mas divididos pelo NÍVEL D1 (toggle "sobre D1"): D1 vira a base (=1,00x), sem D0.
     multD1D1: multD1(a.d0 + (a.vd1 || 0)),     // = 1,00x (âncora)
+    multD3D1: a._pass > 0 ? multD1(a.d0 + (a.vd3 || 0)) : null,
     multD4D1: multD1(a.d0 + (a.vd4 || 0)),
     multW1D1: multD1(a.d0 + a.vw1),
     multW2D1: multD1(a.d0 + (a.vw2 || 0)),
@@ -2358,6 +2364,9 @@ function benchMetrics_(a, mode) {
     // Mesmos acúmulos ÷ DEPÓSITO D0 (toggle "sobre D0"): D0 vira a base (=1,00x, não vai pra tela).
     // Quanto o dinheiro do primeiro dia se multiplicou — não depende do ticket de FTD.
     multD1D0: multD0(a.d0 + (a.vd1 || 0)),
+    // D3 tem a MESMA guarda do multD3F: sem a base vd3 (payload < v58, ou o Excel da Lottu, que não exporta
+    // janela D3) devolve null → tela mostra "—". Cair no nível D0 seria lido como "o D3 não cresceu".
+    multD3D0: a._pass > 0 ? multD0(a.d0 + (a.vd3 || 0)) : null,
     multD4D0: multD0(a.d0 + (a.vd4 || 0)),
     multW1D0: multD0(a.d0 + a.vw1),
     multW2D0: multD0(a.d0 + (a.vw2 || 0)),
@@ -2698,6 +2707,9 @@ function BenchmarkView({ retencaoFaixa, benchmark, houseOrder, sameday, title, s
     <td key="d0">{fmtBRL(m.d0Medio)}</td>,
     <td key="d0f">{fmtMultiple(m.multD0F)}</td>,
     <td key="d1f">{fmtMultiple(m.multD1F)}</td>,
+    // D3 só existe do lado Apostou: o Excel da Lottu não exporta a janela D0+1–3 (não há ret_val_d3), então a
+    // célula dela sai "—" (guarda `_pass` no benchMetrics_) em vez de um número reconstruído. Nota explica.
+    <td key="d3f" title={m.multD3F == null ? 'Sem base D3 nesta fonte (o export da Lottu não traz a janela de 3 dias).' : undefined}>{fmtMultiple(m.multD3F)}</td>,
     <td key="w1f">{fmtMultiple(m.multW1F)}</td>,
     <td key="m0f">{fmtMultiple(cohort ? m.multD30F : m.multM0F)}</td>,
     <td key="r1" style={retTdL}>{fmtRet(m.retD1)}</td>,
@@ -2709,7 +2721,7 @@ function BenchmarkView({ retencaoFaixa, benchmark, houseOrder, sameday, title, s
   const head = (
     <thead><tr>
       <th>Casa</th><th>Qtd FTD</th><th>FTD $$</th><th>Dep D0 Med</th>
-      <th>Mult D0/FTD</th><th>Mult D1/FTD</th><th>Mult W1/FTD</th><th>{`Mult ${wLbl}/FTD`}</th>
+      <th>Mult D0/FTD</th><th>Mult D1/FTD</th><th title="(D0 + dias 1–3) ÷ FTD. Só a Apostou tem essa janela — o export da Lottu não traz D3.">Mult D3/FTD</th><th>Mult W1/FTD</th><th>{`Mult ${wLbl}/FTD`}</th>
       <th style={retThL}>{`D1 ${retHdr}`}</th><th style={retTh}>{`W1 ${retHdr}`}</th><th style={retTh}>{`${wLbl} ${retHdr}`}</th>
     </tr></thead>
   );
@@ -2841,7 +2853,8 @@ function BenchmarkView({ retencaoFaixa, benchmark, houseOrder, sameday, title, s
           ) : (
             <React.Fragment>
               <strong>Qtd FTD</strong> = nº de 1ºs depósitos · <strong>FTD $$</strong> = ticket médio do FTD (Σ FTD ÷ qtd) · <strong>Dep D0 Med</strong> = depósito médio no D0 (Σ D0 ÷ qtd).
-              <strong> Mult X/FTD</strong> = depósito acumulado (incluindo o D0) até a janela ÷ valor do FTD: D0/FTD · (D0+dia 1)/FTD · (D0+dias 1–7)/FTD · {cohort ? '(D0+dias 1–30)/FTD' : '(D0+resto do mês)/FTD'}.
+              <strong> Mult X/FTD</strong> = depósito acumulado (incluindo o D0) até a janela ÷ valor do FTD: D0/FTD · (D0+dia 1)/FTD · (D0+dias 1–3)/FTD · (D0+dias 1–7)/FTD · {cohort ? '(D0+dias 1–30)/FTD' : '(D0+resto do mês)/FTD'}.
+              <strong> O Mult D3 da {housesLabel} sai "—"</strong>: o export dela não traz a janela de 3 dias (não há <code>ret_val_d3</code>) — pra preencher, pedir a coluna no próximo export.
               <strong> D1/W1/{wLbl} Ret</strong> (colunas <span style={{ background: 'rgba(250,204,21,0.25)', padding: '0 4px', borderRadius: '3px' }}>amarelas</span>) = retenção acumulada vs D0 (D1 = dia seguinte · W1 = dias 1–7 · {cohort ? 'D30 = dias 1–30' : 'M0 = resto do mês do FTD'}).
               No modo <strong>Valor</strong> = $ depositado na janela ÷ depósito do D0 em % (exclui o D0; pode passar de 100%); no modo <strong>Qtd</strong> = % dos FTDs que voltaram a depositar.
               {fromBench ? <span> Os dois lados vêm das planilhas faixa_diaria.</span> : <span> <strong>Apostou via BigQuery ao vivo</strong> (mesma fonte da aba Multiplicadores e Retenção); {housesLabel} via Excel.</span>}
