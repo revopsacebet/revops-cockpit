@@ -5516,7 +5516,7 @@ function BenchMultChart({
     style: {
       color: 'var(--text-dim)'
     }
-  }, "M\xE9dia m\xF3vel de ", maDays, " dias (nas duas linhas): janela deslizante ponderada (\u03A3 mult\xD7FTD \xF7 \u03A3 FTD) dos \xFAltimos ", maDays, " dias, calculada em dias e ", weekly ? 'amostrada por semana (valor no último dia da semana)' : 'plotada por dia', " \u2014 suaviza o ru\xEDdo.")), " ", /*#__PURE__*/React.createElement("strong", null, "\u26A0 Per\xEDodos recentes podem estar imaturos"), " (", mDef.d30 ? 'D30 = janela fixa de 30 dias: coorte com menos de 30 dias de vida entra truncada e PUXA A CURVA PRA BAIXO' : 'M0 = "resto do mês" trunca coorte recente', ") \u2014 alinhe as datas dos dois lados p/ comparar a mesma janela", mDef.d30 ? ' e corte os últimos 30 dias' : '', "."));
+  }, "M\xE9dia m\xF3vel de ", maDays, " dias (nas duas linhas): janela deslizante ponderada (\u03A3 mult\xD7FTD \xF7 \u03A3 FTD) dos \xFAltimos ", maDays, " dias, calculada em dias e ", weekly ? 'amostrada por semana (valor no último dia da semana)' : 'plotada por dia', " \u2014 suaviza o ru\xEDdo.")), " ", /*#__PURE__*/React.createElement("strong", null, "\u26A0 Per\xEDodos recentes podem estar imaturos"), " (", mDef.d30 ? 'D30 = janela fixa de 30 dias: coorte com menos de 30 dias de vida entra truncada e PUXA A CURVA PRA BAIXO' : 'M0 = "resto do mês" trunca coorte recente', ") \u2014 as duas linhas j\xE1 seguem a MESMA janela (slicer \xFAnico da aba)", mDef.d30 ? ', e o modo Coorte 30d ainda corta os últimos 30 dias' : '', "."));
 }
 
 // View genérica do Benchmark — parametrizada por houseOrder + sameday (p/ reusar na aba Same-day).
@@ -5596,55 +5596,60 @@ function BenchmarkView({
   const hasD30 = !!(benchmark && benchmark.hasD30);
   const [cohortP, setCohortP] = usePersistedState(`rvops:${pkey}:cohort`, 'cal');
   const cohort = hasD30 && !netMode && cohortP === 'c30';
-  const [aptFrom, setAptFrom] = React.useState(null);
-  const [aptTo, setAptTo] = React.useState(null);
-  const [houseFrom, setHouseFrom] = React.useState(null);
-  const [houseTo, setHouseTo] = React.useState(null);
+  // JANELA ÚNICA: um só slicer de data, aplicado IGUAL aos dois lados. Antes eram dois (Apostou / Demais
+  // Casas) e dava pra comparar janelas diferentes sem perceber — a comparação só é honesta no mesmo período.
+  const [from, setFrom] = React.useState(null);
+  const [to, setTo] = React.useState(null);
 
-  // Corte de MATURIDADE do modo coorte: uma safra só fecha os 30 dias se o export foi até FTD+30 → o último
-  // dia de FTD utilizável é (dataMax de cada lado) − 30. Cada lado tem o SEU (o BQ da Apostou e o Excel da
-  // Lottu param em dias diferentes). Vira o `max` dos date inputs E um clamp no agregador, p/ um valor
-  // remanescente de outro modo não entrar truncado sem ninguém ver.
+  // Teto da janela = o MENOR dataMax dos dois lados (BQ da Apostou e Excel da Lottu param em dias diferentes):
+  // acima dele um dos lados ficaria sem dado e a "mesma janela" viraria mentira.
+  // Corte de MATURIDADE do modo coorte: uma safra só fecha os 30 dias se houver dado até FTD+30 → o último dia
+  // de FTD utilizável é dataMax − 30, também pelo lado mais atrasado. Vira o `max` dos inputs E um clamp no
+  // agregador, p/ um valor remanescente de outro modo não entrar truncado sem ninguém ver.
   const MAT30 = 30;
-  const aptMax = aptBounds && aptBounds.max || houseMax || null;
-  const aptCap = cohort && aptMax ? isoAddDays_(aptMax, -MAT30) : null;
-  const houseCap = cohort && houseMax ? isoAddDays_(houseMax, -MAT30) : null;
-  const clampTo = (v, cap) => cap && v && v > cap ? cap : v;
-  const aptToEff = clampTo(aptTo, aptCap);
-  const houseToEff = clampTo(houseTo, houseCap);
+  const aptMax = aptBounds && aptBounds.max || null;
+  const dataMaxBoth = aptMax && houseMax ? aptMax < houseMax ? aptMax : houseMax : houseMax || aptMax;
+  const lagSide = aptMax && houseMax && aptMax !== houseMax ? aptMax < houseMax ? 'apt' : 'house' : null; // quem tem dado mais curto (rótulo montado no render, housesLabel só existe abaixo)
+  const cap = cohort && dataMaxBoth ? isoAddDays_(dataMaxBoth, -MAT30) : null;
+  const winMax = cap || dataMaxBoth;
+  const toEff = winMax && to && to > winMax ? winMax : to;
 
-  // default das datas: MTD (mês-calendário mais recente). Apostou segue o MESMO máximo geral (houseMax)
-  // das casas — senão fica travada no próprio dataMax (Apostou CSV pode estar mais atrás que a Lottu).
-  // No modo COORTE o default vira o último ciclo de 30 dias FECHADO de cada lado (mesma ideia da Multiplicadores):
-  // abrir em MTD ali mostraria só safra imatura e o D30 sairia truncado.
+  // default: MTD (mês-calendário mais recente com dado dos dois lados). No modo COORTE vira o último ciclo de
+  // 30 dias FECHADO (mesma ideia da Multiplicadores) — abrir em MTD ali mostraria só safra imatura e o D30
+  // sairia truncado. `touched` para de re-anchorar depois que o usuário mexe na data (o dataMax da Apostou só
+  // aparece quando o fetch do BQ cai, e sem isso a janela editada pulava de volta pro default nessa hora);
+  // trocar de modo zera o touched, porque aí o re-anchor é justamente o que se espera.
+  const touched = React.useRef(false);
+  const lastCohort = React.useRef(cohort);
   React.useEffect(() => {
-    if (!houseMax) return;
-    if (cohort) {
-      const cap = isoAddDays_(aptMax || houseMax, -MAT30);
-      setAptTo(cap);
-      setAptFrom(isoAddDays_(cap, -(MAT30 - 1)));
-    } else {
-      setAptFrom(houseMax.slice(0, 7) + '-01');
-      setAptTo(houseMax);
+    if (lastCohort.current !== cohort) {
+      lastCohort.current = cohort;
+      touched.current = false;
     }
-  }, [houseMax, aptMax, cohort]);
-  React.useEffect(() => {
-    if (!(houseMin && houseMax)) return;
+    if (!dataMaxBoth || touched.current) return;
     if (cohort) {
-      const cap = isoAddDays_(houseMax, -MAT30);
-      setHouseTo(cap);
-      setHouseFrom(isoAddDays_(cap, -(MAT30 - 1)));
+      const c = isoAddDays_(dataMaxBoth, -MAT30);
+      setTo(c);
+      setFrom(isoAddDays_(c, -(MAT30 - 1)));
     } else {
-      setHouseFrom(houseMax.slice(0, 7) + '-01');
-      setHouseTo(houseMax);
+      setFrom(dataMaxBoth.slice(0, 7) + '-01');
+      setTo(dataMaxBoth);
     }
-  }, [houseMin, houseMax, cohort]);
+  }, [dataMaxBoth, cohort]);
+  const editFrom = v => {
+    touched.current = true;
+    setFrom(v);
+  };
+  const editTo = v => {
+    touched.current = true;
+    setTo(v);
+  };
   const aptAgg = aggBench_(aptRows, {
     canals,
     scope,
     faixa,
-    from: aptFrom,
-    to: aptToEff
+    from,
+    to: toEff
   });
   const apt = benchMetrics_(aptAgg, mode);
   const houses = houseOrder.map(h => {
@@ -5652,8 +5657,8 @@ function BenchmarkView({
       canals,
       scope,
       faixa,
-      from: houseFrom,
-      to: houseToEff
+      from,
+      to: toEff
     });
     return {
       key: h,
@@ -5846,43 +5851,26 @@ function BenchmarkView({
     className: "slicer-group"
   }, /*#__PURE__*/React.createElement("label", {
     style: lblStyle
-  }, "Data Apostou"), /*#__PURE__*/React.createElement("input", {
+  }, "Per\xEDodo (os dois lados)"), /*#__PURE__*/React.createElement("input", {
     type: "date",
-    value: aptFrom || '',
+    value: from || '',
     min: houseMin || undefined,
-    max: aptToEff || aptCap || houseMax || undefined,
-    onChange: e => setAptFrom(e.target.value)
+    max: toEff || winMax || undefined,
+    onChange: e => editFrom(e.target.value)
   }), /*#__PURE__*/React.createElement("span", {
     className: "slicer-arrow"
   }, "\u2192"), /*#__PURE__*/React.createElement("input", {
     type: "date",
-    value: aptToEff || '',
-    min: aptFrom || houseMin || undefined,
-    max: aptCap || houseMax || undefined,
-    onChange: e => setAptTo(e.target.value)
-  })), /*#__PURE__*/React.createElement("div", {
-    className: "slicer-group"
-  }, /*#__PURE__*/React.createElement("label", {
-    style: lblStyle
-  }, "Data Demais Casas"), /*#__PURE__*/React.createElement("input", {
-    type: "date",
-    value: houseFrom || '',
-    min: houseMin || undefined,
-    max: houseToEff || houseCap || houseMax || undefined,
-    onChange: e => setHouseFrom(e.target.value)
-  }), /*#__PURE__*/React.createElement("span", {
-    className: "slicer-arrow"
-  }, "\u2192"), /*#__PURE__*/React.createElement("input", {
-    type: "date",
-    value: houseToEff || '',
-    min: houseFrom || houseMin || undefined,
-    max: houseCap || houseMax || undefined,
-    onChange: e => setHouseTo(e.target.value)
+    value: toEff || '',
+    min: from || houseMin || undefined,
+    max: winMax || undefined,
+    onChange: e => editTo(e.target.value),
+    title: `Uma janela só, aplicada igual a Apostou e ${housesLabel}. Teto = ${winMax || '—'}${cap ? ' (dataMax − 30, p/ a coorte de 30d estar fechada)' : ''}.`
   }))), /*#__PURE__*/React.createElement("div", {
     className: "support"
   }, /*#__PURE__*/React.createElement("div", {
     className: "support-title"
-  }, "Apostou \xB7 ", dateRangeLabel_(aptFrom, aptToEff), cohort ? ' · coorte 30d (safras fechadas)' : '', " \xB7 ", canalLabel, " \xB7 ", faixa === 'all' ? 'todas as faixas' : fxLabel_(faixa), aptFetch.loading ? ' · carregando BQ…' : '', aptFetch.error ? ' · erro (usando janela global)' : ''), /*#__PURE__*/React.createElement("div", {
+  }, "Apostou \xB7 ", dateRangeLabel_(from, toEff), cohort ? ' · coorte 30d (safras fechadas)' : '', " \xB7 ", canalLabel, " \xB7 ", faixa === 'all' ? 'todas as faixas' : fxLabel_(faixa), aptFetch.loading ? ' · carregando BQ…' : '', aptFetch.error ? ' · erro (usando janela global)' : ''), /*#__PURE__*/React.createElement("div", {
     className: "table-scroll"
   }, /*#__PURE__*/React.createElement("table", {
     className: "ch-table"
@@ -5892,7 +5880,7 @@ function BenchmarkView({
     className: "support"
   }, /*#__PURE__*/React.createElement("div", {
     className: "support-title"
-  }, housesLabel, " \xB7 ", dateRangeLabel_(houseFrom, houseToEff), cohort ? ' · coorte 30d (safras fechadas)' : '', " \xB7 ", canalLabel, " \xB7 ", faixa === 'all' ? 'todas as faixas' : fxLabel_(faixa)), /*#__PURE__*/React.createElement("div", {
+  }, housesLabel, " \xB7 ", dateRangeLabel_(from, toEff), cohort ? ' · coorte 30d (safras fechadas)' : '', " \xB7 ", canalLabel, " \xB7 ", faixa === 'all' ? 'todas as faixas' : fxLabel_(faixa)), /*#__PURE__*/React.createElement("div", {
     className: "table-scroll"
   }, /*#__PURE__*/React.createElement("table", {
     className: "ch-table"
@@ -5914,7 +5902,7 @@ function BenchmarkView({
       padding: '0 4px',
       borderRadius: '3px'
     }
-  }, "amarelas"), ") = reten\xE7\xE3o acumulada vs D0 (D1 = dia seguinte \xB7 W1 = dias 1\u20137 \xB7 ", cohort ? 'D30 = dias 1–30' : 'M0 = resto do mês do FTD', "). No modo ", /*#__PURE__*/React.createElement("strong", null, "Valor"), " = $ depositado na janela \xF7 dep\xF3sito do D0 em % (exclui o D0; pode passar de 100%); no modo ", /*#__PURE__*/React.createElement("strong", null, "Qtd"), " = % dos FTDs que voltaram a depositar.", fromBench ? /*#__PURE__*/React.createElement("span", null, " Os dois lados v\xEAm das planilhas faixa_diaria.") : /*#__PURE__*/React.createElement("span", null, " ", /*#__PURE__*/React.createElement("strong", null, "Apostou via BigQuery ao vivo"), " (mesma fonte da aba Multiplicadores e Reten\xE7\xE3o); ", housesLabel, " via Excel."), sameday ? /*#__PURE__*/React.createElement("strong", null, " Coorte SAME-DAY: s\xF3 FTDs que depositaram no mesmo dia do cadastro (dos dois lados). ") : '', cohort ? /*#__PURE__*/React.createElement(React.Fragment, null, ' ', /*#__PURE__*/React.createElement("strong", null, "Coorte 30d:"), " a \xFAltima janela \xE9 ", /*#__PURE__*/React.createElement("strong", null, "D30 = 30 dias corridos do FTD"), ", do mesmo tamanho nos dois lados \u2014 \xE9 a compara\xE7\xE3o apples-to-apples (o M0 mistura safra de 30 dias com safra de 3). Cada lado trava em ", /*#__PURE__*/React.createElement("strong", null, "dataMax \u2212 30"), " (Apostou at\xE9 ", aptCap ? benchDM_(aptCap) : '—', " \xB7 ", housesLabel, " at\xE9 ", houseCap ? benchDM_(houseCap) : '—', "), ent\xE3o s\xF3 entram safras que J\xC1 fecharam os 30 dias.", /*#__PURE__*/React.createElement("strong", null, " D30 > M0 por constru\xE7\xE3o"), " (janela maior na m\xE9dia) \u2014 n\xE3o comparar o n\xFAmero de um modo com o do outro.") : /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("strong", null, " \u26A0 Ambos abrem em MTD (m\xEAs corrente) por padr\xE3o"), " \u2014 alinhe as datas dos dois lados p/ comparar a mesma janela. M\xEAs corrente ainda imaturo (M0 = \"resto do m\xEAs\" trunca coortes recentes)", hasD30 ? '; o toggle Coorte 30d resolve os dois problemas de uma vez' : '', ".")))), multChart && /*#__PURE__*/React.createElement("div", {
+  }, "amarelas"), ") = reten\xE7\xE3o acumulada vs D0 (D1 = dia seguinte \xB7 W1 = dias 1\u20137 \xB7 ", cohort ? 'D30 = dias 1–30' : 'M0 = resto do mês do FTD', "). No modo ", /*#__PURE__*/React.createElement("strong", null, "Valor"), " = $ depositado na janela \xF7 dep\xF3sito do D0 em % (exclui o D0; pode passar de 100%); no modo ", /*#__PURE__*/React.createElement("strong", null, "Qtd"), " = % dos FTDs que voltaram a depositar.", fromBench ? /*#__PURE__*/React.createElement("span", null, " Os dois lados v\xEAm das planilhas faixa_diaria.") : /*#__PURE__*/React.createElement("span", null, " ", /*#__PURE__*/React.createElement("strong", null, "Apostou via BigQuery ao vivo"), " (mesma fonte da aba Multiplicadores e Reten\xE7\xE3o); ", housesLabel, " via Excel."), sameday ? /*#__PURE__*/React.createElement("strong", null, " Coorte SAME-DAY: s\xF3 FTDs que depositaram no mesmo dia do cadastro (dos dois lados). ") : '', cohort ? /*#__PURE__*/React.createElement(React.Fragment, null, ' ', /*#__PURE__*/React.createElement("strong", null, "Coorte 30d:"), " a \xFAltima janela \xE9 ", /*#__PURE__*/React.createElement("strong", null, "D30 = 30 dias corridos do FTD"), ", do mesmo tamanho nos dois lados \u2014 \xE9 a compara\xE7\xE3o apples-to-apples (o M0 mistura safra de 30 dias com safra de 3). A janela trava em ", /*#__PURE__*/React.createElement("strong", null, "dataMax \u2212 30 = ", cap ? benchDM_(cap) : '—'), ", ent\xE3o s\xF3 entram safras que J\xC1 fecharam os 30 dias.", /*#__PURE__*/React.createElement("strong", null, " D30 > M0 por constru\xE7\xE3o"), " (janela maior na m\xE9dia) \u2014 n\xE3o comparar o n\xFAmero de um modo com o do outro.") : /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("strong", null, " \u26A0 Abre em MTD (m\xEAs corrente) por padr\xE3o"), " \u2014 m\xEAs corrente ainda imaturo (M0 = \"resto do m\xEAs\" trunca coortes recentes)", hasD30 ? '; o toggle Coorte 30d resolve isso' : '', "."), ' ', /*#__PURE__*/React.createElement("strong", null, "Per\xEDodo \xFAnico:"), " o slicer de data vale igual para os dois lados \u2014 n\xE3o d\xE1 pra desalinhar as janelas.", lagSide ? /*#__PURE__*/React.createElement("span", null, " O teto (", winMax ? benchDM_(winMax) : '—', ") segue o lado com dado mais curto (", /*#__PURE__*/React.createElement("strong", null, lagSide === 'apt' ? 'Apostou' : housesLabel), ", at\xE9 ", benchDM_(dataMaxBoth), cohort ? ' antes do corte de maturidade' : '', ") \u2014 acima dele um dos lados ficaria sem dado.") : ''))), multChart && /*#__PURE__*/React.createElement("div", {
     className: "support"
   }, /*#__PURE__*/React.createElement("div", {
     className: "support-title"
@@ -5926,10 +5914,10 @@ function BenchmarkView({
     scope: scope,
     faixa: faixa,
     hasD30: hasD30,
-    aptFrom: aptFrom,
-    aptTo: aptToEff,
-    houseFrom: houseFrom,
-    houseTo: houseToEff
+    aptFrom: from,
+    aptTo: toEff,
+    houseFrom: from,
+    houseTo: toEff
   })));
 }
 // Aba Benchmark Lottu — Apostou (BQ ao vivo) vs Lottu (Excel). NÃO é same-day (nem de um lado nem do

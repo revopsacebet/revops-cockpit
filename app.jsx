@@ -2580,7 +2580,7 @@ function BenchMultChart({ aptRows, houseRows, houseLabel, canals, scope, faixa, 
         </svg>
       </div>
       <div className="ch-note">
-        <strong>Multiplicador {mDef.id}/FTD por {weekly ? 'semana' : 'dia'} de FTD</strong> — <span style={{ color: '#f97316' }}>laranja = Apostou</span>, <span style={{ color: '#60a5fa' }}>azul = {HL}</span>. Cada ponto = depósito acumulado (incl. D0) até a janela ÷ FTD, agregado no período (mesmo recorte de canal/faixa/janela das tabelas).{maOn && <React.Fragment>{' '}<em style={{ color: 'var(--text-dim)' }}>Média móvel de {maDays} dias (nas duas linhas): janela deslizante ponderada (Σ mult×FTD ÷ Σ FTD) dos últimos {maDays} dias, calculada em dias e {weekly ? 'amostrada por semana (valor no último dia da semana)' : 'plotada por dia'} — suaviza o ruído.</em></React.Fragment>} <strong>⚠ Períodos recentes podem estar imaturos</strong> ({mDef.d30 ? 'D30 = janela fixa de 30 dias: coorte com menos de 30 dias de vida entra truncada e PUXA A CURVA PRA BAIXO' : 'M0 = "resto do mês" trunca coorte recente'}) — alinhe as datas dos dois lados p/ comparar a mesma janela{mDef.d30 ? ' e corte os últimos 30 dias' : ''}.
+        <strong>Multiplicador {mDef.id}/FTD por {weekly ? 'semana' : 'dia'} de FTD</strong> — <span style={{ color: '#f97316' }}>laranja = Apostou</span>, <span style={{ color: '#60a5fa' }}>azul = {HL}</span>. Cada ponto = depósito acumulado (incl. D0) até a janela ÷ FTD, agregado no período (mesmo recorte de canal/faixa/janela das tabelas).{maOn && <React.Fragment>{' '}<em style={{ color: 'var(--text-dim)' }}>Média móvel de {maDays} dias (nas duas linhas): janela deslizante ponderada (Σ mult×FTD ÷ Σ FTD) dos últimos {maDays} dias, calculada em dias e {weekly ? 'amostrada por semana (valor no último dia da semana)' : 'plotada por dia'} — suaviza o ruído.</em></React.Fragment>} <strong>⚠ Períodos recentes podem estar imaturos</strong> ({mDef.d30 ? 'D30 = janela fixa de 30 dias: coorte com menos de 30 dias de vida entra truncada e PUXA A CURVA PRA BAIXO' : 'M0 = "resto do mês" trunca coorte recente'}) — as duas linhas já seguem a MESMA janela (slicer único da aba){mDef.d30 ? ', e o modo Coorte 30d ainda corta os últimos 30 dias' : ''}.
       </div>
     </React.Fragment>
   );
@@ -2633,40 +2633,44 @@ function BenchmarkView({ retencaoFaixa, benchmark, houseOrder, sameday, title, s
   const hasD30 = !!(benchmark && benchmark.hasD30);
   const [cohortP, setCohortP] = usePersistedState(`rvops:${pkey}:cohort`, 'cal');
   const cohort = hasD30 && !netMode && cohortP === 'c30';
-  const [aptFrom, setAptFrom] = React.useState(null);
-  const [aptTo, setAptTo] = React.useState(null);
-  const [houseFrom, setHouseFrom] = React.useState(null);
-  const [houseTo, setHouseTo] = React.useState(null);
+  // JANELA ÚNICA: um só slicer de data, aplicado IGUAL aos dois lados. Antes eram dois (Apostou / Demais
+  // Casas) e dava pra comparar janelas diferentes sem perceber — a comparação só é honesta no mesmo período.
+  const [from, setFrom] = React.useState(null);
+  const [to, setTo] = React.useState(null);
 
-  // Corte de MATURIDADE do modo coorte: uma safra só fecha os 30 dias se o export foi até FTD+30 → o último
-  // dia de FTD utilizável é (dataMax de cada lado) − 30. Cada lado tem o SEU (o BQ da Apostou e o Excel da
-  // Lottu param em dias diferentes). Vira o `max` dos date inputs E um clamp no agregador, p/ um valor
-  // remanescente de outro modo não entrar truncado sem ninguém ver.
+  // Teto da janela = o MENOR dataMax dos dois lados (BQ da Apostou e Excel da Lottu param em dias diferentes):
+  // acima dele um dos lados ficaria sem dado e a "mesma janela" viraria mentira.
+  // Corte de MATURIDADE do modo coorte: uma safra só fecha os 30 dias se houver dado até FTD+30 → o último dia
+  // de FTD utilizável é dataMax − 30, também pelo lado mais atrasado. Vira o `max` dos inputs E um clamp no
+  // agregador, p/ um valor remanescente de outro modo não entrar truncado sem ninguém ver.
   const MAT30 = 30;
-  const aptMax = (aptBounds && aptBounds.max) || houseMax || null;
-  const aptCap = (cohort && aptMax) ? isoAddDays_(aptMax, -MAT30) : null;
-  const houseCap = (cohort && houseMax) ? isoAddDays_(houseMax, -MAT30) : null;
-  const clampTo = (v, cap) => (cap && v && v > cap) ? cap : v;
-  const aptToEff = clampTo(aptTo, aptCap);
-  const houseToEff = clampTo(houseTo, houseCap);
+  const aptMax = (aptBounds && aptBounds.max) || null;
+  const dataMaxBoth = (aptMax && houseMax) ? (aptMax < houseMax ? aptMax : houseMax) : (houseMax || aptMax);
+  const lagSide = (aptMax && houseMax && aptMax !== houseMax) ? (aptMax < houseMax ? 'apt' : 'house') : null;   // quem tem dado mais curto (rótulo montado no render, housesLabel só existe abaixo)
+  const cap = (cohort && dataMaxBoth) ? isoAddDays_(dataMaxBoth, -MAT30) : null;
+  const winMax = cap || dataMaxBoth;
+  const toEff = (winMax && to && to > winMax) ? winMax : to;
 
-  // default das datas: MTD (mês-calendário mais recente). Apostou segue o MESMO máximo geral (houseMax)
-  // das casas — senão fica travada no próprio dataMax (Apostou CSV pode estar mais atrás que a Lottu).
-  // No modo COORTE o default vira o último ciclo de 30 dias FECHADO de cada lado (mesma ideia da Multiplicadores):
-  // abrir em MTD ali mostraria só safra imatura e o D30 sairia truncado.
-  React.useEffect(() => { if (!houseMax) return;
-    if (cohort) { const cap = isoAddDays_(aptMax || houseMax, -MAT30); setAptTo(cap); setAptFrom(isoAddDays_(cap, -(MAT30 - 1))); }
-    else { setAptFrom(houseMax.slice(0, 7) + '-01'); setAptTo(houseMax); }
-  }, [houseMax, aptMax, cohort]);
-  React.useEffect(() => { if (!(houseMin && houseMax)) return;
-    if (cohort) { const cap = isoAddDays_(houseMax, -MAT30); setHouseTo(cap); setHouseFrom(isoAddDays_(cap, -(MAT30 - 1))); }
-    else { setHouseFrom(houseMax.slice(0, 7) + '-01'); setHouseTo(houseMax); }
-  }, [houseMin, houseMax, cohort]);
+  // default: MTD (mês-calendário mais recente com dado dos dois lados). No modo COORTE vira o último ciclo de
+  // 30 dias FECHADO (mesma ideia da Multiplicadores) — abrir em MTD ali mostraria só safra imatura e o D30
+  // sairia truncado. `touched` para de re-anchorar depois que o usuário mexe na data (o dataMax da Apostou só
+  // aparece quando o fetch do BQ cai, e sem isso a janela editada pulava de volta pro default nessa hora);
+  // trocar de modo zera o touched, porque aí o re-anchor é justamente o que se espera.
+  const touched = React.useRef(false);
+  const lastCohort = React.useRef(cohort);
+  React.useEffect(() => {
+    if (lastCohort.current !== cohort) { lastCohort.current = cohort; touched.current = false; }
+    if (!dataMaxBoth || touched.current) return;
+    if (cohort) { const c = isoAddDays_(dataMaxBoth, -MAT30); setTo(c); setFrom(isoAddDays_(c, -(MAT30 - 1))); }
+    else { setFrom(dataMaxBoth.slice(0, 7) + '-01'); setTo(dataMaxBoth); }
+  }, [dataMaxBoth, cohort]);
+  const editFrom = (v) => { touched.current = true; setFrom(v); };
+  const editTo = (v) => { touched.current = true; setTo(v); };
 
-  const aptAgg = aggBench_(aptRows, { canals, scope, faixa, from: aptFrom, to: aptToEff });
+  const aptAgg = aggBench_(aptRows, { canals, scope, faixa, from, to: toEff });
   const apt = benchMetrics_(aptAgg, mode);
   const houses = houseOrder.map(h => {
-    const agg = aggBench_(houseRowsMap[h], { canals, scope, faixa, from: houseFrom, to: houseToEff });
+    const agg = aggBench_(houseRowsMap[h], { canals, scope, faixa, from, to: toEff });
     return {
       key: h,
       label: (benchmark && benchmark.houses && benchmark.houses[h] && benchmark.houses[h].label) || h,
@@ -2793,21 +2797,16 @@ function BenchmarkView({ retencaoFaixa, benchmark, houseOrder, sameday, title, s
         )}
         <div className="slicer-divider" />
         <div className="slicer-group">
-          <label style={lblStyle}>Data Apostou</label>
-          <input type="date" value={aptFrom || ''} min={houseMin || undefined} max={aptToEff || aptCap || houseMax || undefined} onChange={e => setAptFrom(e.target.value)} />
+          <label style={lblStyle}>Período (os dois lados)</label>
+          <input type="date" value={from || ''} min={houseMin || undefined} max={toEff || winMax || undefined} onChange={e => editFrom(e.target.value)} />
           <span className="slicer-arrow">→</span>
-          <input type="date" value={aptToEff || ''} min={aptFrom || houseMin || undefined} max={aptCap || houseMax || undefined} onChange={e => setAptTo(e.target.value)} />
-        </div>
-        <div className="slicer-group">
-          <label style={lblStyle}>Data Demais Casas</label>
-          <input type="date" value={houseFrom || ''} min={houseMin || undefined} max={houseToEff || houseCap || houseMax || undefined} onChange={e => setHouseFrom(e.target.value)} />
-          <span className="slicer-arrow">→</span>
-          <input type="date" value={houseToEff || ''} min={houseFrom || houseMin || undefined} max={houseCap || houseMax || undefined} onChange={e => setHouseTo(e.target.value)} />
+          <input type="date" value={toEff || ''} min={from || houseMin || undefined} max={winMax || undefined} onChange={e => editTo(e.target.value)}
+            title={`Uma janela só, aplicada igual a Apostou e ${housesLabel}. Teto = ${winMax || '—'}${cap ? ' (dataMax − 30, p/ a coorte de 30d estar fechada)' : ''}.`} />
         </div>
       </div>
 
       <div className="support">
-        <div className="support-title">Apostou · {dateRangeLabel_(aptFrom, aptToEff)}{cohort ? ' · coorte 30d (safras fechadas)' : ''} · {canalLabel} · {faixa === 'all' ? 'todas as faixas' : fxLabel_(faixa)}{aptFetch.loading ? ' · carregando BQ…' : ''}{aptFetch.error ? ' · erro (usando janela global)' : ''}</div>
+        <div className="support-title">Apostou · {dateRangeLabel_(from, toEff)}{cohort ? ' · coorte 30d (safras fechadas)' : ''} · {canalLabel} · {faixa === 'all' ? 'todas as faixas' : fxLabel_(faixa)}{aptFetch.loading ? ' · carregando BQ…' : ''}{aptFetch.error ? ' · erro (usando janela global)' : ''}</div>
         <div className="table-scroll"><table className="ch-table">
           {tableHead}
           <tbody>
@@ -2820,7 +2819,7 @@ function BenchmarkView({ retencaoFaixa, benchmark, houseOrder, sameday, title, s
       </div>
 
       <div className="support">
-        <div className="support-title">{housesLabel} · {dateRangeLabel_(houseFrom, houseToEff)}{cohort ? ' · coorte 30d (safras fechadas)' : ''} · {canalLabel} · {faixa === 'all' ? 'todas as faixas' : fxLabel_(faixa)}</div>
+        <div className="support-title">{housesLabel} · {dateRangeLabel_(from, toEff)}{cohort ? ' · coorte 30d (safras fechadas)' : ''} · {canalLabel} · {faixa === 'all' ? 'todas as faixas' : fxLabel_(faixa)}</div>
         <div className="table-scroll"><table className="ch-table">
           {tableHead}
           <tbody>
@@ -2849,12 +2848,14 @@ function BenchmarkView({ retencaoFaixa, benchmark, houseOrder, sameday, title, s
               {cohort ? (
                 <React.Fragment>
                   {' '}<strong>Coorte 30d:</strong> a última janela é <strong>D30 = 30 dias corridos do FTD</strong>, do mesmo tamanho nos dois lados — é a comparação apples-to-apples (o M0 mistura safra de 30 dias com safra de 3).
-                  Cada lado trava em <strong>dataMax − 30</strong> (Apostou até {aptCap ? benchDM_(aptCap) : '—'} · {housesLabel} até {houseCap ? benchDM_(houseCap) : '—'}), então só entram safras que JÁ fecharam os 30 dias.
+                  A janela trava em <strong>dataMax − 30 = {cap ? benchDM_(cap) : '—'}</strong>, então só entram safras que JÁ fecharam os 30 dias.
                   <strong> D30 &gt; M0 por construção</strong> (janela maior na média) — não comparar o número de um modo com o do outro.
                 </React.Fragment>
               ) : (
-                <React.Fragment><strong> ⚠ Ambos abrem em MTD (mês corrente) por padrão</strong> — alinhe as datas dos dois lados p/ comparar a mesma janela. Mês corrente ainda imaturo (M0 = "resto do mês" trunca coortes recentes){hasD30 ? '; o toggle Coorte 30d resolve os dois problemas de uma vez' : ''}.</React.Fragment>
+                <React.Fragment><strong> ⚠ Abre em MTD (mês corrente) por padrão</strong> — mês corrente ainda imaturo (M0 = "resto do mês" trunca coortes recentes){hasD30 ? '; o toggle Coorte 30d resolve isso' : ''}.</React.Fragment>
               )}
+              {' '}<strong>Período único:</strong> o slicer de data vale igual para os dois lados — não dá pra desalinhar as janelas.
+              {lagSide ? <span> O teto ({winMax ? benchDM_(winMax) : '—'}) segue o lado com dado mais curto (<strong>{lagSide === 'apt' ? 'Apostou' : housesLabel}</strong>, até {benchDM_(dataMaxBoth)}{cohort ? ' antes do corte de maturidade' : ''}) — acima dele um dos lados ficaria sem dado.</span> : ''}
             </React.Fragment>
           )}
         </div>
@@ -2865,7 +2866,7 @@ function BenchmarkView({ retencaoFaixa, benchmark, houseOrder, sameday, title, s
           <div className="support-title">Evolução do multiplicador · Apostou vs {housesLabel}</div>
           <BenchMultChart aptRows={aptRows} houseRows={houseRowsMap[houseOrder[0]]} houseLabel={houses[0] && houses[0].label}
             canals={canals} scope={scope} faixa={faixa} hasD30={hasD30}
-            aptFrom={aptFrom} aptTo={aptToEff} houseFrom={houseFrom} houseTo={houseToEff} />
+            aptFrom={from} aptTo={toEff} houseFrom={from} houseTo={toEff} />
         </div>
       )}
     </React.Fragment>
