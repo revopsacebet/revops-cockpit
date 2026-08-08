@@ -1280,11 +1280,26 @@ function isoDiffDays_(a, b) {
   const pa = a.split('-').map(Number), pb = b.split('-').map(Number);
   return Math.round((Date.UTC(pb[0], pb[1] - 1, pb[2]) - Date.UTC(pa[0], pa[1] - 1, pa[2])) / 86400000);
 }
+// BIN SEMANAL ANCORADO (definição dos GRÁFICOS, alinhada com o deck semanal — Luis 08/08).
+// Em vez da semana-calendário (segunda→domingo), agrupa em blocos de 7 dias terminando na ÂNCORA = o
+// último dia com dado MADURO. Motivo: com semana-calendário o ponto mais recente do gráfico para no
+// domingo anterior, enquanto a TABELA ao lado já mostra a semana corrente — os dois números divergiam
+// sem motivo aparente (foi exatamente o "pq o D0 do gráfico não bate com o da tabela"). Ancorando no
+// último dia, o último ponto cobre EXATAMENTE a janela da tabela e os bins não se sobrepõem.
+// Retorna o 1º dia do bin (ordena lexicograficamente igual, e weekLabel_ já rotula k..k+6).
+// `anchor` nulo → cai na semana-calendário (é o que a TABELA continua usando; não mexer nela).
+function weekBinISO_(iso, anchor) {
+  if (!anchor) return weekStartISO_(iso);
+  const k = Math.floor(isoDiffDays_(String(iso), anchor) / 7);   // 0 = bin que termina na âncora
+  return isoAddDays_(anchor, -7 * k - 6);
+}
 
 // Agrega retencaoFaixa por DIA ou SEMANA (gran='day'|'week'; canal via chFilter + faixa) no padrão do
 // Benchmark (benchMetrics_). SEMANAL re-agrega as bases aditivas e RECALCULA as métricas (não é média
 // das %). mode 'qtd'|'val' afeta só as colunas de retenção. ggrM0/m0PerPlayer ficam p/ ROAS GGR e heroes.
-function aggRetFaixaBench_(retencaoFaixa, chFilter, faixa, mode, gran, gCurve, dataMax, dim, grupoSel) {
+// `weekAnchor` (opcional): no gran='week', ancora os bins de 7 dias nesse dia em vez de usar a
+// semana-calendário — ver weekBinISO_. Só os GRÁFICOS passam; a tabela segue em semana-calendário.
+function aggRetFaixaBench_(retencaoFaixa, chFilter, faixa, mode, gran, gCurve, dataMax, dim, grupoSel, weekAnchor) {
   const rows = benchApostouRows_(retencaoFaixa);
   const selCh = chSelector_(chFilter);
   const faixaArr = Array.isArray(faixa) ? faixa : (faixa && faixa !== 'all' ? [faixa] : []);   // [] = todas
@@ -1296,7 +1311,7 @@ function aggRetFaixaBench_(retencaoFaixa, chFilter, faixa, mode, gran, gCurve, d
   const weekly = gran === 'week';
   // Chave de agrupamento da tabela: período (dia/semana · default) OU por canal OU por faixa — toggle
   // "Ver por" na aba, p/ comparação rápida. Métricas re-agregadas das mesmas bases aditivas (não é média das %).
-  const groupOf = (r) => dim === 'canal' ? r.canal : dim === 'faixa' ? r.faixa : dim === 'grupo' ? (r.grupo || 'sem grupo') : dim === 'campanha' ? (r.campanha || '(sem campanha)') : (weekly ? weekStartISO_(r.date) : r.date);
+  const groupOf = (r) => dim === 'canal' ? r.canal : dim === 'faixa' ? r.faixa : dim === 'grupo' ? (r.grupo || 'sem grupo') : dim === 'campanha' ? (r.campanha || '(sem campanha)') : (weekly ? weekBinISO_(r.date, weekAnchor) : r.date);
   const labelOf = (k) => dim === 'canal' ? k : dim === 'faixa' ? fxLabel_(k) : dim === 'grupo' ? grupoLabel_(k) : dim === 'campanha' ? k : (weekly ? weekLabel_(k) : k);
   const by = {}, tot = zero();
   rows.forEach(r => {
@@ -1501,6 +1516,12 @@ const RET_MULT_METRICS_D0 = [
 ];
 const retChartMetrics_ = (base) => base === 'd0' ? RET_MULT_METRICS_D0 : RET_MULT_METRICS;
 const RET_SERIES_COLORS = ['#FF8C00', '#60a5fa', '#4ade80', '#facc15', '#c084fc', '#22d3ee', '#fb7185', '#a3e635'];
+// Horizonte de MATURIDADE por multiplicador (dias após o FTD). Nível de módulo porque o cálculo do
+// lookback do fetch precisa dele ANTES do corpo do componente chegar no corte de maturidade.
+const RET_MAT_H = { D0: 0, D1: 1, D3: 3, D7: 7, D14: 14, D30: 30 };
+// Períodos VISÍVEIS no eixo, por granularidade (usado no lookback e no recorte final — tem que ser o mesmo
+// número nos dois, senão a busca fica curta e os pontos mais antigos saem com janela deslizante truncada).
+const RET_MAX_PERIODS = { week: 8, day: 30 };
 function RetMultChart({ chFilter, faixaSel, grupoSel, grupoActive, mode, gran, sameday, dataMax, fallbackRows, cohort, cohortDays, srcRF, srcRFLead, coLo, srcLoading, srcError, base }) {
   const MET = retChartMetrics_(base);            // lista de séries conforme a base do toggle (FTD | D0)
   const bLbl = base === 'd0' ? 'D0' : 'FTD';     // sufixo dos rótulos: Mult D7/FTD vs Mult D7/D0
@@ -1514,10 +1535,18 @@ function RetMultChart({ chFilter, faixaSel, grupoSel, grupoActive, mode, gran, s
   // Cap SEMPRE em hoje-1 (= todayISO_, regra da tabela): nunca inclui o dia de HOJE (parcial → estragaria a
   // média da semana corrente). Se o dado atrasar (dataMax < ontem), usa dataMax. capTo = min(dataMax, ontem).
   const capTo = dataMax ? (dataMax < todayISO_() ? dataMax : todayISO_()) : todayISO_();
-  // Busca 60 dias corridos (não 30): o corte de MATURIDADE por multiplicador (D30 recua 30 dias) precisa
-  // de histórico atrás dos 30 dias visíveis. A janela de 30 dias MADUROS é recortada no cliente por multiplicador.
-  // Com média móvel de N dias, estende o histórico (N + 30) p/ os 30 dias visíveis terem janela deslizante cheia.
-  const fetchFrom = capTo ? isoAddDays_(capTo, -Math.max(59, (maDays || 0) + 30)) : null;
+  // UM multiplicador por vez (D0…D30). Coage valor inválido/legado (ex. "Todos" salvo antes) p/ D1.
+  // Definido AQUI (e não junto do mDef, lá embaixo) porque o lookback do fetch depende do horizonte dele.
+  const effMetric = MET.some(m => m.id === metric) ? metric : 'D1';
+  // LOOKBACK DA BUSCA. Era `max(59, maDays + 30)` — curto: com D30 + MM 30d + Semanal (8 semanas) o payload
+  // começava em capTo−60 e os pontos ANTIGOS saíam com janela deslizante truncada (7, 14, 21, 28 dias em vez
+  // de 30), o que suaviza artificialmente o passado e chegou a APAGAR o vale real de meados de junho. Agora a
+  // conta é explícita e cobre os três pedaços que o ponto mais antigo precisa:
+  //   maturidade do multiplicador + span visível do eixo + janela da média móvel.
+  // No exemplo acima: 30 + 56 + 30 = 116 dias (contra 60). Custa payload; é o preço de a curva ser verdade.
+  const spanVisivel = (RET_MAX_PERIODS[gran] || 30) * (gran === 'week' ? 7 : 1);
+  const lookback = (RET_MAT_H[effMetric] || 0) + spanVisivel + (maDays || 0);
+  const fetchFrom = capTo ? isoAddDays_(capTo, -Math.max(59, lookback)) : null;
   // Quebra por GRUPO DE RISCO: pede &byGrupo=1 (payload com grupo por linha). Como o srcRF da coorte NÃO tem
   // grupo, o modo grupo SEMPRE usa o fetch próprio de calendário (mesmo em coorte) — janela/maturidade de calendário.
   const grpMode = seriesBy === 'grupo' || !!grupoActive;   // precisa do dado byGrupo tanto p/ quebrar quanto p/ FILTRAR por grupo
@@ -1539,8 +1568,6 @@ function RetMultChart({ chFilter, faixaSel, grupoSel, grupoActive, mode, gran, s
   const busy = (cohort && !grpMode) ? !!srcLoading : f30.loading;
   const err = (cohort && !grpMode) ? srcError : f30.error;
   const dmLabel = (s) => { const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(s)); return m ? `${m[3]}/${m[2]}` : String(s); };
-  // UM multiplicador por vez (D0…D30). Coage valor inválido/legado (ex. "Todos" salvo antes) p/ D1.
-  const effMetric = MET.some(m => m.id === metric) ? metric : 'D1';
   const mDef = MET.find(m => m.id === effMetric) || MET[0];
   // Média móvel EFETIVA. Roda nos DOIS modos: no Calendário sobre a busca de N+30 dias; na Coorte sobre o
   // srcRFLead (janela visível + CO_MA_LEAD dias antes). Só cai pra 0 se o lead-in não veio (backend velho ou
@@ -1557,9 +1584,24 @@ function RetMultChart({ chFilter, faixaSel, grupoSel, grupoActive, mode, gran, s
   // D14=14·D30=30). Filtrar por DIA (e só depois agregar em semana) faz a SEMANA mais recente aparecer com
   // suas coortes maduras (ex.: semana 06–12/07 entra pelas coortes 06→11/07, sem esperar o domingo 12/07
   // maturar nem arrastar dia imaturo pra média). Só no modo calendário — coorte já traz coortes fechadas.
-  const MAT_H = { D0: 0, D1: 1, D3: 3, D7: 7, D14: 14, D30: 30 };
+  const MAT_H = RET_MAT_H;
   const matDay = ((!cohort || grpMode) && dataMax) ? isoAddDays_(capTo, -(MAT_H[effMetric] || 0)) : null;
   const matRows = matDay ? (rows30 || []).filter(r => r && r.date != null && String(r.date) <= matDay) : (rows30 || []);
+
+  // ÂNCORA dos bins semanais e PISO do dado. Ambos saem das MESMAS linhas (matRows), então valem igual p/
+  // todas as séries — se cada canal ancorasse no seu próprio último dia, as linhas do gráfico ficariam
+  // deslocadas entre si e a comparação seria falsa.
+  //  · anchor = último dia MADURO com dado → os bins de 7 dias terminam nele (ver weekBinISO_).
+  //  · dataFloor = primeiro dia que o payload realmente trouxe → qualquer janela deslizante que comece
+  //    antes dele está TRUNCADA e não pode ser plotada como se fosse cheia.
+  let anchor = null, dataFloor = null;
+  (matRows || []).forEach(r => {
+    if (!r || r.date == null) return;
+    const d = String(r.date);
+    if (anchor == null || d > anchor) anchor = d;
+    if (dataFloor == null || d < dataFloor) dataFloor = d;
+  });
+  const weekAnchor = gran === 'week' ? anchor : null;
 
   // Eixo X = período (unificado); séries = 1 por multiplicador OU por canal OU por faixa.
   // isoKeys[i] = chave ISO da coorte no ponto i (dia = data do FTD · semana = 2ª-feira de início) → usada no corte de maturidade.
@@ -1569,20 +1611,20 @@ function RetMultChart({ chFilter, faixaSel, grupoSel, grupoActive, mode, gran, s
   // Com peso de FTD$ numa razão /D0 a MA vira média ponderada com peso errado (viés silencioso).
   const ftdOf = (r) => (r.qtd || 0) * ((base === 'd0' ? r.d0Medio : r.ftdMedio) || 0);
   if (seriesBy === 'mult') {
-    const agg = aggRetFaixaBench_(matRows, chFilter, faixaSel, mode, effGran, null, dataMax, null, grupoSel); // dim = período
+    const agg = aggRetFaixaBench_(matRows, chFilter, faixaSel, mode, effGran, null, dataMax, null, grupoSel, weekAnchor); // dim = período
     xLabels = agg.rows.map(r => dmLabel(r.date));
     isoKeys = agg.rows.map(r => r._key);
     series = [{ name: 'Mult ' + mDef.id, mid: mDef.id, color: RET_SERIES_COLORS[MET.indexOf(mDef) % RET_SERIES_COLORS.length], values: agg.rows.map(r => r[mDef.key]), ftd: agg.rows.map(ftdOf) }];
   } else {
     // grupos (canais ou faixas) presentes no recorte, cada um agregado por período p/ o multiplicador escolhido
-    const groupAgg = aggRetFaixaBench_(matRows, chFilter, faixaSel, mode, 'day', null, dataMax, seriesBy, grupoSel);
+    const groupAgg = aggRetFaixaBench_(matRows, chFilter, faixaSel, mode, 'day', null, dataMax, seriesBy, grupoSel, weekAnchor);
     const groups = groupAgg.rows.map(r => ({ key: r._key, label: r.date }));
     const perGroup = groups.map(g => {
       const sub = seriesBy === 'canal'
-        ? aggRetFaixaBench_(matRows, { ...chFilter, channels: [g.key] }, faixaSel, mode, effGran, null, dataMax, null, grupoSel)
+        ? aggRetFaixaBench_(matRows, { ...chFilter, channels: [g.key] }, faixaSel, mode, effGran, null, dataMax, null, grupoSel, weekAnchor)
         : seriesBy === 'grupo'
-        ? aggRetFaixaBench_((matRows || []).filter(r => (r.grupo || 'sem grupo') === g.key), chFilter, faixaSel, mode, effGran, null, dataMax)
-        : aggRetFaixaBench_(matRows, chFilter, [g.key], mode, effGran, null, dataMax, null, grupoSel);
+        ? aggRetFaixaBench_((matRows || []).filter(r => (r.grupo || 'sem grupo') === g.key), chFilter, faixaSel, mode, effGran, null, dataMax, null, null, weekAnchor)
+        : aggRetFaixaBench_(matRows, chFilter, [g.key], mode, effGran, null, dataMax, null, grupoSel, weekAnchor);
       const m = {}; sub.rows.forEach(r => { m[r._key] = { y: r[mDef.key], f: ftdOf(r), label: r.date }; });
       return { g, m };
     });
@@ -1601,6 +1643,11 @@ function RetMultChart({ chFilter, faixaSel, grupoSel, grupoActive, mode, gran, s
       const nv = isoKeys.map((k, i) => {
         if (k == null) return null;
         const lo = isoAddDays_(k, -(maEff - 1));
+        // JANELA CHEIA OBRIGATÓRIA: se a janela começa antes do 1º dia que o payload trouxe, ela está
+        // TRUNCADA — a média sairia sobre menos dias do que o rótulo promete. Antes esses pontos eram
+        // plotados como se fossem MM completa, o que suavizava o passado e escondia quedas reais.
+        // Com o lookback corrigido acima nenhum ponto VISÍVEL deve cair aqui; isto é a rede de segurança.
+        if (dataFloor && lo < dataFloor) return null;
         let num = 0, den = 0, any = false;
         for (let j = i; j >= 0 && isoKeys[j] != null && isoKeys[j] >= lo; j--) {
           const v = s.values[j], f = s.ftd ? s.ftd[j] : 0;
@@ -1610,10 +1657,12 @@ function RetMultChart({ chFilter, faixaSel, grupoSel, grupoActive, mode, gran, s
       });
       return { ...s, values: nv };
     });
-    // Toggle SEMANAL: colapsa o eixo diário da MA em semanas — cada semana pega o valor da MA no seu ÚLTIMO dia.
+    // Toggle SEMANAL: colapsa o eixo diário da MA em bins de 7 dias ANCORADOS no último dia maduro (não na
+    // semana-calendário) — cada bin pega o valor da MA no seu ÚLTIMO dia. É o que faz o ponto mais recente
+    // do gráfico cobrir a MESMA janela da tabela ao lado. Ver weekBinISO_.
     if (gran === 'week') {
-      const lastIdxByWeek = {};   // isoKeys asc → o último i de cada semana é o dia máximo dela
-      isoKeys.forEach((k, i) => { if (k != null) lastIdxByWeek[weekStartISO_(String(k))] = i; });
+      const lastIdxByWeek = {};   // isoKeys asc → o último i de cada bin é o dia máximo dele
+      isoKeys.forEach((k, i) => { if (k != null) lastIdxByWeek[weekBinISO_(String(k), weekAnchor)] = i; });
       const wKeys = Object.keys(lastIdxByWeek).sort();
       const idxs = wKeys.map(ws => lastIdxByWeek[ws]);
       xLabels = wKeys.map(ws => weekLabel_(ws));
@@ -1625,7 +1674,7 @@ function RetMultChart({ chFilter, faixaSel, grupoSel, grupoActive, mode, gran, s
   // Usa o gran do TOGGLE (display), não o effGran — com MA+Semanal os pontos já foram colapsados em semanas.
   const matCutId = effMetric, matCutISO = matDay;
   if (!cohort && dataMax) {
-    const maxPeriods = gran === 'week' ? 8 : 30;
+    const maxPeriods = RET_MAX_PERIODS[gran] || 30;
     if (isoKeys.length > maxPeriods) {
       const start = isoKeys.length - maxPeriods;
       xLabels = xLabels.slice(start); isoKeys = isoKeys.slice(start);
@@ -1634,8 +1683,8 @@ function RetMultChart({ chFilter, faixaSel, grupoSel, grupoActive, mode, gran, s
   } else if (coLead && coLo) {
     // Coorte com lead-in: os dias anteriores a `coLo` entraram SÓ p/ encher a janela deslizante — corta-os do
     // eixo agora que a MA já rodou, senão o gráfico mostraria um período que a tabela ao lado não mostra.
-    // No Semanal a chave é a 2ª-feira da semana → compara com a semana de coLo (a 1ª semana visível).
-    const lo = gran === 'week' ? weekStartISO_(coLo) : coLo;
+    // No Semanal a chave é o 1º dia do BIN ancorado → compara com o bin de coLo (o 1º bin visível).
+    const lo = gran === 'week' ? weekBinISO_(coLo, weekAnchor) : coLo;
     const start = isoKeys.findIndex(k => k != null && String(k) >= lo);
     if (start > 0) {
       xLabels = xLabels.slice(start); isoKeys = isoKeys.slice(start);
@@ -1801,8 +1850,8 @@ function RetMultChart({ chFilter, faixaSel, grupoSel, grupoActive, mode, gran, s
         </svg>
       </div>
       <div className="ch-note">
-        <strong>{cohort ? `Coorte de ${cohortDays} dias — mesma base/janela da tabela (só coortes fechadas)` : `Janela: ${gran === 'week' ? 'últimas 8 semanas' : '30 dias corridos'} terminando na ÚLTIMA safra MADURA${matCutId ? ` do ${matCutId}` : ''}${matCutISO ? ` (até ${dmLabel(matCutISO)})` : ''} — coortes ainda imaturas são cortadas${gran === 'week' ? ' (a semana mais recente entra com suas coortes já maduras)' : ''}`}</strong>. Eixo X = <strong>{gran === 'week' ? 'semana' : 'dia'} de FTD</strong>; {seriesBy === 'mult' ? <>evolução do <strong>multiplicador {effMetric}/{bLbl}</strong></> : <>uma linha por <strong>{seriesBy === 'canal' ? 'canal' : 'faixa de FTD'}</strong> (multiplicador {effMetric}/{bLbl})</>}. Cada ponto = média ponderada (Σ/Σ) do KPI no período. Segue canal/faixa/modo/same-day/M0.{busy ? ' · carregando…' : ''}{err ? ' · erro' : ''}
-        {maEff > 0 && <React.Fragment>{' '}<em style={{ color: 'var(--text-dim)' }}>Média móvel de {maEff} dias: janela deslizante ponderada pelo DENOMINADOR ativo (Σ mult×{bLbl}$ ÷ Σ {bLbl}$ = a própria razão pooled da janela) dos últimos {maEff} dias, calculada em dias e {gran === 'week' ? 'amostrada por semana (valor no último dia da semana)' : 'plotada por dia'} — segue o toggle Diário/Semanal e suaviza o ruído. É uma janela TRAILING (só passado): uma virada real aparece com ~{Math.ceil(maEff / 2)} dias de atraso, somados ao corte de maturidade acima.{maEff > 7 && gran === 'week' ? ' Com MM > 7d no Semanal, semanas vizinhas dividem parte da janela — a linha fica mais "tendenciosa" do que o dado.' : ''}</em></React.Fragment>}{cohort && maEff > 0 && <React.Fragment>{' '}<em style={{ color: 'var(--text-dim)' }}>Na Coorte a janela deslizante puxa como histórico os dias ANTERIORES à janela visível (busca estendida em {maEff} dia{maEff > 1 ? 's' : ''}), então o 1º ponto já sai com janela cheia — o eixo continua mostrando só as safras fechadas da tabela.</em></React.Fragment>}{cohort && maDays > 0 && maEff === 0 && <React.Fragment>{' '}<em style={{ color: 'var(--accent-yellow)' }}>Média móvel esperando o histórico da coorte carregar — os pontos abaixo ainda são o valor bruto do período.</em></React.Fragment>}
+        <strong>{cohort ? `Coorte de ${cohortDays} dias — mesma base/janela da tabela (só coortes fechadas)` : `Janela: ${gran === 'week' ? 'últimas 8 semanas' : '30 dias corridos'} terminando na ÚLTIMA safra MADURA${matCutId ? ` do ${matCutId}` : ''}${matCutISO ? ` (até ${dmLabel(matCutISO)})` : ''} — coortes ainda imaturas são cortadas${gran === 'week' ? ' (a semana é um bloco de 7 dias terminando na última safra madura, não a semana-calendário — assim o ponto mais recente cobre a mesma janela da tabela)' : ''}`}</strong>. Eixo X = <strong>{gran === 'week' ? 'semana' : 'dia'} de FTD</strong>; {seriesBy === 'mult' ? <>evolução do <strong>multiplicador {effMetric}/{bLbl}</strong></> : <>uma linha por <strong>{seriesBy === 'canal' ? 'canal' : 'faixa de FTD'}</strong> (multiplicador {effMetric}/{bLbl})</>}. Cada ponto = média ponderada (Σ/Σ) do KPI no período. Segue canal/faixa/modo/same-day/M0.{busy ? ' · carregando…' : ''}{err ? ' · erro' : ''}
+        {maEff > 0 && <React.Fragment>{' '}<em style={{ color: 'var(--text-dim)' }}>Média móvel de {maEff} dias: janela deslizante ponderada pelo DENOMINADOR ativo (Σ mult×{bLbl}$ ÷ Σ {bLbl}$ = a própria razão pooled da janela) dos últimos {maEff} dias, calculada em dias e {gran === 'week' ? 'amostrada por semana (valor no último dia da semana)' : 'plotada por dia'} — segue o toggle Diário/Semanal e suaviza o ruído. É uma janela TRAILING (só passado): uma virada real aparece com ~{Math.ceil(maEff / 2)} dias de atraso, somados ao corte de maturidade acima. Ponto cuja janela deslizante não esteja CHEIA não é plotado — média sobre menos dias que o rótulo promete suaviza o passado e chega a apagar quedas reais.{maEff > 7 && gran === 'week' ? ' Com MM > 7d no Semanal, semanas vizinhas dividem parte da janela — a linha fica mais "tendenciosa" do que o dado.' : ''}</em></React.Fragment>}{cohort && maEff > 0 && <React.Fragment>{' '}<em style={{ color: 'var(--text-dim)' }}>Na Coorte a janela deslizante puxa como histórico os dias ANTERIORES à janela visível (busca estendida em {maEff} dia{maEff > 1 ? 's' : ''}), então o 1º ponto já sai com janela cheia — o eixo continua mostrando só as safras fechadas da tabela.</em></React.Fragment>}{cohort && maDays > 0 && maEff === 0 && <React.Fragment>{' '}<em style={{ color: 'var(--accent-yellow)' }}>Média móvel esperando o histórico da coorte carregar — os pontos abaixo ainda são o valor bruto do período.</em></React.Fragment>}
         {!cohort && <React.Fragment>{' '}<em>Maturidade: o multiplicador só entra depois de a coorte ter os dias p/ fechar a janela (D0=0 · D1=1 · D7=7 · D14=14 · D30=30 dias após o FTD).</em></React.Fragment>}
       </div>
     </React.Fragment>
@@ -2436,12 +2485,15 @@ const BENCH_SEL_STYLE = { background: 'var(--surface)', border: '1px solid rgba(
 // export 'turbinado_2026' da Lottu, também D30 (janela fixa). O D30 só entra na lista quando o JSON tem `hasD30`
 // — senão a linha da Lottu seria uma reta em D0/FTD e pareceria colapso de multiplicador.
 // Segue os MESMOS filtros da aba (canal/escopo/faixa/janelas).
+// `mat` = dias que a safra precisa ter vivido p/ a métrica estar FECHADA. Safra mais nova que isso entra
+// com o acumulado truncado e derruba o multiplicador sem que nada tenha piorado de verdade — por isso o
+// eixo é cortado em (fim da janela − mat). O M0 é mês-calendário (horizonte variável), fica sem corte fixo.
 const BENCH_MULT_METRICS = [
-  { id: 'D0', of: a => a.ftd ? a.d0 / a.ftd : null,             desc: 'D0 ÷ FTD' },
-  { id: 'D1', of: a => a.ftd ? (a.d0 + a.vd1) / a.ftd : null,   desc: '(D0 + dia 1) ÷ FTD' },
-  { id: 'W1', of: a => a.ftd ? (a.d0 + a.vw1) / a.ftd : null,   desc: '(D0 + dias 1–7) ÷ FTD' },
-  { id: 'D30', of: a => a.ftd ? (a.d0 + (a.vd30 || 0)) / a.ftd : null, desc: '(D0 + dias 1–30) ÷ FTD', d30: true },
-  { id: 'M0', of: a => a.ftd ? (a.d0 + a.vm0) / a.ftd : null,   desc: '(D0 + resto do mês) ÷ FTD' },
+  { id: 'D0', of: a => a.ftd ? a.d0 / a.ftd : null,             desc: 'D0 ÷ FTD', mat: 0 },
+  { id: 'D1', of: a => a.ftd ? (a.d0 + a.vd1) / a.ftd : null,   desc: '(D0 + dia 1) ÷ FTD', mat: 1 },
+  { id: 'W1', of: a => a.ftd ? (a.d0 + a.vw1) / a.ftd : null,   desc: '(D0 + dias 1–7) ÷ FTD', mat: 7 },
+  { id: 'D30', of: a => a.ftd ? (a.d0 + (a.vd30 || 0)) / a.ftd : null, desc: '(D0 + dias 1–30) ÷ FTD', d30: true, mat: 30 },
+  { id: 'M0', of: a => a.ftd ? (a.d0 + a.vm0) / a.ftd : null,   desc: '(D0 + resto do mês) ÷ FTD', mat: null },
 ];
 // Agrega bench rows por PERÍODO (dia/semana), com o mesmo filtro do aggBench_. Só as bases dos 4 mult.
 function benchPeriodAgg_(rows, sel, weekly) {
@@ -2453,7 +2505,7 @@ function benchPeriodAgg_(rows, sel, weekly) {
     if (sel.faixa && sel.faixa !== 'all' && r.faixa !== sel.faixa) return;
     if (sel.from && r.date < sel.from) return;
     if (sel.to && r.date > sel.to) return;
-    const k = weekly ? weekStartISO_(String(r.date)) : String(r.date);
+    const k = weekly ? weekBinISO_(String(r.date), sel.weekAnchor) : String(r.date);
     const a = b[k] || (b[k] = { qtd: 0, ftd: 0, d0: 0, vd1: 0, vw1: 0, vd30: 0, vm0: 0 });
     a.qtd += r.qtd || 0; a.ftd += r.ftd || 0; a.d0 += r.d0 || 0; a.vd1 += r.vd1 || 0; a.vw1 += r.vw1 || 0; a.vd30 += r.vd30 || 0; a.vm0 += r.vm0 || 0;
   });
@@ -2464,12 +2516,17 @@ function benchPeriodAgg_(rows, sel, weekly) {
 // volume). Retorna {chaveDisplay: valorMult}: dias (≥ fromISO) no modo diário; no semanal, cada semana = valor da MA no
 // seu ÚLTIMO dia. Os dias < fromISO (lead-in agregado a mais) entram só como histórico p/ os 1ºs dias visíveis terem
 // janela cheia. `ofFn` = mDef.of (bases → multiplicador).
-function benchMovAvg_(dailyBuckets, ofFn, N, weekly, fromISO) {
+function benchMovAvg_(dailyBuckets, ofFn, N, weekly, fromISO, weekAnchor) {
   const days = Object.keys(dailyBuckets).sort();
+  const floor = days[0] || null;   // 1º dia que o payload trouxe — piso da janela deslizante
   const val = days.map(k => ofFn(dailyBuckets[k]));
   const wt = days.map(k => dailyBuckets[k].ftd || 0);
   const ma = days.map((k, i) => {
     const lo = isoAddDays_(k, -(N - 1));
+    // Janela CHEIA obrigatória: começando antes do 1º dia disponível, a média sairia sobre menos dias do
+    // que o rótulo promete (mesma armadilha do gráfico da aba Multiplicadores). O extLo acima já estende a
+    // busca em N−1 dias, então na prática só os pontos fora da janela visível caem aqui.
+    if (floor && lo < floor) return null;
     let num = 0, den = 0, any = false;
     for (let j = i; j >= 0 && days[j] >= lo; j--) {
       const v = val[j], f = wt[j];
@@ -2482,7 +2539,7 @@ function benchMovAvg_(dailyBuckets, ofFn, N, weekly, fromISO) {
     days.forEach((k, i) => { if (!fromISO || k >= fromISO) out[k] = ma[i]; });
   } else {
     const lastIdxByWeek = {};   // dias asc → o último i de cada semana é o dia máximo dela (dentro do range visível)
-    days.forEach((k, i) => { if (!fromISO || k >= fromISO) lastIdxByWeek[weekStartISO_(k)] = i; });
+    days.forEach((k, i) => { if (!fromISO || k >= fromISO) lastIdxByWeek[weekBinISO_(k, weekAnchor)] = i; });
     Object.keys(lastIdxByWeek).forEach(ws => { out[ws] = ma[lastIdxByWeek[ws]]; });
   }
   return out;
@@ -2502,12 +2559,29 @@ function BenchMultChart({ aptRows, houseRows, houseLabel, canals, scope, faixa, 
   // a deslizante ponderada por FTD e, no Semanal, colapsa por semana. Sem MA: agrega direto no período e o multiplicador
   // sai das bases via mDef.of (aptB/lotB guardam bases). Nos dois casos aptB/lotB = {chave: valor} lido pelo mkVals.
   const extLo = (f) => (maOn && f) ? isoAddDays_(f, -(maDays - 1)) : f;
+  // CORTE DE MATURIDADE por métrica: a última safra que pode entrar é a que já fechou o horizonte
+  // (D1 = 1 dia, W1 = 7, D30 = 30). Sem isso o D30 das últimas safras entra truncado e a linha CAI no fim
+  // do gráfico sem que nada tenha piorado — o eixo passa a mostrar imaturidade, não performance.
+  // Aplicado IGUAL aos dois lados (mesmo teto) p/ a comparação continuar honesta.
+  const matTo = (t) => (mDef.mat != null && t) ? isoAddDays_(t, -mDef.mat) : t;
+  const aptToM = matTo(aptTo), houseToM = matTo(houseTo);
+  // Se o corte de maturidade passa do INÍCIO da janela (típico: D30 com a janela default em MTD — o teto
+  // maduro recua 30 dias e cai antes do dia 1º), o gráfico ficaria VAZIO. Em vez disso desliza a janela
+  // inteira p/ trás pelo mesmo tanto: mesma duração, na região madura. O eixo mostra as datas reais e a
+  // legenda avisa — nunca deslocar período em silêncio.
+  const matShift = !!(mDef.mat && aptFrom && aptToM && aptFrom > aptToM);
+  const shiftF = (f) => (matShift && f) ? isoAddDays_(f, -mDef.mat) : f;
+  const aptFromS = shiftF(aptFrom), houseFromS = shiftF(houseFrom);
+  // ÂNCORA dos bins de 7 dias = o menor teto maduro dos dois lados. Tem que ser UMA só: se cada lado
+  // ancorasse no seu próprio último dia, os bins ficariam deslocados e as duas linhas comparariam
+  // períodos diferentes no mesmo ponto do eixo. Ver weekBinISO_.
+  const wAnchor = weekly ? ((aptToM && houseToM) ? (aptToM < houseToM ? aptToM : houseToM) : (aptToM || houseToM)) : null;
   const aptB = maOn
-    ? benchMovAvg_(benchPeriodAgg_(aptRows, { canals, scope, faixa, from: extLo(aptFrom), to: aptTo }, false), mDef.of, maDays, weekly, aptFrom)
-    : benchPeriodAgg_(aptRows, { canals, scope, faixa, from: aptFrom, to: aptTo }, weekly);
+    ? benchMovAvg_(benchPeriodAgg_(aptRows, { canals, scope, faixa, from: extLo(aptFromS), to: aptToM, weekAnchor: wAnchor }, false), mDef.of, maDays, weekly, aptFromS, wAnchor)
+    : benchPeriodAgg_(aptRows, { canals, scope, faixa, from: aptFromS, to: aptToM, weekAnchor: wAnchor }, weekly);
   const lotB = maOn
-    ? benchMovAvg_(benchPeriodAgg_(houseRows, { canals, scope, faixa, from: extLo(houseFrom), to: houseTo }, false), mDef.of, maDays, weekly, houseFrom)
-    : benchPeriodAgg_(houseRows, { canals, scope, faixa, from: houseFrom, to: houseTo }, weekly);
+    ? benchMovAvg_(benchPeriodAgg_(houseRows, { canals, scope, faixa, from: extLo(houseFromS), to: houseToM, weekAnchor: wAnchor }, false), mDef.of, maDays, weekly, houseFromS, wAnchor)
+    : benchPeriodAgg_(houseRows, { canals, scope, faixa, from: houseFromS, to: houseToM, weekAnchor: wAnchor }, weekly);
   const allKeys = Array.from(new Set(Object.keys(aptB).concat(Object.keys(lotB)))).sort();
   const xLabels = allKeys.map(k => weekly ? weekLabel_(k) : dmLabel(k));
   const mkVals = (B) => allKeys.map(k => (k in B) ? (maOn ? B[k] : (B[k] ? mDef.of(B[k]) : null)) : null);
@@ -2625,7 +2699,7 @@ function BenchMultChart({ aptRows, houseRows, houseLabel, canals, scope, faixa, 
         </svg>
       </div>
       <div className="ch-note">
-        <strong>Multiplicador {mDef.id}/FTD por {weekly ? 'semana' : 'dia'} de FTD</strong> — <span style={{ color: '#f97316' }}>laranja = Apostou</span>, <span style={{ color: '#60a5fa' }}>azul = {HL}</span>. Cada ponto = depósito acumulado (incl. D0) até a janela ÷ FTD, agregado no período (mesmo recorte de canal/faixa/janela das tabelas).{maOn && <React.Fragment>{' '}<em style={{ color: 'var(--text-dim)' }}>Média móvel de {maDays} dias (nas duas linhas): janela deslizante ponderada (Σ mult×FTD ÷ Σ FTD) dos últimos {maDays} dias, calculada em dias e {weekly ? 'amostrada por semana (valor no último dia da semana)' : 'plotada por dia'} — suaviza o ruído.</em></React.Fragment>} <strong>⚠ Períodos recentes podem estar imaturos</strong> ({mDef.d30 ? 'D30 = janela fixa de 30 dias: coorte com menos de 30 dias de vida entra truncada e PUXA A CURVA PRA BAIXO' : 'M0 = "resto do mês" trunca coorte recente'}) — as duas linhas já seguem a MESMA janela (slicer único da aba){mDef.d30 ? ', e o modo Coorte 30d ainda corta os últimos 30 dias' : ''}.
+        <strong>Multiplicador {mDef.id}/FTD por {weekly ? 'semana' : 'dia'} de FTD</strong> — <span style={{ color: '#f97316' }}>laranja = Apostou</span>, <span style={{ color: '#60a5fa' }}>azul = {HL}</span>. Cada ponto = depósito acumulado (incl. D0) até a janela ÷ FTD, agregado no período (mesmo recorte de canal/faixa/janela das tabelas).{maOn && <React.Fragment>{' '}<em style={{ color: 'var(--text-dim)' }}>Média móvel de {maDays} dias (nas duas linhas): janela deslizante ponderada (Σ mult×FTD ÷ Σ FTD) dos últimos {maDays} dias, calculada em dias e {weekly ? 'amostrada por semana (valor no último dia da semana)' : 'plotada por dia'} — suaviza o ruído. Ponto com janela INCOMPLETA não é plotado: média sobre menos dias que o rótulo promete é suavização falsa.</em></React.Fragment>}{weekly && <React.Fragment>{' '}<em style={{ color: 'var(--text-dim)' }}>Semana = bloco de 7 dias terminando na ÚLTIMA safra madura (não na semana-calendário), então o ponto mais recente cobre exatamente a janela das tabelas.</em></React.Fragment>}{mDef.mat != null && mDef.mat > 0 && <React.Fragment>{' '}<em style={{ color: 'var(--text-dim)' }}>Maturidade: só entram safras que já fecharam os {mDef.mat} dia{mDef.mat > 1 ? 's' : ''} do {mDef.id} — coorte nova entraria truncada e derrubaria a curva no fim do gráfico sem nada ter piorado.</em></React.Fragment>}{matShift && <React.Fragment>{' '}<em style={{ color: 'var(--accent-yellow)' }}>A janela selecionada é toda imatura p/ o {mDef.id}: o gráfico deslocou o período {mDef.mat} dias p/ trás (mesma duração) — confira as datas no eixo.</em></React.Fragment>}{mDef.id === 'M0' && <React.Fragment>{' '}<strong>⚠ M0 = "resto do mês"</strong>: horizonte variável, coorte recente entra truncada (sem corte fixo possível).</React.Fragment>} As duas linhas seguem a MESMA janela e a MESMA âncora (slicer único da aba).
       </div>
     </React.Fragment>
   );
