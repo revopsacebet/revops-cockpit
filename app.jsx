@@ -2752,7 +2752,9 @@ function BenchmarkView({ retencaoFaixa, benchmark, houseOrder, sameday, title, s
         </div>
       </div>
 
-      <div className="slicer" style={{ flexWrap: 'wrap', rowGap: '8px' }}>
+      {/* `slicer` = estilo dos controles (input/select laranja) · `slicer-ruler` = régua que CONGELA abaixo da
+          barra de abas ao rolar (mesma das outras abas), pra não ter que voltar ao topo pra trocar filtro. */}
+      <div className="slicer slicer-ruler slicer-tight" style={{ rowGap: '8px', columnGap: '12px' }}>
         <div className="slicer-group">
           <label style={lblStyle}>Canal</label>
           <ChannelMultiSelect options={canalOptions} selected={canals} onChange={setCanals} />
@@ -2795,9 +2797,8 @@ function BenchmarkView({ retencaoFaixa, benchmark, houseOrder, sameday, title, s
             </div>
           </div>
         )}
-        <div className="slicer-divider" />
         <div className="slicer-group">
-          <label style={lblStyle}>Período (os dois lados)</label>
+          <label style={lblStyle} title={`Uma janela só, aplicada igual a Apostou e ${housesLabel}.`}>Período</label>
           <input type="date" value={from || ''} min={houseMin || undefined} max={toEff || winMax || undefined} onChange={e => editFrom(e.target.value)} />
           <span className="slicer-arrow">→</span>
           <input type="date" value={toEff || ''} min={from || houseMin || undefined} max={winMax || undefined} onChange={e => editTo(e.target.value)}
