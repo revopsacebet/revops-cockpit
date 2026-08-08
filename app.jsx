@@ -1537,7 +1537,14 @@ function RetMultChart({ chFilter, faixaSel, grupoSel, grupoActive, mode, gran, s
   // UM multiplicador por vez (D0…D30). Coage valor inválido/legado (ex. "Todos" salvo antes) p/ D1.
   const effMetric = MET.some(m => m.id === metric) ? metric : 'D1';
   const mDef = MET.find(m => m.id === effMetric) || MET[0];
-  const effGran = maDays > 0 ? 'day' : gran;   // média móvel opera em resolução DIÁRIA (janela deslizante em dias)
+  // Média móvel EFETIVA. Na Coorte 30d ela não roda: a fonte é a janela fechada da tabela (30 safras diárias,
+  // sem lead-in), então uma janela deslizante de N dias sairia parcial em quase todo ponto — suavização falsa.
+  // ⚠️ O `effGran` TEM que seguir o maEff, não o maDays: a MA só força resolução diária porque a janela
+  // deslizante é em dias. Quando ela não roda (Coorte), forçar 'day' jogava o gráfico pra diário ignorando o
+  // toggle Visão=Semanal E sem suavizar nada — a linha virava ruído de safra diária com o botão "Semanal"
+  // aceso. Era esse o bug do gráfico da Coorte 30d.
+  const maEff = (maDays > 0 && !cohort) ? maDays : 0;
+  const effGran = maEff > 0 ? 'day' : gran;   // média móvel opera em resolução DIÁRIA (janela deslizante em dias)
 
   // MATURIDADE no NÍVEL DA COORTE (dia do FTD), não da semana: mantém só FTDs que já fecharam a janela do
   // multiplicador → date <= capTo − horizonte (capTo = ontem, último dia completo; horizonte D0=0·D1=1·D7=7·
@@ -1583,7 +1590,6 @@ function RetMultChart({ chFilter, faixaSel, grupoSel, grupoActive, mode, gran, s
   // [d−N+1, d] = Σ(mult×ftd) ÷ Σftd — NÃO é média das razões diárias (que distorce em dia de baixo volume).
   // A MA é sempre calculada em DIAS (effGran='day'); o EIXO X segue o toggle: se Semanal, colapsa depois em
   // semanas (cada semana = valor da MA no ÚLTIMO dia dela). Aplica ANTES do recorte (usa o histórico de N+30 dias).
-  const maEff = (maDays > 0 && !cohort) ? maDays : 0;   // Coorte 30d NÃO suaviza (janela já é fechada)
   if (maEff > 0) {
     series = series.map(s => {
       const nv = isoKeys.map((k, i) => {
@@ -1642,15 +1648,18 @@ function RetMultChart({ chFilter, faixaSel, grupoSel, grupoActive, mode, gran, s
           ))}
         </span>
       </span>
-      <span style={{ display: 'inline-flex', alignItems: 'center', gap: '6px' }}>
+      {/* Na Coorte a MA não roda → o controle fica DESABILITADO e apagado. Antes ele continuava aceso em "30d"
+          sem suavizar nada, o que fazia o gráfico parecer quebrado. O valor persiste p/ voltar no Calendário. */}
+      <span style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', opacity: cohort ? .45 : 1 }}
+        title={cohort ? `Média móvel indisponível na Coorte ${cohortDays}d: a fonte é a janela fechada da tabela (${cohortDays} safras diárias, sem histórico anterior), então a janela deslizante sairia parcial em quase todo ponto. Volte pro Calendário p/ suavizar.` : undefined}>
         <label style={{ fontSize: '11px', color: 'var(--text-muted)' }}>Média móvel</label>
         <span className="slicer-presets">
-          <button className={`preset-btn ${maDays === 0 ? 'active' : ''}`} onClick={() => setMaDays(0)} title="Sem média móvel (valor do período)">Off</button>
+          <button className={`preset-btn ${maEff === 0 ? 'active' : ''}`} disabled={cohort} onClick={() => setMaDays(0)} title="Sem média móvel (valor do período)">Off</button>
           {[7, 14, 30].map(d => (
-            <button key={d} className={`preset-btn ${maDays === d ? 'active' : ''}`} onClick={() => setMaDays(d)} title={`Média móvel de ${d} dias (janela deslizante diária, ponderada por FTD)`}>{d}d</button>
+            <button key={d} className={`preset-btn ${maEff === d ? 'active' : ''}`} disabled={cohort} onClick={() => setMaDays(d)} title={`Média móvel de ${d} dias (janela deslizante diária, ponderada por FTD)`}>{d}d</button>
           ))}
         </span>
-        <input type="number" min="2" max="60" value={maDays || ''} placeholder="dias"
+        <input type="number" min="2" max="60" value={maDays || ''} placeholder="dias" disabled={cohort}
           onChange={e => { const v = parseInt(e.target.value, 10); setMaDays(isNaN(v) ? 0 : Math.max(0, Math.min(60, v))); }}
           title="Escolher N dias da média móvel (janela deslizante)"
           style={{ width: '62px', background: 'var(--surface)', border: '1px solid var(--border)', color: 'var(--text)', padding: '4px 6px', borderRadius: '6px', fontSize: '12px', fontFamily: 'inherit' }} />
@@ -1778,7 +1787,7 @@ function RetMultChart({ chFilter, faixaSel, grupoSel, grupoActive, mode, gran, s
       </div>
       <div className="ch-note">
         <strong>{cohort ? `Coorte de ${cohortDays} dias — mesma base/janela da tabela (só coortes fechadas)` : `Janela: ${gran === 'week' ? 'últimas 8 semanas' : '30 dias corridos'} terminando na ÚLTIMA safra MADURA${matCutId ? ` do ${matCutId}` : ''}${matCutISO ? ` (até ${dmLabel(matCutISO)})` : ''} — coortes ainda imaturas são cortadas${gran === 'week' ? ' (a semana mais recente entra com suas coortes já maduras)' : ''}`}</strong>. Eixo X = <strong>{gran === 'week' ? 'semana' : 'dia'} de FTD</strong>; {seriesBy === 'mult' ? <>evolução do <strong>multiplicador {effMetric}/{bLbl}</strong></> : <>uma linha por <strong>{seriesBy === 'canal' ? 'canal' : 'faixa de FTD'}</strong> (multiplicador {effMetric}/{bLbl})</>}. Cada ponto = média ponderada (Σ/Σ) do KPI no período. Segue canal/faixa/modo/same-day/M0.{busy ? ' · carregando…' : ''}{err ? ' · erro' : ''}
-        {maEff > 0 && <React.Fragment>{' '}<em style={{ color: 'var(--text-dim)' }}>Média móvel de {maEff} dias: janela deslizante ponderada pelo DENOMINADOR ativo (Σ mult×{bLbl}$ ÷ Σ {bLbl}$ = a própria razão pooled da janela) dos últimos {maEff} dias, calculada em dias e {gran === 'week' ? 'amostrada por semana (valor no último dia da semana)' : 'plotada por dia'} — segue o toggle Diário/Semanal e suaviza o ruído. É uma janela TRAILING (só passado): uma virada real aparece com ~{Math.ceil(maEff / 2)} dias de atraso, somados ao corte de maturidade acima.{maEff > 7 && gran === 'week' ? ' Com MM > 7d no Semanal, semanas vizinhas dividem parte da janela — a linha fica mais "tendenciosa" do que o dado.' : ''}</em></React.Fragment>}{maDays > 0 && cohort && <React.Fragment>{' '}<em style={{ color: 'var(--accent-yellow)' }}>Média móvel não se aplica na Coorte {cohortDays}d (a janela de cada safra já é fechada) — o seletor fica inerte aqui.</em></React.Fragment>}
+        {maEff > 0 && <React.Fragment>{' '}<em style={{ color: 'var(--text-dim)' }}>Média móvel de {maEff} dias: janela deslizante ponderada pelo DENOMINADOR ativo (Σ mult×{bLbl}$ ÷ Σ {bLbl}$ = a própria razão pooled da janela) dos últimos {maEff} dias, calculada em dias e {gran === 'week' ? 'amostrada por semana (valor no último dia da semana)' : 'plotada por dia'} — segue o toggle Diário/Semanal e suaviza o ruído. É uma janela TRAILING (só passado): uma virada real aparece com ~{Math.ceil(maEff / 2)} dias de atraso, somados ao corte de maturidade acima.{maEff > 7 && gran === 'week' ? ' Com MM > 7d no Semanal, semanas vizinhas dividem parte da janela — a linha fica mais "tendenciosa" do que o dado.' : ''}</em></React.Fragment>}{cohort && <React.Fragment>{' '}<em style={{ color: 'var(--accent-yellow)' }}>Média móvel indisponível na Coorte {cohortDays}d: a fonte aqui é a MESMA janela fechada da tabela ({cohortDays} safras diárias, sem histórico antes dela), então a janela deslizante sairia parcial em quase todo ponto — o seletor fica desabilitado. Cada ponto é a safra do período, sem suavização; use o <strong>Semanal</strong> p/ tirar o ruído do dia a dia.</em></React.Fragment>}
         {!cohort && <React.Fragment>{' '}<em>Maturidade: o multiplicador só entra depois de a coorte ter os dias p/ fechar a janela (D0=0 · D1=1 · D7=7 · D14=14 · D30=30 dias após o FTD).</em></React.Fragment>}
       </div>
     </React.Fragment>
