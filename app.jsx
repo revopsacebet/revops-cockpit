@@ -2285,6 +2285,9 @@ function benchHouseRows_(bench, hkey) {
     date: dates[r[0]], canal: canais[r[1]], faixa: faixas[r[2]],
     qtd: r[3], ftd: r[4], d0: r[5], cd1: r[6], vd1: r[7], cw1: r[8], vw1: r[9], cm0: r[10], vm0: r[11],
     dep: r[12] || 0, saq: r[13] || 0, net: r[14] || 0,   // saque/net (só benchmark_net.json)
+    // Janela FIXA de 30 dias (dias 1–30). Só existe em builds do benchmark_net com `hasD30` (export Lottu
+    // 'turbinado_2026' em diante). Em JSON antigo r[15]/r[16] são undefined → 0, e o toggle de coorte fica escondido.
+    cd30: r[15] || 0, vd30: r[16] || 0,
   }));
 }
 // retencaoFaixa (Apostou, diária) -> mesmo shape, mantendo o dia. ggrM0 = p/ ROAS GGR na aba Ret. Faixa.
@@ -2296,7 +2299,7 @@ function benchApostouRows_(retencaoFaixa) {
     return {
       date: String(r.date), canal: r.canal, faixa: r.faixa, grupo: (r.grupo != null ? r.grupo : null), campanha: (r.campanha != null ? r.campanha : null),
       qtd: r.qtdFtds || 0, ftd: r.ftdTotal || 0, d0: r.depD0 || 0,
-      cd1: r.cntD1 || 0, vd1: r.valD1 || 0, vd3: r.valD3 || 0, vd4: r.valD4 || 0, cw1: r.cntW1 || 0, vw1: r.valW1 || 0, cw2: r.cntW2 || 0, vw2: r.valW2 || 0, vd30: r.valD30 || 0, cm0: r.cntM0 || 0, vm0: r.valM0 || 0,
+      cd1: r.cntD1 || 0, vd1: r.valD1 || 0, vd3: r.valD3 || 0, vd4: r.valD4 || 0, cw1: r.cntW1 || 0, vw1: r.valW1 || 0, cw2: r.cntW2 || 0, vw2: r.valW2 || 0, cd30: r.cntD30 || 0, vd30: r.valD30 || 0, cm0: r.cntM0 || 0, vm0: r.valM0 || 0,
       // Funil D0+D1 (backend v58+). _pass = 0 marca payload ANTIGO (campo ausente) → as taxas saem "—" em vez
       // de 0,0%, que seria lido como "ninguém passou". Sem isso um cache velho mentiria na tela.
       cstd: r.cntStd || 0, cttd: r.cntTtd || 0, cqtd4: r.cntQtd4 || 0,
@@ -2309,7 +2312,7 @@ function benchApostouRows_(retencaoFaixa) {
   });
 }
 function aggBench_(rows, sel) {
-  const out = { qtd: 0, ftd: 0, d0: 0, cd1: 0, vd1: 0, vd3: 0, vd4: 0, cw1: 0, vw1: 0, cw2: 0, vw2: 0, vd30: 0, cm0: 0, vm0: 0, dep: 0, saq: 0, net: 0, cstd: 0, cttd: 0, cqtd4: 0, _pass: 0 };
+  const out = { qtd: 0, ftd: 0, d0: 0, cd1: 0, vd1: 0, vd3: 0, vd4: 0, cw1: 0, vw1: 0, cw2: 0, vw2: 0, cd30: 0, vd30: 0, cm0: 0, vm0: 0, dep: 0, saq: 0, net: 0, cstd: 0, cttd: 0, cqtd4: 0, _pass: 0 };
   const canals = sel.canals || (sel.canal && sel.canal !== 'all' ? [sel.canal] : []);
   (rows || []).forEach(r => {
     // canais específicos têm precedência; senão, scope 'growth' = só mídia paga (exclui social/orgânico/afiliados)
@@ -2319,7 +2322,7 @@ function aggBench_(rows, sel) {
     if (sel.from && r.date < sel.from) return;
     if (sel.to && r.date > sel.to) return;
     out.qtd += r.qtd; out.ftd += r.ftd; out.d0 += r.d0;
-    out.cd1 += r.cd1; out.vd1 += r.vd1; out.vd3 += r.vd3 || 0; out.vd4 += r.vd4 || 0; out.cw1 += r.cw1; out.vw1 += r.vw1; out.cw2 += r.cw2 || 0; out.vw2 += r.vw2 || 0; out.vd30 += r.vd30 || 0; out.cm0 += r.cm0; out.vm0 += r.vm0;
+    out.cd1 += r.cd1; out.vd1 += r.vd1; out.vd3 += r.vd3 || 0; out.vd4 += r.vd4 || 0; out.cw1 += r.cw1; out.vw1 += r.vw1; out.cw2 += r.cw2 || 0; out.vw2 += r.vw2 || 0; out.cd30 += r.cd30 || 0; out.vd30 += r.vd30 || 0; out.cm0 += r.cm0; out.vm0 += r.vm0;
     out.dep += r.dep || 0; out.saq += r.saq || 0; out.net += r.net || 0;
     out.cstd += r.cstd || 0; out.cttd += r.cttd || 0; out.cqtd4 += r.cqtd4 || 0; out._pass += r._pass || 0;
   });
@@ -2363,6 +2366,7 @@ function benchMetrics_(a, mode) {
     retD1: ret(a.cd1, a.vd1),
     retW1: ret(a.cw1, a.vw1),
     retW2: ret(a.cw2 || 0, a.vw2 || 0),
+    retD30: ret(a.cd30 || 0, a.vd30 || 0),   // janela FIXA de 30 dias (toggle Coorte 30d do Benchmark)
     retM0: ret(a.cm0, a.vm0),
     // As DUAS leituras do D1 lado a lado, independentes do toggle Valor/Qtd (o toggle troca retD1; estas não).
     // Base (jogadores) = % dos FTDs que voltaram a depositar no dia 1. Montante = R$ do dia 1 ÷ depósito do D0.
@@ -2383,12 +2387,15 @@ function benchMetrics_(a, mode) {
 
 const BENCH_SEL_STYLE = { background: 'var(--surface)', border: '1px solid rgba(249,115,22,.5)', color: 'var(--text)', padding: '6px 10px', borderRadius: '6px', fontSize: '12px', fontFamily: 'inherit' };
 
-// Gráfico de multiplicadores por período (2 linhas: Apostou vs a casa). Bench só tem D0/D1/W1/M0 (o JSON não
-// carrega vd4/vw2/vd30), então só esses 4. Segue os MESMOS filtros da aba (canal/escopo/faixa/janelas).
+// Gráfico de multiplicadores por período (2 linhas: Apostou vs a casa). Bench carrega D0/D1/W1/M0 e, desde o
+// export 'turbinado_2026' da Lottu, também D30 (janela fixa). O D30 só entra na lista quando o JSON tem `hasD30`
+// — senão a linha da Lottu seria uma reta em D0/FTD e pareceria colapso de multiplicador.
+// Segue os MESMOS filtros da aba (canal/escopo/faixa/janelas).
 const BENCH_MULT_METRICS = [
   { id: 'D0', of: a => a.ftd ? a.d0 / a.ftd : null,             desc: 'D0 ÷ FTD' },
   { id: 'D1', of: a => a.ftd ? (a.d0 + a.vd1) / a.ftd : null,   desc: '(D0 + dia 1) ÷ FTD' },
   { id: 'W1', of: a => a.ftd ? (a.d0 + a.vw1) / a.ftd : null,   desc: '(D0 + dias 1–7) ÷ FTD' },
+  { id: 'D30', of: a => a.ftd ? (a.d0 + (a.vd30 || 0)) / a.ftd : null, desc: '(D0 + dias 1–30) ÷ FTD', d30: true },
   { id: 'M0', of: a => a.ftd ? (a.d0 + a.vm0) / a.ftd : null,   desc: '(D0 + resto do mês) ÷ FTD' },
 ];
 // Agrega bench rows por PERÍODO (dia/semana), com o mesmo filtro do aggBench_. Só as bases dos 4 mult.
@@ -2402,8 +2409,8 @@ function benchPeriodAgg_(rows, sel, weekly) {
     if (sel.from && r.date < sel.from) return;
     if (sel.to && r.date > sel.to) return;
     const k = weekly ? weekStartISO_(String(r.date)) : String(r.date);
-    const a = b[k] || (b[k] = { qtd: 0, ftd: 0, d0: 0, vd1: 0, vw1: 0, vm0: 0 });
-    a.qtd += r.qtd || 0; a.ftd += r.ftd || 0; a.d0 += r.d0 || 0; a.vd1 += r.vd1 || 0; a.vw1 += r.vw1 || 0; a.vm0 += r.vm0 || 0;
+    const a = b[k] || (b[k] = { qtd: 0, ftd: 0, d0: 0, vd1: 0, vw1: 0, vd30: 0, vm0: 0 });
+    a.qtd += r.qtd || 0; a.ftd += r.ftd || 0; a.d0 += r.d0 || 0; a.vd1 += r.vd1 || 0; a.vw1 += r.vw1 || 0; a.vd30 += r.vd30 || 0; a.vm0 += r.vm0 || 0;
   });
   return b;
 }
@@ -2435,12 +2442,14 @@ function benchMovAvg_(dailyBuckets, ofFn, N, weekly, fromISO) {
   }
   return out;
 }
-function BenchMultChart({ aptRows, houseRows, houseLabel, canals, scope, faixa, aptFrom, aptTo, houseFrom, houseTo }) {
+function BenchMultChart({ aptRows, houseRows, houseLabel, canals, scope, faixa, aptFrom, aptTo, houseFrom, houseTo, hasD30 }) {
   const [metric, setMetric] = usePersistedState('rvops:benchsd:chartMult', 'D1');
   const [gran, setGran] = usePersistedState('rvops:benchsd:chartGran', 'week');
   const [maDays, setMaDays] = usePersistedState('rvops:benchsd:chartMA', 0);   // 0 = off · N = janela da média móvel (dias)
   const [hover, setHover] = React.useState(null);
-  const mDef = BENCH_MULT_METRICS.find(m => m.id === metric) || BENCH_MULT_METRICS[1];
+  // Sem D30 nos dois lados o botão some (e um 'D30' persistido cai no default) — nunca plotar reta de D0 disfarçada.
+  const metrics = BENCH_MULT_METRICS.filter(m => hasD30 || !m.d30);
+  const mDef = metrics.find(m => m.id === metric) || metrics.find(m => m.id === 'D1') || metrics[0];
   const weekly = gran === 'week';
   const maOn = maDays > 0;
   const dmLabel = (s) => { const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(s)); return m ? `${m[3]}/${m[2]}` : String(s); };
@@ -2468,8 +2477,8 @@ function BenchMultChart({ aptRows, houseRows, houseLabel, canals, scope, faixa, 
       <span style={{ display: 'inline-flex', alignItems: 'center', gap: '6px' }}>
         <label style={{ fontSize: '11px', color: 'var(--text-muted)' }}>Multiplicador</label>
         <span className="slicer-presets">
-          {BENCH_MULT_METRICS.map(m => (
-            <button key={m.id} className={`preset-btn ${metric === m.id ? 'active' : ''}`} onClick={() => setMetric(m.id)} title={`Multiplicador ${m.id}/FTD = ${m.desc}`}>{m.id}</button>
+          {metrics.map(m => (
+            <button key={m.id} className={`preset-btn ${mDef.id === m.id ? 'active' : ''}`} onClick={() => setMetric(m.id)} title={`Multiplicador ${m.id}/FTD = ${m.desc}`}>{m.id}</button>
           ))}
         </span>
       </span>
@@ -2517,8 +2526,8 @@ function BenchMultChart({ aptRows, houseRows, houseLabel, canals, scope, faixa, 
   const nonNull = series.reduce((a, s) => a + s.values.filter(v => v != null && !isNaN(v)).length, 0) || 1;
   const labelStride = Math.max(1, Math.ceil(nonNull / 42));
   const linePath = (vals) => { let d = '', pen = false; vals.forEach((v, i) => { if (v == null || isNaN(v)) { pen = false; return; } d += (pen ? ' L' : ' M') + xOf(i).toFixed(1) + ',' + yOf(v).toFixed(1); pen = true; }); return d.trim(); };
-  const yTitle = maOn ? `Mult ${metric}/FTD · MM ${maDays}d` : `Mult ${metric}/FTD`;
-  const tipHead = (s) => `${s.name} · Mult ${metric}/FTD`;
+  const yTitle = maOn ? `Mult ${mDef.id}/FTD · MM ${maDays}d` : `Mult ${mDef.id}/FTD`;
+  const tipHead = (s) => `${s.name} · Mult ${mDef.id}/FTD`;
   const tipSub = (i, v) => `${weekly ? 'Semana de ' : ''}${xLabels[i]} · ${fmtMultiple(v)}`;
   return (
     <React.Fragment>
@@ -2571,7 +2580,7 @@ function BenchMultChart({ aptRows, houseRows, houseLabel, canals, scope, faixa, 
         </svg>
       </div>
       <div className="ch-note">
-        <strong>Multiplicador {metric}/FTD por {weekly ? 'semana' : 'dia'} de FTD</strong> — <span style={{ color: '#f97316' }}>laranja = Apostou</span>, <span style={{ color: '#60a5fa' }}>azul = {HL}</span>. Cada ponto = depósito acumulado (incl. D0) até a janela ÷ FTD, agregado no período (mesmo recorte de canal/faixa/janela das tabelas).{maOn && <React.Fragment>{' '}<em style={{ color: 'var(--text-dim)' }}>Média móvel de {maDays} dias (nas duas linhas): janela deslizante ponderada (Σ mult×FTD ÷ Σ FTD) dos últimos {maDays} dias, calculada em dias e {weekly ? 'amostrada por semana (valor no último dia da semana)' : 'plotada por dia'} — suaviza o ruído.</em></React.Fragment>} <strong>⚠ Períodos recentes podem estar imaturos</strong> (M0 = "resto do mês" trunca coorte recente) — alinhe as datas dos dois lados p/ comparar a mesma janela.
+        <strong>Multiplicador {mDef.id}/FTD por {weekly ? 'semana' : 'dia'} de FTD</strong> — <span style={{ color: '#f97316' }}>laranja = Apostou</span>, <span style={{ color: '#60a5fa' }}>azul = {HL}</span>. Cada ponto = depósito acumulado (incl. D0) até a janela ÷ FTD, agregado no período (mesmo recorte de canal/faixa/janela das tabelas).{maOn && <React.Fragment>{' '}<em style={{ color: 'var(--text-dim)' }}>Média móvel de {maDays} dias (nas duas linhas): janela deslizante ponderada (Σ mult×FTD ÷ Σ FTD) dos últimos {maDays} dias, calculada em dias e {weekly ? 'amostrada por semana (valor no último dia da semana)' : 'plotada por dia'} — suaviza o ruído.</em></React.Fragment>} <strong>⚠ Períodos recentes podem estar imaturos</strong> ({mDef.d30 ? 'D30 = janela fixa de 30 dias: coorte com menos de 30 dias de vida entra truncada e PUXA A CURVA PRA BAIXO' : 'M0 = "resto do mês" trunca coorte recente'}) — alinhe as datas dos dois lados p/ comparar a mesma janela{mDef.d30 ? ' e corte os últimos 30 dias' : ''}.
       </div>
     </React.Fragment>
   );
@@ -2618,24 +2627,46 @@ function BenchmarkView({ retencaoFaixa, benchmark, houseOrder, sameday, title, s
   const [mode, setMode] = usePersistedState(`rvops:${pkey}:mode`, defaultMode); // 'qtd' (% redepositou) | 'val' (% sobre D0)
   const [cash, setCash] = usePersistedState(`rvops:${pkey}:cash`, 'bruto');     // 'bruto' (retenção) | 'liquido' (caixa net) — só withNet
   const netMode = withNet && cash === 'liquido';
+  // Toggle de COORTE (igual ao da aba Multiplicadores): 'cal' = M0 (depósito do FTD até o FIM do mês-calendário,
+  // janela de tamanho variável) · 'c30' = D30 (janela FIXA de 30 dias corridos do FTD). O D30 da Lottu só existe
+  // desde o export 'turbinado_2026' (`hasD30`); sem ele o toggle nem aparece.
+  const hasD30 = !!(benchmark && benchmark.hasD30);
+  const [cohortP, setCohortP] = usePersistedState(`rvops:${pkey}:cohort`, 'cal');
+  const cohort = hasD30 && !netMode && cohortP === 'c30';
   const [aptFrom, setAptFrom] = React.useState(null);
   const [aptTo, setAptTo] = React.useState(null);
   const [houseFrom, setHouseFrom] = React.useState(null);
   const [houseTo, setHouseTo] = React.useState(null);
 
+  // Corte de MATURIDADE do modo coorte: uma safra só fecha os 30 dias se o export foi até FTD+30 → o último
+  // dia de FTD utilizável é (dataMax de cada lado) − 30. Cada lado tem o SEU (o BQ da Apostou e o Excel da
+  // Lottu param em dias diferentes). Vira o `max` dos date inputs E um clamp no agregador, p/ um valor
+  // remanescente de outro modo não entrar truncado sem ninguém ver.
+  const MAT30 = 30;
+  const aptMax = (aptBounds && aptBounds.max) || houseMax || null;
+  const aptCap = (cohort && aptMax) ? isoAddDays_(aptMax, -MAT30) : null;
+  const houseCap = (cohort && houseMax) ? isoAddDays_(houseMax, -MAT30) : null;
+  const clampTo = (v, cap) => (cap && v && v > cap) ? cap : v;
+  const aptToEff = clampTo(aptTo, aptCap);
+  const houseToEff = clampTo(houseTo, houseCap);
+
   // default das datas: MTD (mês-calendário mais recente). Apostou segue o MESMO máximo geral (houseMax)
   // das casas — senão fica travada no próprio dataMax (Apostou CSV pode estar mais atrás que a Lottu).
-  React.useEffect(() => { if (houseMax) {
-    setAptFrom(houseMax.slice(0, 7) + '-01'); setAptTo(houseMax);
-  } }, [houseMax]);
-  React.useEffect(() => { if (houseMin && houseMax) {
-    setHouseFrom(houseMax.slice(0, 7) + '-01'); setHouseTo(houseMax);
-  } }, [houseMin, houseMax]);
+  // No modo COORTE o default vira o último ciclo de 30 dias FECHADO de cada lado (mesma ideia da Multiplicadores):
+  // abrir em MTD ali mostraria só safra imatura e o D30 sairia truncado.
+  React.useEffect(() => { if (!houseMax) return;
+    if (cohort) { const cap = isoAddDays_(aptMax || houseMax, -MAT30); setAptTo(cap); setAptFrom(isoAddDays_(cap, -(MAT30 - 1))); }
+    else { setAptFrom(houseMax.slice(0, 7) + '-01'); setAptTo(houseMax); }
+  }, [houseMax, aptMax, cohort]);
+  React.useEffect(() => { if (!(houseMin && houseMax)) return;
+    if (cohort) { const cap = isoAddDays_(houseMax, -MAT30); setHouseTo(cap); setHouseFrom(isoAddDays_(cap, -(MAT30 - 1))); }
+    else { setHouseFrom(houseMax.slice(0, 7) + '-01'); setHouseTo(houseMax); }
+  }, [houseMin, houseMax, cohort]);
 
-  const aptAgg = aggBench_(aptRows, { canals, scope, faixa, from: aptFrom, to: aptTo });
+  const aptAgg = aggBench_(aptRows, { canals, scope, faixa, from: aptFrom, to: aptToEff });
   const apt = benchMetrics_(aptAgg, mode);
   const houses = houseOrder.map(h => {
-    const agg = aggBench_(houseRowsMap[h], { canals, scope, faixa, from: houseFrom, to: houseTo });
+    const agg = aggBench_(houseRowsMap[h], { canals, scope, faixa, from: houseFrom, to: houseToEff });
     return {
       key: h,
       label: (benchmark && benchmark.houses && benchmark.houses[h] && benchmark.houses[h].label) || h,
@@ -2655,6 +2686,8 @@ function BenchmarkView({ retencaoFaixa, benchmark, houseOrder, sameday, title, s
   const RET_BG = 'rgba(250,204,21,0.10)';
   const retTd = { background: RET_BG };
   const retTdL = { background: RET_BG, borderLeft: '2px solid rgba(250,204,21,0.45)' };
+  // A última janela da tabela segue o toggle de coorte: M0 (resto do mês) ou D30 (30 dias corridos).
+  const wLbl = cohort ? 'D30' : 'M0';
   const benchRowCells = (m) => [
     <td key="q">{fmtQty(m.qtd)}</td>,
     <td key="ftd">{fmtBRL(m.ftdMedio)}</td>,
@@ -2662,18 +2695,18 @@ function BenchmarkView({ retencaoFaixa, benchmark, houseOrder, sameday, title, s
     <td key="d0f">{fmtMultiple(m.multD0F)}</td>,
     <td key="d1f">{fmtMultiple(m.multD1F)}</td>,
     <td key="w1f">{fmtMultiple(m.multW1F)}</td>,
-    <td key="m0f">{fmtMultiple(m.multM0F)}</td>,
+    <td key="m0f">{fmtMultiple(cohort ? m.multD30F : m.multM0F)}</td>,
     <td key="r1" style={retTdL}>{fmtRet(m.retD1)}</td>,
     <td key="rw1" style={retTd}>{fmtRet(m.retW1)}</td>,
-    <td key="rm0" style={retTd}>{fmtRet(m.retM0)}</td>,
+    <td key="rm0" style={retTd}>{fmtRet(cohort ? m.retD30 : m.retM0)}</td>,
   ];
   const retTh = { background: 'rgba(250,204,21,0.20)' };
   const retThL = { background: 'rgba(250,204,21,0.20)', borderLeft: '2px solid rgba(250,204,21,0.55)' };
   const head = (
     <thead><tr>
       <th>Casa</th><th>Qtd FTD</th><th>FTD $$</th><th>Dep D0 Med</th>
-      <th>Mult D0/FTD</th><th>Mult D1/FTD</th><th>Mult W1/FTD</th><th>Mult M0/FTD</th>
-      <th style={retThL}>{`D1 ${retHdr}`}</th><th style={retTh}>{`W1 ${retHdr}`}</th><th style={retTh}>{`M0 ${retHdr}`}</th>
+      <th>Mult D0/FTD</th><th>Mult D1/FTD</th><th>Mult W1/FTD</th><th>{`Mult ${wLbl}/FTD`}</th>
+      <th style={retThL}>{`D1 ${retHdr}`}</th><th style={retTh}>{`W1 ${retHdr}`}</th><th style={retTh}>{`${wLbl} ${retHdr}`}</th>
     </tr></thead>
   );
 
@@ -2740,6 +2773,15 @@ function BenchmarkView({ retencaoFaixa, benchmark, houseOrder, sameday, title, s
             </div>
           </div>
         )}
+        {!netMode && hasD30 && (
+          <div className="slicer-group">
+            <label style={lblStyle}>Coorte</label>
+            <div className="slicer-presets">
+              <button className={`preset-btn ${!cohort ? 'active' : ''}`} onClick={() => setCohortP('cal')} title="Última janela = M0: do dia do FTD até o FIM do mês-calendário. Janela de tamanho variável (safra do dia 1 tem ~30 dias, a do dia 28 tem ~3) — é a visão histórica da aba.">Calendário</button>
+              <button className={`preset-btn ${cohort ? 'active' : ''}`} onClick={() => setCohortP('c30')} title="Última janela = D30: 30 dias corridos a partir do FTD, igual dos dois lados. Só safras que já fecharam os 30 dias (as datas travam em dataMax − 30 automaticamente)."> Coorte 30d</button>
+            </div>
+          </div>
+        )}
         {!netMode && (
           <div className="slicer-group">
             <label style={lblStyle}>Retenção</label>
@@ -2752,20 +2794,20 @@ function BenchmarkView({ retencaoFaixa, benchmark, houseOrder, sameday, title, s
         <div className="slicer-divider" />
         <div className="slicer-group">
           <label style={lblStyle}>Data Apostou</label>
-          <input type="date" value={aptFrom || ''} min={houseMin || undefined} max={aptTo || houseMax || undefined} onChange={e => setAptFrom(e.target.value)} />
+          <input type="date" value={aptFrom || ''} min={houseMin || undefined} max={aptToEff || aptCap || houseMax || undefined} onChange={e => setAptFrom(e.target.value)} />
           <span className="slicer-arrow">→</span>
-          <input type="date" value={aptTo || ''} min={aptFrom || houseMin || undefined} max={houseMax || undefined} onChange={e => setAptTo(e.target.value)} />
+          <input type="date" value={aptToEff || ''} min={aptFrom || houseMin || undefined} max={aptCap || houseMax || undefined} onChange={e => setAptTo(e.target.value)} />
         </div>
         <div className="slicer-group">
           <label style={lblStyle}>Data Demais Casas</label>
-          <input type="date" value={houseFrom || ''} min={houseMin || undefined} max={houseTo || houseMax || undefined} onChange={e => setHouseFrom(e.target.value)} />
+          <input type="date" value={houseFrom || ''} min={houseMin || undefined} max={houseToEff || houseCap || houseMax || undefined} onChange={e => setHouseFrom(e.target.value)} />
           <span className="slicer-arrow">→</span>
-          <input type="date" value={houseTo || ''} min={houseFrom || houseMin || undefined} max={houseMax || undefined} onChange={e => setHouseTo(e.target.value)} />
+          <input type="date" value={houseToEff || ''} min={houseFrom || houseMin || undefined} max={houseCap || houseMax || undefined} onChange={e => setHouseTo(e.target.value)} />
         </div>
       </div>
 
       <div className="support">
-        <div className="support-title">Apostou · {dateRangeLabel_(aptFrom, aptTo)} · {canalLabel} · {faixa === 'all' ? 'todas as faixas' : fxLabel_(faixa)}{aptFetch.loading ? ' · carregando BQ…' : ''}{aptFetch.error ? ' · erro (usando janela global)' : ''}</div>
+        <div className="support-title">Apostou · {dateRangeLabel_(aptFrom, aptToEff)}{cohort ? ' · coorte 30d (safras fechadas)' : ''} · {canalLabel} · {faixa === 'all' ? 'todas as faixas' : fxLabel_(faixa)}{aptFetch.loading ? ' · carregando BQ…' : ''}{aptFetch.error ? ' · erro (usando janela global)' : ''}</div>
         <div className="table-scroll"><table className="ch-table">
           {tableHead}
           <tbody>
@@ -2778,7 +2820,7 @@ function BenchmarkView({ retencaoFaixa, benchmark, houseOrder, sameday, title, s
       </div>
 
       <div className="support">
-        <div className="support-title">{housesLabel} · {dateRangeLabel_(houseFrom, houseTo)} · {canalLabel} · {faixa === 'all' ? 'todas as faixas' : fxLabel_(faixa)}</div>
+        <div className="support-title">{housesLabel} · {dateRangeLabel_(houseFrom, houseToEff)}{cohort ? ' · coorte 30d (safras fechadas)' : ''} · {canalLabel} · {faixa === 'all' ? 'todas as faixas' : fxLabel_(faixa)}</div>
         <div className="table-scroll"><table className="ch-table">
           {tableHead}
           <tbody>
@@ -2799,12 +2841,20 @@ function BenchmarkView({ retencaoFaixa, benchmark, houseOrder, sameday, title, s
           ) : (
             <React.Fragment>
               <strong>Qtd FTD</strong> = nº de 1ºs depósitos · <strong>FTD $$</strong> = ticket médio do FTD (Σ FTD ÷ qtd) · <strong>Dep D0 Med</strong> = depósito médio no D0 (Σ D0 ÷ qtd).
-              <strong> Mult X/FTD</strong> = depósito acumulado (incluindo o D0) até a janela ÷ valor do FTD: D0/FTD · (D0+dia 1)/FTD · (D0+dias 1–7)/FTD · (D0+resto do mês)/FTD.
-              <strong> D1/W1/M0 Ret</strong> (colunas <span style={{ background: 'rgba(250,204,21,0.25)', padding: '0 4px', borderRadius: '3px' }}>amarelas</span>) = retenção acumulada vs D0 (D1 = dia seguinte · W1 = dias 1–7 · M0 = resto do mês do FTD).
+              <strong> Mult X/FTD</strong> = depósito acumulado (incluindo o D0) até a janela ÷ valor do FTD: D0/FTD · (D0+dia 1)/FTD · (D0+dias 1–7)/FTD · {cohort ? '(D0+dias 1–30)/FTD' : '(D0+resto do mês)/FTD'}.
+              <strong> D1/W1/{wLbl} Ret</strong> (colunas <span style={{ background: 'rgba(250,204,21,0.25)', padding: '0 4px', borderRadius: '3px' }}>amarelas</span>) = retenção acumulada vs D0 (D1 = dia seguinte · W1 = dias 1–7 · {cohort ? 'D30 = dias 1–30' : 'M0 = resto do mês do FTD'}).
               No modo <strong>Valor</strong> = $ depositado na janela ÷ depósito do D0 em % (exclui o D0; pode passar de 100%); no modo <strong>Qtd</strong> = % dos FTDs que voltaram a depositar.
               {fromBench ? <span> Os dois lados vêm das planilhas faixa_diaria.</span> : <span> <strong>Apostou via BigQuery ao vivo</strong> (mesma fonte da aba Multiplicadores e Retenção); {housesLabel} via Excel.</span>}
               {sameday ? <strong> Coorte SAME-DAY: só FTDs que depositaram no mesmo dia do cadastro (dos dois lados). </strong> : ''}
-              <strong> ⚠ Ambos abrem em MTD (mês corrente) por padrão</strong> — alinhe as datas dos dois lados p/ comparar a mesma janela. Mês corrente ainda imaturo (M0 = "resto do mês" trunca coortes recentes).
+              {cohort ? (
+                <React.Fragment>
+                  {' '}<strong>Coorte 30d:</strong> a última janela é <strong>D30 = 30 dias corridos do FTD</strong>, do mesmo tamanho nos dois lados — é a comparação apples-to-apples (o M0 mistura safra de 30 dias com safra de 3).
+                  Cada lado trava em <strong>dataMax − 30</strong> (Apostou até {aptCap ? benchDM_(aptCap) : '—'} · {housesLabel} até {houseCap ? benchDM_(houseCap) : '—'}), então só entram safras que JÁ fecharam os 30 dias.
+                  <strong> D30 &gt; M0 por construção</strong> (janela maior na média) — não comparar o número de um modo com o do outro.
+                </React.Fragment>
+              ) : (
+                <React.Fragment><strong> ⚠ Ambos abrem em MTD (mês corrente) por padrão</strong> — alinhe as datas dos dois lados p/ comparar a mesma janela. Mês corrente ainda imaturo (M0 = "resto do mês" trunca coortes recentes){hasD30 ? '; o toggle Coorte 30d resolve os dois problemas de uma vez' : ''}.</React.Fragment>
+              )}
             </React.Fragment>
           )}
         </div>
@@ -2814,8 +2864,8 @@ function BenchmarkView({ retencaoFaixa, benchmark, houseOrder, sameday, title, s
         <div className="support">
           <div className="support-title">Evolução do multiplicador · Apostou vs {housesLabel}</div>
           <BenchMultChart aptRows={aptRows} houseRows={houseRowsMap[houseOrder[0]]} houseLabel={houses[0] && houses[0].label}
-            canals={canals} scope={scope} faixa={faixa}
-            aptFrom={aptFrom} aptTo={aptTo} houseFrom={houseFrom} houseTo={houseTo} />
+            canals={canals} scope={scope} faixa={faixa} hasD30={hasD30}
+            aptFrom={aptFrom} aptTo={aptToEff} houseFrom={houseFrom} houseTo={houseToEff} />
         </div>
       )}
     </React.Fragment>
@@ -2829,7 +2879,7 @@ function NetBenchTab({ benchmarkNet, retencaoFaixa }) {
   return <BenchmarkView retencaoFaixa={retencaoFaixa} benchmark={benchmarkNet}
     houseOrder={['lottu']} sameday={false} withNet={true} pkey="benchsd" defaultMode="val" multChart={true}
     title="Benchmark Lottu"
-    subtitle="Apostou (BQ ao vivo · coorte cheia) vs Lottu (Excel) — ticket de FTD, depósito e caixa líquido (dep − saque) por faixa e canal · slicer Bruto/Líquido" />;
+    subtitle="Apostou (BQ ao vivo · coorte cheia) vs Lottu (Excel) — ticket de FTD, depósito e caixa líquido (dep − saque) por faixa e canal · slicers Coorte (Calendário/30d) e Bruto/Líquido" />;
 }
 
 // Aba FAROL — visão consolidada: todos os indicadores em hero cards (vs M-1 e vs BP), em 4 grupos.

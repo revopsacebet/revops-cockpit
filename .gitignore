@@ -13,6 +13,7 @@ mddtest.js
 boot.js
 guardtest.js
 fronttest.js
+benchd30test.js
 *.pptx
 *.pdf
 apresentacao-*.html
