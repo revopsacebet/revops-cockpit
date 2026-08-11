@@ -6424,9 +6424,14 @@ function applyFtdByRegister_(MM, f, ftdByRegister, chFilter) {
 // vindo do plano por canal (payload.planScenarios). Reescopa por chFilter igual ao resto (canais selecionados →
 // soma; scope 'growth' → growthAgg; senão allAgg). Só mexe no .bp desses cards — o Hero recolore o farol e o %
 // sozinho a partir do novo bp. Retenção/GGR/Volume ficam intactos (a aba do plano não tem meta pra eles).
-const CENARIOS = [{
+const CENARIOS = [
+// 2026-08-11: 'Orçado' virou 'Meta' (pedido do Luis). O `id` segue 'bp' — é o que persiste em
+// rvops:scen e o que o backend usa nas chaves de planScenarios; renomear o id derrubaria a
+// preferência salva de todo mundo. O label também é o PREFIXO do BP nos cards (SCEN_BP_LABEL),
+// então os cards passam a dizer "Meta R$ …" em vez de "Orçado R$ …" — mesma palavra nos dois lugares.
+{
   id: 'bp',
-  label: 'Orçado',
+  label: 'Meta',
   color: '#378ADD'
 }, {
   id: 'conserv',
@@ -6714,7 +6719,7 @@ function TabFarol({
       color: 'var(--text-muted, #888)',
       marginRight: 2
     }
-  }, "meta"), visCenarios.map(c => /*#__PURE__*/React.createElement("button", {
+  }, "cen\xE1rio"), visCenarios.map(c => /*#__PURE__*/React.createElement("button", {
     key: c.id,
     className: `preset-btn ${activeScen === c.id ? 'active' : ''}`,
     onClick: () => setScen(c.id),

@@ -3185,7 +3185,11 @@ function applyFtdByRegister_(MM, f, ftdByRegister, chFilter) {
 // soma; scope 'growth' → growthAgg; senão allAgg). Só mexe no .bp desses cards — o Hero recolore o farol e o %
 // sozinho a partir do novo bp. Retenção/GGR/Volume ficam intactos (a aba do plano não tem meta pra eles).
 const CENARIOS = [
-  { id: 'bp',      label: 'Orçado',       color: '#378ADD' },
+  // 2026-08-11: 'Orçado' virou 'Meta' (pedido do Luis). O `id` segue 'bp' — é o que persiste em
+  // rvops:scen e o que o backend usa nas chaves de planScenarios; renomear o id derrubaria a
+  // preferência salva de todo mundo. O label também é o PREFIXO do BP nos cards (SCEN_BP_LABEL),
+  // então os cards passam a dizer "Meta R$ …" em vez de "Orçado R$ …" — mesma palavra nos dois lugares.
+  { id: 'bp',      label: 'Meta',         color: '#378ADD' },
   { id: 'conserv', label: 'Conservador',  color: '#F0997B' },
   { id: 'rolling', label: 'Forecast',     color: '#9AA0A6' },
 ];
@@ -3381,7 +3385,7 @@ function TabFarol({ M, farol, range, ytd, ftdByRegister, chFilter, planScenarios
         <div style={{ display: 'flex', flexDirection: 'column', gap: 8, alignItems: 'flex-end' }}>
           {hasScen && (
             <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
-              <span style={{ fontSize: 11, color: 'var(--text-muted, #888)', marginRight: 2 }}>meta</span>
+              <span style={{ fontSize: 11, color: 'var(--text-muted, #888)', marginRight: 2 }}>cenário</span>
               {visCenarios.map(c => (
                 <button
                   key={c.id}
