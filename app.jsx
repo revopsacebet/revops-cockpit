@@ -3381,7 +3381,7 @@ function TabFarol({ M, farol, range, ytd, ftdByRegister, chFilter, planScenarios
         <div style={{ display: 'flex', flexDirection: 'column', gap: 8, alignItems: 'flex-end' }}>
           {hasScen && (
             <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
-              <span style={{ fontSize: 11, color: 'var(--text-muted, #888)', marginRight: 2 }}>cenário</span>
+              <span style={{ fontSize: 11, color: 'var(--text-muted, #888)', marginRight: 2 }}>meta</span>
               {visCenarios.map(c => (
                 <button
                   key={c.id}
