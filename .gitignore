@@ -15,6 +15,7 @@ guardtest.js
 fronttest.js
 benchd30test.js
 janelatest.js
+regtest.js
 slicerpreview.js
 *.pptx
 *.pdf

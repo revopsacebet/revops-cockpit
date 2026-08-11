@@ -57,6 +57,7 @@ const MOCK_M = {
   ftdAmount:  { act: 2143094.85,  bp: 3937500,    m1: 415250,     pctBp: 0.5444, fmt: 'brl',      label: 'FTD Amount' },
   roasFtd:    { act: 0.327,       bp: 0.275,      m1: 0.641,      pctBp: 1.188,  fmt: 'multiple', label: 'ROAS FTD' },
   invest:     { act: 3567125.92,  bp: 10647822.58,m1: 216996.35,  pctBp: 0.3350, fmt: 'brl',      label: 'Investimento' },
+  registros:  { act: 41284,       bp: null,       m1: 12907,      pctBp: null,   fmt: 'qty',      label: 'Registros' },
   // RETENÇÃO
   retM0M1:    { act: 0.2079, bp: 0.75, m1: 0.2388, pctBp: 0.2772, fmt: 'pct', label: 'Retenção M0→M1' },
   retM1M2:    { act: 0.7436, bp: 0.72, m1: 0.3295, pctBp: 1.0328, fmt: 'pct', label: 'Retenção M1→M2' },
@@ -3037,10 +3038,10 @@ function buildFarolSpark_(spark, chFilter) {
     : (chFilter && chFilter.scope === 'growth') ? (ch) => isGrowthCh_(ch) : () => true;
   const weeks = spark.weeks, wIdx = {};
   weeks.forEach((w, i) => { wIdx[w] = i; });
-  const P = weeks.map(() => ({ spend: 0, ftdQty: 0, ftdAmount: 0, depD0: 0, n: 0 }));
+  const P = weeks.map(() => ({ spend: 0, ftdQty: 0, ftdAmount: 0, depD0: 0, reg: 0, n: 0 }));
   const H = weeks.map(() => ({ dep: 0, qtdDep: 0, ngr: 0, turnover: 0, bonus: 0, freespin: 0, n: 0 }));
   (spark.perf || []).forEach(r => { const i = wIdx[r.week]; if (i == null || !inSel(r.channel)) return; const a = P[i];
-    a.spend += r.spend || 0; a.ftdQty += r.ftdQty || 0; a.ftdAmount += r.ftdAmount || 0; a.depD0 += r.depD0 || 0; a.n++; });
+    a.spend += r.spend || 0; a.ftdQty += r.ftdQty || 0; a.ftdAmount += r.ftdAmount || 0; a.depD0 += r.depD0 || 0; a.reg += r.reg || 0; a.n++; });
   (spark.house || []).forEach(r => { const i = wIdx[r.week]; if (i == null || !inSel(r.channel)) return; const a = H[i];
     a.dep += r.dep || 0; a.qtdDep += r.qtdDep || 0; a.ngr += r.ngr || 0; a.turnover += r.turnover || 0; a.bonus += r.bonus || 0; a.freespin += r.freespin || 0; a.n++; });
   const arr = (fn) => weeks.map((_, i) => fn(P[i], H[i]));
@@ -3049,6 +3050,9 @@ function buildFarolSpark_(spark, chFilter) {
     invest:      arr((p) => p.n ? p.spend : null),
     ftdAmount:   arr((p) => p.n ? p.ftdAmount : null),
     ftdQty:      arr((p) => p.n ? p.ftdQty : null),
+    // `p.reg ? … : null` (e não `p.n ? …`): backend < v73 não manda `reg` na spark → soma 0 e a linha sairia
+    // FLAT NO ZERO com cara de dado. Sem ponto, o Sparkline nem renderiza (precisa de ≥2 pontos).
+    registros:   arr((p) => p.reg ? p.reg : null),
     roasFtd:     arr((p) => p.spend ? p.ftdAmount / p.spend : null),
     cac:         arr((p) => p.ftdQty ? p.spend / p.ftdQty : null),
     ticketFtd:   arr((p) => p.ftdQty ? p.ftdAmount / p.ftdQty : null),
@@ -3120,7 +3124,10 @@ function buildFarolGroups_(MM, f, range, useYtd, sparkByKey, scenLabel) {
   // importar quando a janela pode ter plano de receita sem plano de aquisição (coberturas diferentes).
   const blS = (m) => bl(m, (m && (m.scenBp || m.fcBp)) ? scenL : SCEN_BP_LABEL);
   return [
-    { title: 'Aquisição', cards: [blS(ws(dress(MM.invest), 'invest')), blS(ws(dress(MM.ftdAmount), 'ftdAmount')), blS(ws(roasFtdCard, 'roasFtd')), blS(ws(dressPlain(f.roasDepD0), 'roasDepD0')), blS(ws(dressPlain(f.cac), 'cac')), blS(ws(dressPlain(f.ticketFtd), 'ticketFtd'))] },
+    // Registros entra depois do Investimento (ordem do funil: verba → cadastro → FTD). SEM BP (o plano não
+    // tem meta de registro) → farol apagado; leva Δ M-1, trend de fechamento e sparkline como os outros
+    // cards de FLUXO. Card ausente (backend < v73) é filtrado no fim da função, não vira buraco.
+    { title: 'Aquisição', cards: [blS(ws(dress(MM.invest), 'invest')), blS(ws(dress(MM.registros), 'registros')), blS(ws(dress(MM.ftdAmount), 'ftdAmount')), blS(ws(roasFtdCard, 'roasFtd')), blS(ws(dressPlain(f.roasDepD0), 'roasDepD0')), blS(ws(dressPlain(f.cac), 'cac')), blS(ws(dressPlain(f.ticketFtd), 'ticketFtd'))] },
     { title: 'Depósito M0', cards: [blS(dress(MM.depM0Total)), blS(roasDepM0Card), blS(multM0Card)] },
     { title: 'Volume & GGR', cards: [blS(ws(dress(MM.depTotal), 'depTotal')), blS(ws(dress(turnoverCard), 'turnover')), blS(ws(dress(MM.ggr), 'ggr')), blS(ws(dressPlain(MM.ggrPerDep), 'ggrPerDep')), blS(ws(dressPlain(holdCard), 'hold')), blS(ws(rolloverCard, 'rollover')), blS(ws(dressPlain(f.freespinDep), 'freespinDep')), blS(ws(dressPlain(f.bonusDep), 'bonusDep')), blS(roasGgrM0Card)] },
     // Retenção: Depósito (view de coorte, meta fixa do plano) + GGR (ngr net, mesma fórmula/janela, SEM meta).
@@ -5031,6 +5038,12 @@ function deriveLiveM_(M, filter, comp, retCh, depCh, bp, ggrRetCh, turnRetCh) {
   const depM0Total = dsel.reduce((a, c) => a + (c.depM0 || 0), 0);
   const depM0Growth = dsel.filter(c => isGrowthCh_(c.channel)).reduce((a, c) => a + (c.depM0 || 0), 0);
 
+  // Soma que DISTINGUE "canal sem registro" de "backend sem a coluna": devolve undefined se nenhum canal do
+  // escopo trouxe `reg`, pra o card cair no gmk e preservar o valor house-level em vez de zerar em silêncio.
+  const optSum = (bk, key) => { let s = 0, any = false;
+    sel.forEach(ch => { const c = comp[ch] && comp[ch][bk]; if (c && c[key] != null) { s += c[key]; any = true; } });
+    return any ? s : undefined; };
+  const regAct = optSum('mtd', 'reg'), regM1 = optSum('lm', 'reg');
   const mk = (m, act, m1) => ({ ...m, act: (act == null ? null : act), m1: (m1 === undefined ? null : m1) });
   // idem, mas degrada: sem o card no payload OU sem a base por canal (undefined), devolve o que veio.
   const gmk = (m, act) => (!m || act === undefined) ? m : mk(m, act, null);
@@ -5039,6 +5052,9 @@ function deriveLiveM_(M, filter, comp, retCh, depCh, bp, ggrRetCh, turnRetCh) {
     ftdAmount:   mk(M.ftdAmount, ftdAmt || null, lFtdAmt || null),
     roasFtd:     mk(M.roasFtd, div(ftdAmt, spend), div(lFtdAmt, lSpend)),
     invest:      mk(M.invest, spend || null, lSpend || null),
+    // Registros: backend antigo (sem `reg` por canal) → preserva o card como veio, igual retGgr*/retTurn*.
+    registros:   (!M.registros || regAct === undefined) ? M.registros
+                 : mk(M.registros, regAct || null, regM1 || null),
     ggr:         mk(M.ggr, ngr || null, lNgr || null),
     ggrPerDep:   mk(M.ggrPerDep, div(ngr, dep), div(lNgr, lDep)),
     depTotal:    mk(M.depTotal, dep || null, lDep || null),

@@ -664,6 +664,14 @@ const MOCK_M = {
     fmt: 'brl',
     label: 'Investimento'
   },
+  registros: {
+    act: 41284,
+    bp: null,
+    m1: 12907,
+    pctBp: null,
+    fmt: 'qty',
+    label: 'Registros'
+  },
   // RETENÇÃO
   retM0M1: {
     act: 0.2079,
@@ -6164,6 +6172,7 @@ function buildFarolSpark_(spark, chFilter) {
     ftdQty: 0,
     ftdAmount: 0,
     depD0: 0,
+    reg: 0,
     n: 0
   }));
   const H = weeks.map(() => ({
@@ -6183,6 +6192,7 @@ function buildFarolSpark_(spark, chFilter) {
     a.ftdQty += r.ftdQty || 0;
     a.ftdAmount += r.ftdAmount || 0;
     a.depD0 += r.depD0 || 0;
+    a.reg += r.reg || 0;
     a.n++;
   });
   (spark.house || []).forEach(r => {
@@ -6203,6 +6213,9 @@ function buildFarolSpark_(spark, chFilter) {
     invest: arr(p => p.n ? p.spend : null),
     ftdAmount: arr(p => p.n ? p.ftdAmount : null),
     ftdQty: arr(p => p.n ? p.ftdQty : null),
+    // `p.reg ? … : null` (e não `p.n ? …`): backend < v73 não manda `reg` na spark → soma 0 e a linha sairia
+    // FLAT NO ZERO com cara de dado. Sem ponto, o Sparkline nem renderiza (precisa de ≥2 pontos).
+    registros: arr(p => p.reg ? p.reg : null),
     roasFtd: arr(p => p.spend ? p.ftdAmount / p.spend : null),
     cac: arr(p => p.ftdQty ? p.spend / p.ftdQty : null),
     ticketFtd: arr(p => p.ftdQty ? p.ftdAmount / p.ftdQty : null),
@@ -6323,9 +6336,13 @@ function buildFarolGroups_(MM, f, range, useYtd, sparkByKey, scenLabel) {
   // O resto continua "Orçado" — é o BP base, e chamá-lo de "Forecast" seria mentira. Isso passou a
   // importar quando a janela pode ter plano de receita sem plano de aquisição (coberturas diferentes).
   const blS = m => bl(m, m && (m.scenBp || m.fcBp) ? scenL : SCEN_BP_LABEL);
-  return [{
+  return [
+  // Registros entra depois do Investimento (ordem do funil: verba → cadastro → FTD). SEM BP (o plano não
+  // tem meta de registro) → farol apagado; leva Δ M-1, trend de fechamento e sparkline como os outros
+  // cards de FLUXO. Card ausente (backend < v73) é filtrado no fim da função, não vira buraco.
+  {
     title: 'Aquisição',
-    cards: [blS(ws(dress(MM.invest), 'invest')), blS(ws(dress(MM.ftdAmount), 'ftdAmount')), blS(ws(roasFtdCard, 'roasFtd')), blS(ws(dressPlain(f.roasDepD0), 'roasDepD0')), blS(ws(dressPlain(f.cac), 'cac')), blS(ws(dressPlain(f.ticketFtd), 'ticketFtd'))]
+    cards: [blS(ws(dress(MM.invest), 'invest')), blS(ws(dress(MM.registros), 'registros')), blS(ws(dress(MM.ftdAmount), 'ftdAmount')), blS(ws(roasFtdCard, 'roasFtd')), blS(ws(dressPlain(f.roasDepD0), 'roasDepD0')), blS(ws(dressPlain(f.cac), 'cac')), blS(ws(dressPlain(f.ticketFtd), 'ticketFtd'))]
   }, {
     title: 'Depósito M0',
     cards: [blS(dress(MM.depM0Total)), blS(roasDepM0Card), blS(multM0Card)]
@@ -9235,6 +9252,23 @@ function deriveLiveM_(M, filter, comp, retCh, depCh, bp, ggrRetCh, turnRetCh) {
   const dsel = (depCh || []).filter(c => inSel(c.channel));
   const depM0Total = dsel.reduce((a, c) => a + (c.depM0 || 0), 0);
   const depM0Growth = dsel.filter(c => isGrowthCh_(c.channel)).reduce((a, c) => a + (c.depM0 || 0), 0);
+
+  // Soma que DISTINGUE "canal sem registro" de "backend sem a coluna": devolve undefined se nenhum canal do
+  // escopo trouxe `reg`, pra o card cair no gmk e preservar o valor house-level em vez de zerar em silêncio.
+  const optSum = (bk, key) => {
+    let s = 0,
+      any = false;
+    sel.forEach(ch => {
+      const c = comp[ch] && comp[ch][bk];
+      if (c && c[key] != null) {
+        s += c[key];
+        any = true;
+      }
+    });
+    return any ? s : undefined;
+  };
+  const regAct = optSum('mtd', 'reg'),
+    regM1 = optSum('lm', 'reg');
   const mk = (m, act, m1) => ({
     ...m,
     act: act == null ? null : act,
@@ -9247,6 +9281,8 @@ function deriveLiveM_(M, filter, comp, retCh, depCh, bp, ggrRetCh, turnRetCh) {
     ftdAmount: mk(M.ftdAmount, ftdAmt || null, lFtdAmt || null),
     roasFtd: mk(M.roasFtd, div(ftdAmt, spend), div(lFtdAmt, lSpend)),
     invest: mk(M.invest, spend || null, lSpend || null),
+    // Registros: backend antigo (sem `reg` por canal) → preserva o card como veio, igual retGgr*/retTurn*.
+    registros: !M.registros || regAct === undefined ? M.registros : mk(M.registros, regAct || null, regM1 || null),
     ggr: mk(M.ggr, ngr || null, lNgr || null),
     ggrPerDep: mk(M.ggrPerDep, div(ngr, dep), div(lNgr, lDep)),
     depTotal: mk(M.depTotal, dep || null, lDep || null),
