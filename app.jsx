@@ -3069,7 +3069,7 @@ function buildFarolSpark_(spark, chFilter) {
   };
 }
 
-function buildFarolGroups_(MM, f, range, useYtd, sparkByKey, scenLabel) {
+function buildFarolGroups_(MM, f, range, useYtd, sparkByKey) {
   // Fator de projeção de fechamento = run-rate puro (dias do mês ÷ dias decorridos).
   // ⚠️ 2026-08-05: ANTES o fator era `ggrTrend ÷ ggr`, na crença de que projetava pela "curva do GGR" em vez
   // de reta. Não projetava: o backend calcula `ggrTrend = mtd.ngr × (daysInMonth / daysElapsed)`, então a
@@ -3113,16 +3113,14 @@ function buildFarolGroups_(MM, f, range, useYtd, sparkByKey, scenLabel) {
   const SP = sparkByKey || {};
   // sparkWeeks vai junto pro rótulo/tooltip de cada ponto saber a QUAL semana pertence.
   const ws = (m, key) => { if (!m) return m; const s = SP[key]; return (s && s.some(v => v != null && isFinite(v))) ? { ...m, spark: s, sparkWeeks: SP.__weeks || null } : m; };
-  // Prefixo do "BP" no card = nome do cenário ATIVO (Orçado/Conservador/Forecast) — segue o toggle lá de cima.
-  // scenLabel = cenário ativo (só nos cards que o applyScenarioBp_ re-anchora); baseLabel = Orçado (meta FIXA:
-  // Retenção/FreeSpins/Bonif NÃO mudam por cenário, então continuam "Orçado" mesmo em Conservador/Forecast).
-  const scenL = scenLabel || SCEN_BP_LABEL;
-  const bl = (m, label) => m ? { ...m, bpLabel: label } : m;
-  // Rótulo POR CARD, não por tela: só quem foi de fato re-anchorado pelo cenário (scenBp, do
-  // applyScenarioBp_) ou pelas razões do Forecast (fcBp, do applyFcRatios_) leva o nome do cenário.
-  // O resto continua "Orçado" — é o BP base, e chamá-lo de "Forecast" seria mentira. Isso passou a
-  // importar quando a janela pode ter plano de receita sem plano de aquisição (coberturas diferentes).
-  const blS = (m) => bl(m, (m && (m.scenBp || m.fcBp)) ? scenL : SCEN_BP_LABEL);
+  // ⚠️ 2026-08-12 (pedido do Luis): o prefixo do BP nos cards é SEMPRE "Orçado" — não segue mais o cenário.
+  // Antes o card levava o nome do cenário ativo quando tinha sido re-anchorado por ele (Meta/Conservador/
+  // Forecast) e "Orçado" quando não. Isso fazia a MESMA linha do card trocar de palavra dependendo do toggle
+  // e do card, e um "Forecast 12.519 101%" lido fora de contexto não diz que aquilo é a meta da janela.
+  // Quem informa o cenário é o switcher no topo, que continua Meta/Conservador/Forecast — o card só diz
+  // "isto é o orçado". Por isso esta função nem recebe mais o label do cenário.
+  const bl = (m, label) => m ? { ...m, bpLabel: label || CARD_BP_LABEL } : m;
+  const blS = (m) => bl(m, CARD_BP_LABEL);
   return [
     // Registros entra depois do Investimento (ordem do funil: verba → cadastro → FTD). SEM BP (o plano não
     // tem meta de registro) → farol apagado; leva Δ M-1, trend de fechamento e sparkline como os outros
@@ -3133,9 +3131,9 @@ function buildFarolGroups_(MM, f, range, useYtd, sparkByKey, scenLabel) {
     // Retenção: Depósito (view de coorte, meta fixa do plano) + GGR (ngr net, mesma fórmula/janela, SEM meta).
     // ⚠️ o Depósito M3+ usa o residual da FAROL; o GGR M3+ é ratio de coorte puro — ver tooltip/nota.
     { title: 'Retenção', cards: [
-      bl(dressPlain(relabelRet(MM.retM0M1, 'Depósito M0→M1')), SCEN_BP_LABEL),
-      bl(dressPlain(relabelRet(MM.retM1M2, 'Depósito M1→M2')), SCEN_BP_LABEL),
-      bl(dressPlain(relabelRet(MM.retM3plus, 'Depósito M3+')), SCEN_BP_LABEL),
+      bl(dressPlain(relabelRet(MM.retM0M1, 'Depósito M0→M1'))),
+      bl(dressPlain(relabelRet(MM.retM1M2, 'Depósito M1→M2'))),
+      bl(dressPlain(relabelRet(MM.retM3plus, 'Depósito M3+'))),
       dressPlain(MM.retGgrM0M1), dressPlain(MM.retGgrM1M2), dressPlain(MM.retGgrM3plus),
       dressPlain(MM.retTurnM0M1), dressPlain(MM.retTurnM1M2), dressPlain(MM.retTurnM3plus),
     ] },
@@ -3187,15 +3185,16 @@ function applyFtdByRegister_(MM, f, ftdByRegister, chFilter) {
 const CENARIOS = [
   // 2026-08-11: 'Orçado' virou 'Meta' (pedido do Luis). O `id` segue 'bp' — é o que persiste em
   // rvops:scen e o que o backend usa nas chaves de planScenarios; renomear o id derrubaria a
-  // preferência salva de todo mundo. O label também é o PREFIXO do BP nos cards (SCEN_BP_LABEL),
-  // então os cards passam a dizer "Meta R$ …" em vez de "Orçado R$ …" — mesma palavra nos dois lugares.
+  // preferência salva de todo mundo. ⚠️ 2026-08-12: este label NÃO é mais o prefixo dos cards — eles
+  // dizem "Orçado" sempre (CARD_BP_LABEL). Renomear cenário aqui não mexe no texto dos cards.
   { id: 'bp',      label: 'Meta',         color: '#378ADD' },
   { id: 'conserv', label: 'Conservador',  color: '#F0997B' },
   { id: 'rolling', label: 'Forecast',     color: '#9AA0A6' },
 ];
-// Rótulo do cenário BASE (Orçado) — usado no prefixo dos cards de meta FIXA (Retenção/FreeSpins/Bonif), que
-// NÃO mudam por cenário (o applyScenarioBp_ não os re-anchora), mesmo quando o toggle está em Conservador/Forecast.
-const SCEN_BP_LABEL = (CENARIOS.find(c => c.id === 'bp') || CENARIOS[0]).label;
+// Prefixo do BP em TODO card do Farol (2026-08-12, pedido do Luis): fixo em "Orçado", independente do
+// cenário elegido. É DE PROPÓSITO desacoplado do label do CENARIOS — o switcher diz qual plano está ativo,
+// o card diz que aquele número é o orçado. Mexer no label de um não deve mexer no do outro.
+const CARD_BP_LABEL = 'Orçado';
 function applyScenarioBp_(M, farol, scenData, chFilter) {
   if (!scenData) return { M, farol };
   const pos = (v) => (v != null && isFinite(v) && v !== 0) ? v : null;
@@ -3297,7 +3296,7 @@ function applyFcRatios_(M, farol, fc) {
   // a meta e o card marcava 34% em pleno dia 11. Sem prorrateio (backend antigo) `turnoverFrac` vem
   // undefined e o texto não promete uma fatia que não existe.
   MM = set(MM, 'turnover', fc.turnover, fc.turnoverMes > 0
-    ? ('Forecast do mês inteiro: ' + fmtBRL(fc.turnoverMes) + (fc.turnoverFrac > 0
+    ? ('Orçado do mês inteiro: ' + fmtBRL(fc.turnoverMes) + (fc.turnoverFrac > 0
         ? ' · prorrateado para ' + fmtPct(fc.turnoverFrac, 0) + ' do mês (a janela desta tela)'
         : '') + '. Fonte: aba Projection_Revenue.')
     : null);
@@ -3352,8 +3351,8 @@ function TabFarol({ M, farol, range, ytd, ftdByRegister, chFilter, planScenarios
   // Série das 4 semanas fechadas por KPI (ACT — independe de cenário/BP), reescopada no chFilter. Nulls onde não há dado.
   const sparkByKey = React.useMemo(() => buildFarolSpark_(farolSpark, chFilter), [farolSpark, chFilter]);
   const scenMeta = CENARIOS.find(c => c.id === activeScen) || CENARIOS[0];
-  // Prefixo do "BP" nos cards = nome do cenário ATIVO (segue o toggle). Sem cenário aplicado (scenOn=false) → Orçado (base).
-  const scenLabel = scenOn ? scenMeta.label : SCEN_BP_LABEL;
+  // scenMeta.label só aparece no SWITCHER e no aviso de cobertura do plano — os cards dizem "Orçado"
+  // sempre (CARD_BP_LABEL), então não existe mais um "label do cenário" descendo pro buildFarolGroups_.
   // Cobertura do plano na janela (backend v68+ manda planDays/winDays/emptyMonths no house). As linhas
   // do DB Plan_RevOps existem de abr a dez, mas Orçado e Conservador vêm ZERADOS em abr/mai — numa
   // janela 01/04→30/06 o Farol comparava 91 dias de realizado contra 30 de plano e mostrava Dep M0 em
@@ -3363,7 +3362,7 @@ function TabFarol({ M, farol, range, ytd, ftdByRegister, chFilter, planScenarios
   const mesCurto_ = (mk) => { const MM_ = ['jan','fev','mar','abr','mai','jun','jul','ago','set','out','nov','dez']; return (MM_[+String(mk).slice(5, 7) - 1] || mk) + '/' + String(mk).slice(2, 4); };
   // Algum outro cenário cobre a janela inteira? Se sim, aponta — é a saída prática pro usuário.
   const scenCheio = planGap ? visCenarios.find(c => { if (c.id === activeScen || !scenAvail[c.id]) return false; const h = planScenarios[c.id] && planScenarios[c.id].house; return !!(h && h.winDays > 0 && h.planDays >= h.winDays); }) : null;
-  const groups = buildFarolGroups_(ov.M, ov.farol, range, useYtd, sparkByKey, scenLabel);
+  const groups = buildFarolGroups_(ov.M, ov.farol, range, useYtd, sparkByKey);
   const rangeLbl = (range && range.from) ? `${fmtBR_(range.from)} → ${fmtBR_(range.to)}` : '';
   return (
     <React.Fragment>
