@@ -423,7 +423,7 @@ function Hero({ metric, variant }) {
           <div className="value">{fmtVal(metric.act, metric.fmt)}</div>
           <div className="hf-stats">
             {pct != null && (
-              <div className="hf-bp">
+              <div className="hf-bp" title={metric.bpTitle || undefined}>
                 <span className="bp-label">{metric.bpLabel || 'BP'}</span> <span className="bp-val">{fmtVal(metric.bp, metric.fmt)}</span>{' '}
                 <span className={`pct ${farol}`}>{fmtPct(pct, 0)}</span>
               </div>
@@ -456,7 +456,7 @@ function Hero({ metric, variant }) {
       </div>
       <div className="value">{fmtVal(metric.act, metric.fmt)}</div>
       {pct != null && (
-        <div className="vs-bp">
+        <div className="vs-bp" title={metric.bpTitle || undefined}>
           <div className="vs-bp-head">
             <span><span className="bp-label">{metric.bpLabel || 'BP'}</span> <span className="bp-val">{fmtVal(metric.bp, metric.fmt)}</span></span>
             <span className={`pct ${farol}`}>{fmtPct(pct, 0)}</span>
@@ -3288,9 +3288,19 @@ function applyFcRatios_(M, farol, fc) {
   // v > 0 de propósito: a partir de set/26 a linha FreeSpins/Dep está VAZIA na planilha e chega como 0.
   // Meta 0% deixaria o card vermelho por artefato — nesse caso mantém a constante em vez de mentir.
   // fcBp marca que a meta veio do Forecast — o rótulo do card segue isso (senão diria "Orçado" com número do FC).
-  const set = (o, k, v) => (o && o[k] && v != null && v > 0) ? Object.assign({}, o, { [k]: Object.assign({}, o[k], { bp: v, fcBp: true }) }) : o;
+  const set = (o, k, v, title) => (o && o[k] && v != null && v > 0)
+    ? Object.assign({}, o, { [k]: Object.assign({}, o[k], { bp: v, fcBp: true }, title ? { bpTitle: title } : null) })
+    : o;
   let MM = M, ff = farol;
-  MM = set(MM, 'turnover', fc.turnover);
+  // Turnover é o ÚNICO volume deste bloco: o backend (v74+) já manda a meta PRORRATEADA na janela, então o
+  // card compara MTD com MTD. `turnoverMes` é o mês cheio da planilha e vive só no tooltip — antes ele era
+  // a meta e o card marcava 34% em pleno dia 11. Sem prorrateio (backend antigo) `turnoverFrac` vem
+  // undefined e o texto não promete uma fatia que não existe.
+  MM = set(MM, 'turnover', fc.turnover, fc.turnoverMes > 0
+    ? ('Forecast do mês inteiro: ' + fmtBRL(fc.turnoverMes) + (fc.turnoverFrac > 0
+        ? ' · prorrateado para ' + fmtPct(fc.turnoverFrac, 0) + ' do mês (a janela desta tela)'
+        : '') + '. Fonte: aba Projection_Revenue.')
+    : null);
   MM = set(MM, 'rollover', fc.rollover);
   MM = set(MM, 'hold', fc.hold);
   ff = set(ff, 'freespinDep', fc.freespinDep);
