@@ -436,6 +436,13 @@ function Hero({ metric, variant }) {
             {metric.m1 != null && metric.act != null && (
               <div className="hf-m1"><span className="m1-val">{fmtVal(metric.m1, metric.fmt)}</span>{' '}mês anterior</div>
             )}
+            {/* Referência: a MESMA métrica sobre outra base (hoje: FreeSpins/GGR e Bonificação/GGR). Fica
+                embaixo, discreta — é contexto, não a métrica do card. Sem farol e sem BP de propósito. */}
+            {metric.ref != null && (
+              <div className="hf-ref" title={refTitle_(metric)}>
+                <span className="ref-val">{fmtPct(metric.ref, 1)}</span>{' '}{metric.refLabel || 'do GGR'}
+              </div>
+            )}
             {/* Peso da safra no GGR do período — diz quanto a métrica deste card importa no resultado. */}
             {metric.share != null && (
               <div className="hf-share" title={`Participação desta safra no ${metric.shareUnit || 'GGR'} do período: Σ ${metric.shareUnit || 'GGR'} da safra ÷ Σ ${metric.shareUnit || 'GGR'} de todas as safras, no escopo de canal atual (as 4 safras somam 100%). Segue o NUMERADOR da métrica deste card.${metric.shareM1 != null ? ` Mesma janela do mês anterior: ${fmtPct(metric.shareM1, 0)}.` : ''}`}>
@@ -474,8 +481,21 @@ function Hero({ metric, variant }) {
           <span className="m1-val">{fmtVal(metric.m1, metric.fmt)}</span>{' '}mês anterior
         </div>
       )}
+      {metric.ref != null && (
+        <div className="hf-ref" title={refTitle_(metric)}>
+          <span className="ref-val">{fmtPct(metric.ref, 1)}</span>{' '}{metric.refLabel || 'do GGR'}
+        </div>
+      )}
     </div>
   );
+}
+// Tooltip da linha de referência: diz a conta e traz o mês anterior, senão é um % solto sem base.
+function refTitle_(m) {
+  const num = String(m.label || '').split('/')[0].trim() || 'numerador';
+  const base = String(m.refLabel || 'do GGR').replace(/^do\s+/i, '');
+  return num + ' ÷ ' + base + ' na janela desta tela — mesma conta do card, trocando o denominador '
+    + 'Depósitos por ' + base + '. É referência de margem, não tem meta nem farol.'
+    + (m.refM1 != null ? ' Mesma janela do mês anterior: ' + fmtPct(m.refM1, 1) + '.' : '');
 }
 // ============================================================
 // CHANNEL TABLE — análise de aquisição por canal
@@ -5147,11 +5167,14 @@ function buildFarolMetrics_(M, comp, channels, ggrChannels, bp, filter, ggrSafra
   const B = {};
   Object.keys(byCh).forEach(ch => { if (inSel(ch)) ['invest','ftdAmount','depD0','depM0','ftd'].forEach(k => { if (byCh[ch][k] != null) B[k] = (B[k] || 0) + byCh[ch][k]; }); });
   const div = (a, b) => (a != null && b) ? a / b : null;
+  // divPos = div que exige denominador POSITIVO (razão sobre GGR não faz sentido com GGR ≤ 0).
+  const divPos = (a, b) => (a != null && b > 0) ? a / b : null;
   const mk = (label, fmt, act, bpv, m1, lowerBetter) => ({ label, fmt, act: act == null ? null : act, m1: m1 == null ? null : m1,
     bp: (bpv != null && isFinite(bpv) && bpv !== 0) ? bpv : null,
     pctBp: (bpv && act != null) ? act / bpv : null,
     lowerBetter: !!lowerBetter });
   const inv = M.invest || {}, fa = M.ftdAmount || {}, dt = M.depTotal || {}, dm0 = M.depM0Total || {};
+  const gg = M.ggr || {};   // GGR (ngr limpo) já no escopo de canal — denominador da referência FreeSpins/Bonif sobre GGR
   // BP do ROAS Dep M0 = razão do MÊS INTEIRO do plano (bp.month), NÃO prorateada pela janela: o m0tt
   // diário do plano é front-loaded (runway da coorte), então somar poucos dias contra invest flat INFLA
   // a razão (jul 1-5 = 2,35 vs mês inteiro = 1,9). Total Casa = m0tt/invest; Growth/canal = Dep M0 Growth(colZ)/invest(colN).
@@ -5251,8 +5274,15 @@ function buildFarolMetrics_(M, comp, channels, ggrChannels, bp, filter, ggrSafra
     ...safraMargem,
     // FreeSpins/Bonif = custos (menor=melhor). BP plano: meta fixa (flat) de % sobre depósitos. Sem trend (pedido do Luis).
     // M-1 = freespin/bonus do mês anterior (mesma janela) ÷ Depósitos Totais do mês anterior (dt.m1).
-    freespinDep: mk('FreeSpins / Dep', 'pct', div(fs, dt.act), 0.02, div(fsLm, dt.m1), true),
-    bonusDep:    mk('Bonificação / Dep', 'pct', div(bn, dt.act), 0.028, div(bnLm, dt.m1), true),
+    // `ref` = MESMO numerador sobre o GGR (pedido do Luis 2026-08-12): o card mede o custo contra o que
+    // ENTROU de caixa, a referência mede contra o que a casa GANHOU — é o número que diz se o incentivo
+    // está comendo a margem. Denominador = M.ggr.act, o mesmo GGR do card ao lado (ngr limpo), já no
+    // escopo de canal atual. `divPos` de propósito: em canal com GGR negativo (Programática já teve) a
+    // razão inverteria de sinal e leria como "melhorou" — nesse caso não mostra nada.
+    freespinDep: Object.assign(mk('FreeSpins / Dep', 'pct', div(fs, dt.act), 0.02, div(fsLm, dt.m1), true),
+      { ref: divPos(fs, gg.act), refM1: divPos(fsLm, gg.m1), refLabel: 'do GGR' }),
+    bonusDep:    Object.assign(mk('Bonificação / Dep', 'pct', div(bn, dt.act), 0.028, div(bnLm, dt.m1), true),
+      { ref: divPos(bn, gg.act), refM1: divPos(bnLm, gg.m1), refLabel: 'do GGR' }),
   };
 }
 
