@@ -4626,10 +4626,13 @@ const MDD_BP = {
 // Geral — são duas calibragens distintas do estudo. Por isso duas tabelas, e não um fator.
 // Só os multiplicadores mudam de base; retenção/passagem/semanal são razões que não têm D0 no
 // denominador, então herdam MDD_BP.
+// ⚠️ `d0` (= cumFTD[0]) só existe AQUI, na base FTD, e é a meta da coluna D0 da Pirâmide de Coorte.
+// Na base D0 o equivalente seria cum[0] = 1,00x por definição (o D0 é a própria âncora), então lá a
+// coluna não tem meta — e é por isso que `d0` não entra no MDD_BP.
 const MDD_BP_FTD_MULT = {
-  Geral:  { m1: 1.8901, m3: 2.3302, m4: 2.4971, m7: 2.9323, m14: 3.6590, m30: 4.8742 },
-  Google: { m1: 2.6401, m3: 3.4072, m4: 3.6963, m7: 4.3960, m14: 5.4943, m30: 7.2639 },
-  Meta:   { m1: 1.8956, m3: 2.2817, m4: 2.4344, m7: 2.8407, m14: 3.5360, m30: 4.7543 },
+  Geral:  { d0: 1.5260, m1: 1.8901, m3: 2.3302, m4: 2.4971, m7: 2.9323, m14: 3.6590, m30: 4.8742 },
+  Google: { d0: 2.0077, m1: 2.6401, m3: 3.4072, m4: 3.6963, m7: 4.3960, m14: 5.4943, m30: 7.2639 },
+  Meta:   { d0: 1.5419, m1: 1.8956, m3: 2.2817, m4: 2.4344, m7: 2.8407, m14: 3.5360, m30: 4.7543 },
 };
 const MDD_BP_FTD = {};
 Object.keys(MDD_BP).forEach(k => { MDD_BP_FTD[k] = Object.assign({}, MDD_BP[k], MDD_BP_FTD_MULT[k]); });
@@ -4958,11 +4961,293 @@ function TabMetricasDia({ retencaoFaixa, chFilter, meta, retFaixaLive }) {
   );
 }
 
+// ============================================================
+// PIRÂMIDE DE COORTE — a mesma leitura de safra das outras abas, mas em TRIÂNGULO.
+// Linha = safra de FTD (dia ou semana, dentro da janela do slicer global), coluna = horizonte, e a
+// célula só FECHA quando a safra já viveu aquele horizonte inteiro. Safra nova tem menos células
+// fechadas que safra velha → a tabela desenha uma escada. A maturação vira FORMA em vez de virar nota
+// de rodapé, que era o buraco das outras duas abas (ver a divergência medida em 14/08: a mesma métrica
+// dá 2,50x contando safra imatura e 2,60x sem ela, e nada na tela dizia por quê).
+// ⚠️ NÃO é dado novo: consome o MESMO `retencaoFaixa` que a Multiplicadores e a Métricas do dia a dia
+// já recebem — zero fetch, zero endpoint, zero backend. O que muda é só a leitura.
+// ============================================================
+const PIR_HZ = { d0: 0, d1: 1, d3: 3, d4: 4, w1: 7, w2: 14, d30: 30 };   // dias que a safra precisa viver
+// M0 é o único horizonte que não é "N dias": é até o FIM DO MÊS-CALENDÁRIO do FTD (por isso safra do
+// dia 1º tem ~30 dias de M0 e safra do dia 28 tem ~3). Fecha quando esse fim de mês já passou.
+function pirFimDoMes_(iso) {
+  const [y, m] = String(iso).split('-').map(Number);
+  const d = new Date(Date.UTC(y, m, 0));   // dia 0 do mês seguinte = último dia deste mês
+  return d.toISOString().slice(0, 10);
+}
+// ⚠️ `safra` aqui é o dia MAIS NOVO do bin. Na visão semanal a semana só fecha quando a ÚLTIMA safra
+// dela fecha — senão o bin misturaria coorte madura com imatura e o número cairia sem avisar, que é
+// exatamente o defeito que esta aba existe pra tornar visível.
+function pirFechada_(safra, hz, dataMax) {
+  if (!dataMax || !safra) return false;
+  if (hz === 'm0') return pirFimDoMes_(safra) <= dataMax;
+  return isoAddDays_(safra, PIR_HZ[hz]) <= dataMax;
+}
+const pirInt_ = (v) => (v == null || !isFinite(v)) ? '—' : Math.round(v).toLocaleString('pt-BR');
+// `plain` = contexto da safra (tamanho/ticket), não magnitude a comparar entre dias → fica sem escala
+// de cor, igual ao anexo. `acc` = numerador acumulado; o denominador vem do toggle de base.
+// `bp` = chave da curva do estudo (MDD_BP / MDD_BP_FTD), a MESMA meta da aba Métricas do dia a dia.
+const PIR_COLS = [
+  { key: 'qtd', lb: 'Qtd FTD',     hz: 'd0', plain: true, of: (a) => a.qtd || null,                 fmt: pirInt_ },
+  { key: 'tkt', lb: 'FTD $$',      hz: 'd0', plain: true, of: (a) => a.qtd ? a.ftd / a.qtd : null,  fmt: fmtBRL },
+  { key: 'dm',  lb: 'Dep D0 méd',  hz: 'd0', plain: true, of: (a) => a.qtd ? a.d0 / a.qtd : null,   fmt: fmtBRL },
+  { key: 'd0',  lb: 'D0',  hz: 'd0',  acc: (a) => a.d0,               bp: 'd0',  sep: true },
+  { key: 'd1',  lb: 'D1',  hz: 'd1',  acc: (a) => a.d0 + a.vd1,       bp: 'm1' },
+  { key: 'd3',  lb: 'D3',  hz: 'd3',  acc: (a) => a.d0 + a.vd3,       bp: 'm3' },
+  { key: 'd4',  lb: 'D4',  hz: 'd4',  acc: (a) => a.d0 + a.vd4,       bp: 'm4' },
+  { key: 'w1',  lb: 'D7',  hz: 'w1',  acc: (a) => a.d0 + a.vw1,       bp: 'm7' },
+  { key: 'w2',  lb: 'D14', hz: 'w2',  acc: (a) => a.d0 + a.vw2,       bp: 'm14' },
+  { key: 'd30', lb: 'D30', hz: 'd30', acc: (a) => a.d0 + a.vd30,      bp: 'm30' },
+  // M0 SEM meta de propósito: a curva do estudo é indexada por DIA e M0 não é um dia (é "até o fim do
+  // mês do FTD"). O estudo tem um alvo de M0, mas ele vive em `comp.*` — que é o COMPROMISSO do mês, não
+  // o NÍVEL BP que alimenta todas as outras colunas daqui. Misturar as duas réguas na mesma linha faria
+  // a coluna mentir; então fica sem meta até alguém decidir qual régua vale.
+  { key: 'm0',  lb: 'M0',  hz: 'm0',  acc: (a) => a.d0 + a.vm0,       bp: null },
+];
+// Agrupa as safras da janela em linhas da pirâmide. `ini`/`fim` guardam a borda real do bin — o `fim`
+// é quem decide maturação (ver pirFechada_) e o `ini` rotula a semana.
+function pirBins_(rows, selCh, selFx, gran) {
+  const m = {};
+  (rows || []).forEach((r) => {
+    if (!selCh(r.canal) || !selFx(r.faixa)) return;
+    const iso = String(r.date);
+    const k = (gran === 'week') ? weekStartISO_(iso) : iso;
+    const a = m[k] || (m[k] = { key: k, ini: iso, fim: iso, qtd: 0, ftd: 0, d0: 0, vd1: 0, vd3: 0, vd4: 0, vw1: 0, vw2: 0, vd30: 0, vm0: 0 });
+    if (iso < a.ini) a.ini = iso;
+    if (iso > a.fim) a.fim = iso;
+    a.qtd += r.qtd || 0; a.ftd += r.ftd || 0; a.d0 += r.d0 || 0;
+    a.vd1 += r.vd1 || 0; a.vd3 += r.vd3 || 0; a.vd4 += r.vd4 || 0;
+    a.vw1 += r.vw1 || 0; a.vw2 += r.vw2 || 0; a.vd30 += r.vd30 || 0; a.vm0 += r.vm0 || 0;
+  });
+  return Object.keys(m).sort().map((k) => m[k]);
+}
+// Valor da célula. Multiplicador = acumulado ÷ base (FTD$ ou depósito do D0, pelo toggle).
+function pirValor_(col, a, base) {
+  if (!a) return null;
+  if (col.plain) return col.of(a);
+  const den = (base === 'ftd') ? a.ftd : a.d0;
+  return (den > 0) ? col.acc(a) / den : null;
+}
+// Soma as bases dos bins e SÓ ENTÃO divide (não é média das razões) — mesma regra do "Realizado" das
+// outras abas. Por isso o Total daqui não precisa dos pesos que o anexo reconstruía: temos as bases.
+function pirTotal_(bins, col, base) {
+  if (!bins || !bins.length) return null;
+  const t = bins.reduce((s, b) => {
+    for (const k in b) if (typeof b[k] === 'number') s[k] = (s[k] || 0) + b[k];
+    return s;
+  }, {});
+  return pirValor_(col, t, base);
+}
+// Escala da coluna: SÓ células fechadas. Incluir célula aberta na escala faria o valor truncado de uma
+// safra de ontem puxar o mínimo e recolorir a coluna inteira — a cor passaria a medir maturidade.
+function pirEscala_(bins, col, base, dataMax) {
+  const vs = [];
+  bins.forEach((b) => {
+    if (!pirFechada_(b.fim, col.hz, dataMax)) return;
+    const v = pirValor_(col, b, base);
+    if (v != null && isFinite(v)) vs.push(v);
+  });
+  return vs.length ? { min: Math.min.apply(null, vs), max: Math.max.apply(null, vs) } : null;
+}
+const PIR_RAMP = ['--pir1', '--pir2', '--pir3', '--pir4', '--pir5', '--pir6'];
+const PIR_INK  = ['--pirI1', '--pirI2', '--pirI3', '--pirI4', '--pirI5', '--pirI6'];
+
+function TabPiramideCoorte({ retencaoFaixa, chFilter, meta, retFaixaLive }) {
+  const [gran, setGran] = usePersistedState('rvops:pirGran', 'day');
+  const [base, setBase] = usePersistedState('rvops:pirBase', 'ftd');
+  const [faixaSel, setFaixaSel] = React.useState([]);
+  const [hideOpen, setHideOpen] = usePersistedState('rvops:pirHideOpen', false);
+  const dataMax = meta && meta.dataMaxDate;
+  const rows = benchApostouRows_(retencaoFaixa || []);
+  const selCh = chSelector_(chFilter);
+  const selFx = (fx) => faixaSel.length === 0 || faixaSel.includes(fx);
+  // Mesma chave de canal da Métricas do dia a dia — ver o comentário lá sobre `channels` × `canals`.
+  const chKey = chList_(chFilter).join('|') + '#' + ((chFilter && chFilter.scope) || '');
+  const bins = React.useMemo(() => pirBins_(rows, selCh, selFx, gran),
+    [retencaoFaixa, chKey, JSON.stringify(faixaSel), gran]);
+  // Base D0 → a coluna D0 seria 1,00x em toda linha (é a própria âncora). Sai da tela, como na aba
+  // Multiplicadores, senão gasta uma coluna inteira pra repetir uma constante.
+  const cols = PIR_COLS.filter((c) => !(base === 'd0' && c.key === 'd0'));
+  const bpScope = mddBpScope_(chFilter, base);
+  const chLbl = chLabel_(chFilter);
+  const faixaLbl = faixaSel.length === 0 ? 'todas as faixas' : (faixaSel.length <= 2 ? faixaSel.map(fxLabel_).join(' + ') : faixaSel.length + ' faixas');
+  const metaDe = (c) => (c.bp && bpScope) ? bpScope[c.bp] : null;
+  const rotulo = (b) => (gran === 'week') ? weekLabel_(b.key) : b.key.slice(8, 10) + '/' + b.key.slice(5, 7);
+  const fmtDe = (c) => c.fmt || fmtMultiple;
+  // n de safras fechadas por coluna — o rodapé mostra, e é o que separa o Total honesto do Total sujo.
+  const fechadasDe = (c) => bins.filter((b) => pirFechada_(b.fim, c.hz, dataMax));
+  const escalas = {};
+  cols.forEach((c) => { if (!c.plain) escalas[c.key] = pirEscala_(bins, c, base, dataMax); });
+  let bateu = 0, comMeta = 0;
+  bins.forEach((b) => cols.forEach((c) => {
+    const mt = metaDe(c);
+    if (mt == null || c.plain || !pirFechada_(b.fim, c.hz, dataMax)) return;
+    comMeta++;
+    const v = pirValor_(c, b, base);
+    if (v != null && v >= mt) bateu++;
+  }));
+
+  const celula = (b, c) => {
+    const v = pirValor_(c, b, base);
+    const aberta = !pirFechada_(b.fim, c.hz, dataMax);
+    const mt = metaDe(c);
+    const bateuAqui = !aberta && mt != null && v != null && v >= mt;
+    const cls = ['pir-v', aberta ? 'pir-open' : '', bateuAqui ? 'pir-meta' : '', c.plain ? 'pir-flat' : ''].filter(Boolean).join(' ');
+    let st = null, dica;
+    if (aberta) {
+      const fecha = (c.hz === 'm0') ? pirFimDoMes_(b.fim) : isoAddDays_(b.fim, PIR_HZ[c.hz]);
+      dica = 'Ainda não fechou — fecha em ' + fmtBR_(fecha) + '. O valor mostrado é o acumulado corrente, '
+           + 'que só pode subir (o denominador já está inteiro, o numerador não).';
+    } else {
+      const e = escalas[c.key];
+      if (e && !c.plain && v != null) {
+        const t = (e.max === e.min) ? 0.5 : (v - e.min) / (e.max - e.min);
+        const i = Math.min(5, Math.max(0, Math.round(t * 5)));
+        // Célula de meta mantém o preenchimento da escala; só a FONTE vira amarela (a cor diz "bateu",
+        // o fundo diz "onde está na coluna") — as duas informações sem disputar o mesmo canal.
+        st = { background: 'var(' + PIR_RAMP[i] + ')' };
+        if (!bateuAqui) st.color = 'var(' + PIR_INK[i] + ')';
+      }
+      dica = 'Fechado' + (mt != null ? ' · meta ' + fmtMultiple(mt) + (bateuAqui ? ' (bateu)' : '') : '');
+    }
+    return (
+      <td key={c.key} className={c.sep ? 'pir-sep' : undefined}>
+        <span className={cls} style={st || undefined} title={dica}>{fmtDe(c)(v)}</span>
+      </td>
+    );
+  };
+
+  return (
+    <React.Fragment>
+      <div className="tab-header">
+        <div>
+          <h1>Pirâmide de Coorte</h1>
+          <div className="subtitle">Depósito acumulado por safra de FTD — cada linha é uma safra, cada coluna um horizonte, e a célula só aparece preenchida quando aquela safra já viveu o horizonte inteiro</div>
+        </div>
+      </div>
+      {!retFaixaLive && (
+        <div style={{
+          background: 'rgba(239,68,68,.12)', border: '1px solid rgba(239,68,68,.45)', borderLeft: '4px solid #ef4444',
+          borderRadius: '8px', padding: '12px 16px', margin: '0 0 14px', fontSize: '13px', lineHeight: 1.6, color: 'var(--text)',
+        }}>
+          <strong style={{ color: '#f87171' }}>⚠ Dados de demonstração — não são os seus números.</strong>{' '}
+          A base de safras (<code>retencaoFaixa</code>) não chegou do BigQuery nesta carga. <strong>Recarregue a página.</strong>
+        </div>
+      )}
+      <div className="slicer-group slicer-ruler">
+        <label style={{ fontSize: '11px', color: 'var(--text-muted)' }}>Faixa FTD</label>
+        <ChannelMultiSelect options={FAIXA_LIST} selected={faixaSel} onChange={setFaixaSel} labelOf={fxLabel_} allLabel="Todas" countNoun="faixas" />
+        <span style={{ fontSize: '11px', color: 'var(--text-muted)', marginLeft: '10px' }}>Safra</span>
+        <div className="slicer-presets" style={{ marginLeft: 6 }}>
+          <button className={`preset-btn ${gran === 'day' ? 'active' : ''}`} onClick={() => setGran('day')}
+                  title="Uma linha por DIA de FTD — o grão do anexo. Em janelas longas a pirâmide fica alta.">Dia</button>
+          <button className={`preset-btn ${gran === 'week' ? 'active' : ''}`} onClick={() => setGran('week')}
+                  title="Uma linha por semana-calendário. A semana só conta como fechada quando a ÚLTIMA safra dela fecha o horizonte.">Semana</button>
+        </div>
+        <span style={{ fontSize: '11px', color: 'var(--text-muted)', marginLeft: '10px' }}>Multiplicador</span>
+        <div className="slicer-presets" style={{ marginLeft: 6 }}>
+          <button className={`preset-btn ${base === 'ftd' ? 'active' : ''}`} onClick={() => setBase('ftd')}
+                  title="Acumulado ÷ FTD$ (valor do 1º depósito). É a base que tem meta do estudo em todas as colunas.">sobre FTD</button>
+          <button className={`preset-btn ${base === 'd0' ? 'active' : ''}`} onClick={() => setBase('d0')}
+                  title="Acumulado ÷ depósito do D0. A coluna D0 sai (seria 1,00x sempre).">sobre D0</button>
+        </div>
+        <label className="pir-tgl" style={{ marginLeft: '12px' }}>
+          <input type="checkbox" checked={!!hideOpen} onChange={(e) => setHideOpen(e.target.checked)} />
+          Ocultar o que ainda não fechou
+        </label>
+      </div>
+      <div className="support">
+        <div className="support-title">
+          Safra por {gran === 'week' ? 'semana' : 'dia'} · {chLbl} · {faixaLbl} · mult {base === 'ftd' ? 'sobre FTD' : 'sobre D0'}
+          {dataMax ? ' · dado até ' + fmtBR_(dataMax) : ''}
+          {comMeta > 0 ? ' · bateu a meta em ' + bateu + ' de ' + comMeta + ' células fechadas com meta' : ''}
+        </div>
+        <div className="pir-legend">
+          <span>Escala <i className="pir-ramp">{PIR_RAMP.map((v) => <i key={v} style={{ background: 'var(' + v + ')' }} />)}</i> menor → maior</span>
+          <span><i className="pir-sw pir-sw-meta">2,47x</i> bateu a meta</span>
+          <span><i className="pir-sw pir-sw-open" /> ainda não fechou</span>
+        </div>
+        <div className={`table-scroll tall ${hideOpen ? 'pir-hide-open' : ''}`}>
+          <table className="ch-table pir-table">
+            <thead>
+              <tr>
+                <th>{gran === 'week' ? 'Semana do FTD' : 'Safra'}</th>
+                {cols.map((c) => {
+                  const mt = metaDe(c);
+                  return (
+                    <th key={c.key} className={c.sep ? 'pir-sep' : undefined}>
+                      {c.lb}
+                      {mt != null && <span className="pir-meta-tag">meta {fmtMultiple(mt)}</span>}
+                    </th>
+                  );
+                })}
+              </tr>
+            </thead>
+            <tbody>
+              {bins.map((b) => (
+                <tr key={b.key}>
+                  <td className="ch-name" title={gran === 'week' ? ('Safras de ' + fmtBR_(b.ini) + ' a ' + fmtBR_(b.fim)) : undefined}>{rotulo(b)}</td>
+                  {cols.map((c) => celula(b, c))}
+                </tr>
+              ))}
+              {!bins.length && (
+                <tr><td colSpan={cols.length + 1} style={{ color: 'var(--text-muted)' }}>sem safra na janela / recorte</td></tr>
+              )}
+            </tbody>
+            <tfoot>
+              <tr>
+                <td className="ch-name">Total · safras fechadas</td>
+                {cols.map((c) => {
+                  const v = pirTotal_(fechadasDe(c), c, base);
+                  const mt = metaDe(c);
+                  return <td key={c.key} className={c.sep ? 'pir-sep' : undefined}>
+                    <span className={'pir-v' + (mt != null && v != null && v >= mt ? ' pir-meta' : '')}>{fmtDe(c)(v)}</span>
+                  </td>;
+                })}
+              </tr>
+              <tr className="pir-alt">
+                <td>safras fechadas</td>
+                {cols.map((c) => <td key={c.key} className={c.sep ? 'pir-sep' : undefined}>{fechadasDe(c).length}/{bins.length}</td>)}
+              </tr>
+              <tr className="pir-alt">
+                <td>Total · todas as safras</td>
+                {cols.map((c) => {
+                  const suja = fechadasDe(c).length < bins.length;
+                  return <td key={c.key} className={(c.sep ? 'pir-sep ' : '') + (suja ? 'pir-suja' : '')}>{fmtDe(c)(pirTotal_(bins, c, base))}</td>;
+                })}
+              </tr>
+            </tfoot>
+          </table>
+        </div>
+        <div className="ch-note">
+          <strong>Por que a tabela é uma escada.</strong> Uma célula só fecha quando <strong>safra + horizonte ≤ {dataMax ? fmtBR_(dataMax) : 'último dia com dado'}</strong>.
+          A safra de ontem não tem D7 — e o número que apareceria ali não é um D7 baixo, é um D7 pela metade.
+          As células abertas mostram o <strong>acumulado corrente</strong> hachurado: dá pra acompanhar, mas ele só pode subir.
+          {' '}<strong>Escala por coluna</strong>, calculada <strong>só sobre as células fechadas</strong> — comparar cor
+          dentro da coluna faz sentido; entre colunas diferentes, não (D30 é naturalmente maior que D1).
+          {' '}<strong>As duas linhas de Total são a razão desta aba existir:</strong> “safras fechadas” usa só as safras
+          com o horizonte completo (é o número comparável com a meta), e “todas as safras” inclui as imaturas — é o
+          que as outras abas mostram. Quando as duas divergem muito, a diferença é maturação, não performance.
+          {' '}<strong>Meta</strong> = a curva do estudo (mesma da aba Métricas do dia a dia), por escopo: existe para
+          Geral, Google e Meta — em qualquer outro canal, ou com 2+ canais selecionados, some.
+          {' '}<strong>M0 fica sem meta</strong> de propósito: a curva do estudo é indexada por dia e M0 não é um dia
+          (é “até o fim do mês do FTD”); o alvo de M0 que existe no estudo está em outra régua.
+        </div>
+      </div>
+    </React.Fragment>
+  );
+}
+
 const TABS = [
   { id: 'farol', label: 'Farol', component: TabFarol },
   { id: 'monthlyclose', label: 'Monthly Close', component: TabMonthlyClose },
   { id: 'caccalc', label: 'CAC Calculator', component: TabCacCalculator },
   { id: 'retfaixa', label: 'Multiplicadores e Retenção', component: TabRetencaoFaixa },
+  { id: 'piramide', label: 'Pirâmide de Coorte', component: TabPiramideCoorte },
   { id: 'metricasdia', label: 'Métricas do dia a dia', component: TabMetricasDia },
   { id: 'ativacao', label: 'Ativação D0', component: TabAtivacao },
   { id: 'cashflow', label: 'Daily Cashflow', component: TabDailyCashflow },
