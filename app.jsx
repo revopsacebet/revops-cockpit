@@ -4996,17 +4996,16 @@ const PIR_COLS = [
   { key: 'tkt', lb: 'FTD $$',      hz: 'd0', plain: true, of: (a) => a.qtd ? a.ftd / a.qtd : null,  fmt: fmtBRL },
   { key: 'dm',  lb: 'Dep D0 méd',  hz: 'd0', plain: true, of: (a) => a.qtd ? a.d0 / a.qtd : null,   fmt: fmtBRL },
   { key: 'd0',  lb: 'D0',  hz: 'd0',  acc: (a) => a.d0,               bp: 'd0',  sep: true },
-  { key: 'd1',  lb: 'D1',  hz: 'd1',  acc: (a) => a.d0 + a.vd1,       bp: 'm1' },
-  { key: 'd3',  lb: 'D3',  hz: 'd3',  acc: (a) => a.d0 + a.vd3,       bp: 'm3' },
-  { key: 'd4',  lb: 'D4',  hz: 'd4',  acc: (a) => a.d0 + a.vd4,       bp: 'm4' },
-  { key: 'w1',  lb: 'D7',  hz: 'w1',  acc: (a) => a.d0 + a.vw1,       bp: 'm7' },
-  { key: 'w2',  lb: 'D14', hz: 'w2',  acc: (a) => a.d0 + a.vw2,       bp: 'm14' },
-  { key: 'd30', lb: 'D30', hz: 'd30', acc: (a) => a.d0 + a.vd30,      bp: 'm30' },
-  // M0 SEM meta de propósito: a curva do estudo é indexada por DIA e M0 não é um dia (é "até o fim do
-  // mês do FTD"). O estudo tem um alvo de M0, mas ele vive em `comp.*` — que é o COMPROMISSO do mês, não
-  // o NÍVEL BP que alimenta todas as outras colunas daqui. Misturar as duas réguas na mesma linha faria
-  // a coluna mentir; então fica sem meta até alguém decidir qual régua vale.
-  { key: 'm0',  lb: 'M0',  hz: 'm0',  acc: (a) => a.d0 + a.vm0,       bp: null },
+  { key: 'd1',  lb: 'D1',  hz: 'd1',  acc: (a) => a.d0 + a.vd1,       bp: 'd1' },
+  { key: 'd3',  lb: 'D3',  hz: 'd3',  acc: (a) => a.d0 + a.vd3,       bp: 'd3' },
+  { key: 'd4',  lb: 'D4',  hz: 'd4',  acc: (a) => a.d0 + a.vd4,       bp: 'd4' },
+  { key: 'w1',  lb: 'D7',  hz: 'w1',  acc: (a) => a.d0 + a.vw1,       bp: 'w1' },
+  { key: 'w2',  lb: 'D14', hz: 'w2',  acc: (a) => a.d0 + a.vw2,       bp: 'w2' },
+  { key: 'd30', lb: 'D30', hz: 'd30', acc: (a) => a.d0 + a.vd30,      bp: 'd30' },
+  // M0 TEM meta: é o alvo de CALENDÁRIO do estudo (`comp.canais.<esc>.m0`), a mesma régua das outras
+  // colunas desta aba. Não é um ponto da curva por dia — M0 é "até o fim do mês do FTD", horizonte que
+  // varia com o dia da safra —, por isso o alvo é declarado à parte em vez de sair de cum[30].
+  { key: 'm0',  lb: 'M0',  hz: 'm0',  acc: (a) => a.d0 + a.vm0,       bp: 'm0' },
 ];
 // Agrupa as safras da janela em linhas da pirâmide. `ini`/`fim` guardam a borda real do bin — o `fim`
 // é quem decide maturação (ver pirFechada_) e o `ini` rotula a semana.
@@ -5053,6 +5052,46 @@ function pirEscala_(bins, col, base, dataMax) {
   });
   return vs.length ? { min: Math.min.apply(null, vs), max: Math.max.apply(null, vs) } : null;
 }
+// ============================================================
+// META DA PIRÂMIDE — régua de CALENDÁRIO (compromisso do mês), não o nível BP.
+// ============================================================
+// ⚠️⚠️ O ESTUDO TEM DUAS RÉGUAS E ELAS NÃO SÃO A MESMA COISA:
+//   `metaCurva.<esc>.cum`      = NÍVEL BP        (Geral D30 = 4,0646 sobre D0)
+//   `comp.canais.<esc>.cum`    = COMPROMISSO     (Geral D30 = 3,1941 sobre D0)  ← o degrau do mês
+// O compromisso é um DEGRAU até o BP, sempre mais baixo. Cobrar BP num mês em que o time se
+// comprometeu com o degrau faz a tela mentir pra baixo.
+// ⚠️ E o `MDD_BP`/`MDD_BP_FTD` das outras abas MISTURA as duas sem querer: a base FTD de lá é
+// `comp.cumFTD` (compromisso) e a base D0 é `metaCurva.cum` (nível BP) — ou seja, lá o mesmo card fica
+// mais difícil só de trocar o toggle de base. Esta aba NÃO herda isso: as duas bases saem do MESMO
+// bloco `comp.canais.<esc>`, então trocar a base muda o denominador e nada mais.
+//   base 'ftd' = comp.canais.<esc>.cumFTD[dia]  (comp.base = "M0/FTD")
+//   base 'd0'  = comp.canais.<esc>.cum[dia]
+//   M0         = comp.canais.<esc>.m0 (alvo de CALENDÁRIO: até o fim do mês do FTD, não é um dia da
+//                curva) — na base D0 é o mesmo alvo dividido pelo D0/FTD da própria régua.
+// Reconferido contra `Metas de Retenção Rev Ops (1).html` em 14/08/2026.
+const PIR_META = {
+  ftd: {
+    Geral:  { d0: 1.5260, d1: 1.8901, d3: 2.3302, d4: 2.4971, w1: 2.9323, w2: 3.6590, d30: 4.8742, m0: 3.6000 },
+    Google: { d0: 2.0076, d1: 2.6401, d3: 3.4072, d4: 3.6963, w1: 4.3960, w2: 5.4943, d30: 7.2639, m0: 5.3671 },
+    Meta:   { d0: 1.5418, d1: 1.8956, d3: 2.2817, d4: 2.4344, w1: 2.8407, w2: 3.5360, d30: 4.7543, m0: 3.4924 },
+  },
+  // base D0: o D0 é a própria âncora (1,00x) → sem meta, e a coluna nem vai pra tela.
+  d0: {
+    Geral:  { d1: 1.2386, d3: 1.5270, d4: 1.6364, w1: 1.9216, w2: 2.3977, d30: 3.1941, m0: 2.3591 },
+    Google: { d1: 1.3150, d3: 1.6971, d4: 1.8411, w1: 2.1896, w2: 2.7367, d30: 3.6181, m0: 2.6733 },
+    Meta:   { d1: 1.2294, d3: 1.4798, d4: 1.5789, w1: 1.8424, w2: 2.2934, d30: 3.0835, m0: 2.2651 },
+  },
+};
+// Mesma regra de escopo do resto do cockpit: sem canal (Total Casa ou Growth) = curva Geral; 1 canal =
+// a curva dele se o estudo declarou (só Google e Meta); 2+ canais ou canal sem curva = sem meta.
+// Faixa NÃO entra: o estudo calibrou no nível do canal.
+function pirBpScope_(chFilter, base) {
+  const T = PIR_META[base === 'ftd' ? 'ftd' : 'd0'];
+  const sel = chList_(chFilter);
+  if (sel.length === 0) return T.Geral;
+  if (sel.length === 1) return T[sel[0]] || null;
+  return null;
+}
 const PIR_RAMP = ['--pir1', '--pir2', '--pir3', '--pir4', '--pir5', '--pir6'];
 const PIR_INK  = ['--pirI1', '--pirI2', '--pirI3', '--pirI4', '--pirI5', '--pirI6'];
 
@@ -5072,7 +5111,7 @@ function TabPiramideCoorte({ retencaoFaixa, chFilter, meta, retFaixaLive }) {
   // Base D0 → a coluna D0 seria 1,00x em toda linha (é a própria âncora). Sai da tela, como na aba
   // Multiplicadores, senão gasta uma coluna inteira pra repetir uma constante.
   const cols = PIR_COLS.filter((c) => !(base === 'd0' && c.key === 'd0'));
-  const bpScope = mddBpScope_(chFilter, base);
+  const bpScope = pirBpScope_(chFilter, base);
   const chLbl = chLabel_(chFilter);
   const faixaLbl = faixaSel.length === 0 ? 'todas as faixas' : (faixaSel.length <= 2 ? faixaSel.map(fxLabel_).join(' + ') : faixaSel.length + ' faixas');
   const metaDe = (c) => (c.bp && bpScope) ? bpScope[c.bp] : null;
@@ -5199,10 +5238,14 @@ function TabPiramideCoorte({ retencaoFaixa, chFilter, meta, retFaixaLive }) {
               )}
             </tbody>
             <tfoot>
+              {/* TOTAL PRINCIPAL = TODAS as safras da janela, maduras ou não. É de propósito a MESMA
+                  conta da aba Multiplicadores e Retenção (soma as bases, depois divide, sem corte de
+                  maturação) — os dois números têm que bater à vírgula, senão alguém vai achar que uma
+                  das telas está errada. A leitura só-madura fica na linha de baixo, como contexto. */}
               <tr>
-                <td className="ch-name">Total · safras fechadas</td>
+                <td className="ch-name" title="Todas as safras da janela, inclusive as que ainda não fecharam o horizonte — mesma conta da aba Multiplicadores e Retenção.">Total · todas as safras</td>
                 {cols.map((c) => {
-                  const v = pirTotal_(fechadasDe(c), c, base);
+                  const v = pirTotal_(bins, c, base);
                   const mt = metaDe(c);
                   return <td key={c.key} className={c.sep ? 'pir-sep' : undefined}>
                     <span className={'pir-v' + (mt != null && v != null && v >= mt ? ' pir-meta' : '')}>{fmtDe(c)(v)}</span>
@@ -5210,15 +5253,16 @@ function TabPiramideCoorte({ retencaoFaixa, chFilter, meta, retFaixaLive }) {
                 })}
               </tr>
               <tr className="pir-alt">
-                <td>safras fechadas</td>
-                {cols.map((c) => <td key={c.key} className={c.sep ? 'pir-sep' : undefined}>{fechadasDe(c).length}/{bins.length}</td>)}
+                <td title="A mesma conta, mas só com as safras que já fecharam o horizonte da coluna. É o número comparável com a meta; a diferença pro total de cima é maturação, não performance.">Total · só safras fechadas</td>
+                {cols.map((c) => {
+                  const fe = fechadasDe(c);
+                  const suja = fe.length < bins.length;
+                  return <td key={c.key} className={(c.sep ? 'pir-sep ' : '') + (suja ? 'pir-suja' : '')}>{fmtDe(c)(pirTotal_(fe, c, base))}</td>;
+                })}
               </tr>
               <tr className="pir-alt">
-                <td>Total · todas as safras</td>
-                {cols.map((c) => {
-                  const suja = fechadasDe(c).length < bins.length;
-                  return <td key={c.key} className={(c.sep ? 'pir-sep ' : '') + (suja ? 'pir-suja' : '')}>{fmtDe(c)(pirTotal_(bins, c, base))}</td>;
-                })}
+                <td>safras fechadas</td>
+                {cols.map((c) => <td key={c.key} className={c.sep ? 'pir-sep' : undefined}>{fechadasDe(c).length}/{bins.length}</td>)}
               </tr>
             </tfoot>
           </table>
@@ -5229,13 +5273,18 @@ function TabPiramideCoorte({ retencaoFaixa, chFilter, meta, retFaixaLive }) {
           As células abertas mostram o <strong>acumulado corrente</strong> hachurado: dá pra acompanhar, mas ele só pode subir.
           {' '}<strong>Escala por coluna</strong>, calculada <strong>só sobre as células fechadas</strong> — comparar cor
           dentro da coluna faz sentido; entre colunas diferentes, não (D30 é naturalmente maior que D1).
-          {' '}<strong>As duas linhas de Total são a razão desta aba existir:</strong> “safras fechadas” usa só as safras
-          com o horizonte completo (é o número comparável com a meta), e “todas as safras” inclui as imaturas — é o
-          que as outras abas mostram. Quando as duas divergem muito, a diferença é maturação, não performance.
-          {' '}<strong>Meta</strong> = a curva do estudo (mesma da aba Métricas do dia a dia), por escopo: existe para
-          Geral, Google e Meta — em qualquer outro canal, ou com 2+ canais selecionados, some.
-          {' '}<strong>M0 fica sem meta</strong> de propósito: a curva do estudo é indexada por dia e M0 não é um dia
-          (é “até o fim do mês do FTD”); o alvo de M0 que existe no estudo está em outra régua.
+          {' '}<strong>O Total de cima usa TODAS as safras</strong>, maduras ou não — é a mesma conta da aba
+          <strong> Multiplicadores e Retenção</strong>, e os dois números batem à vírgula. A linha
+          “só safras fechadas” refaz a conta sem as imaturas: é o número comparável com a meta. A diferença
+          entre as duas é <strong>maturação, não performance</strong> — e cresce com o horizonte (o D1 quase
+          não sente; o D30 sente muito).
+          {' '}<strong>Meta = régua de CALENDÁRIO</strong> (o compromisso do mês, <code>comp.canais</code> do estudo),
+          nas duas bases — trocar entre <em>sobre FTD</em> e <em>sobre D0</em> muda o denominador e mais nada.
+          ⚠️ Ela é mais baixa que a meta da aba <strong>Métricas do dia a dia</strong> na base sobre D0, que usa o
+          <strong> nível BP</strong>: o compromisso é um degrau até o BP, não o BP. Existe para Geral, Google e
+          Meta — em outro canal, ou com 2+ canais selecionados, some.
+          {' '}<strong>M0</strong> tem alvo próprio (não é <code>cum[30]</code>): o horizonte dele varia com o dia da
+          safra, então o estudo declara o número à parte.
         </div>
       </div>
     </React.Fragment>

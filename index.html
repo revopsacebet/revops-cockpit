@@ -9243,48 +9243,47 @@ const PIR_COLS = [{
   lb: 'D1',
   hz: 'd1',
   acc: a => a.d0 + a.vd1,
-  bp: 'm1'
+  bp: 'd1'
 }, {
   key: 'd3',
   lb: 'D3',
   hz: 'd3',
   acc: a => a.d0 + a.vd3,
-  bp: 'm3'
+  bp: 'd3'
 }, {
   key: 'd4',
   lb: 'D4',
   hz: 'd4',
   acc: a => a.d0 + a.vd4,
-  bp: 'm4'
+  bp: 'd4'
 }, {
   key: 'w1',
   lb: 'D7',
   hz: 'w1',
   acc: a => a.d0 + a.vw1,
-  bp: 'm7'
+  bp: 'w1'
 }, {
   key: 'w2',
   lb: 'D14',
   hz: 'w2',
   acc: a => a.d0 + a.vw2,
-  bp: 'm14'
+  bp: 'w2'
 }, {
   key: 'd30',
   lb: 'D30',
   hz: 'd30',
   acc: a => a.d0 + a.vd30,
-  bp: 'm30'
+  bp: 'd30'
 },
-// M0 SEM meta de propósito: a curva do estudo é indexada por DIA e M0 não é um dia (é "até o fim do
-// mês do FTD"). O estudo tem um alvo de M0, mas ele vive em `comp.*` — que é o COMPROMISSO do mês, não
-// o NÍVEL BP que alimenta todas as outras colunas daqui. Misturar as duas réguas na mesma linha faria
-// a coluna mentir; então fica sem meta até alguém decidir qual régua vale.
+// M0 TEM meta: é o alvo de CALENDÁRIO do estudo (`comp.canais.<esc>.m0`), a mesma régua das outras
+// colunas desta aba. Não é um ponto da curva por dia — M0 é "até o fim do mês do FTD", horizonte que
+// varia com o dia da safra —, por isso o alvo é declarado à parte em vez de sair de cum[30].
 {
   key: 'm0',
   lb: 'M0',
   hz: 'm0',
   acc: a => a.d0 + a.vm0,
-  bp: null
+  bp: 'm0'
 }];
 // Agrupa as safras da janela em linhas da pirâmide. `ini`/`fim` guardam a borda real do bin — o `fim`
 // é quem decide maturação (ver pirFechada_) e o `ini` rotula a semana.
@@ -9355,6 +9354,97 @@ function pirEscala_(bins, col, base, dataMax) {
     max: Math.max.apply(null, vs)
   } : null;
 }
+// ============================================================
+// META DA PIRÂMIDE — régua de CALENDÁRIO (compromisso do mês), não o nível BP.
+// ============================================================
+// ⚠️⚠️ O ESTUDO TEM DUAS RÉGUAS E ELAS NÃO SÃO A MESMA COISA:
+//   `metaCurva.<esc>.cum`      = NÍVEL BP        (Geral D30 = 4,0646 sobre D0)
+//   `comp.canais.<esc>.cum`    = COMPROMISSO     (Geral D30 = 3,1941 sobre D0)  ← o degrau do mês
+// O compromisso é um DEGRAU até o BP, sempre mais baixo. Cobrar BP num mês em que o time se
+// comprometeu com o degrau faz a tela mentir pra baixo.
+// ⚠️ E o `MDD_BP`/`MDD_BP_FTD` das outras abas MISTURA as duas sem querer: a base FTD de lá é
+// `comp.cumFTD` (compromisso) e a base D0 é `metaCurva.cum` (nível BP) — ou seja, lá o mesmo card fica
+// mais difícil só de trocar o toggle de base. Esta aba NÃO herda isso: as duas bases saem do MESMO
+// bloco `comp.canais.<esc>`, então trocar a base muda o denominador e nada mais.
+//   base 'ftd' = comp.canais.<esc>.cumFTD[dia]  (comp.base = "M0/FTD")
+//   base 'd0'  = comp.canais.<esc>.cum[dia]
+//   M0         = comp.canais.<esc>.m0 (alvo de CALENDÁRIO: até o fim do mês do FTD, não é um dia da
+//                curva) — na base D0 é o mesmo alvo dividido pelo D0/FTD da própria régua.
+// Reconferido contra `Metas de Retenção Rev Ops (1).html` em 14/08/2026.
+const PIR_META = {
+  ftd: {
+    Geral: {
+      d0: 1.5260,
+      d1: 1.8901,
+      d3: 2.3302,
+      d4: 2.4971,
+      w1: 2.9323,
+      w2: 3.6590,
+      d30: 4.8742,
+      m0: 3.6000
+    },
+    Google: {
+      d0: 2.0076,
+      d1: 2.6401,
+      d3: 3.4072,
+      d4: 3.6963,
+      w1: 4.3960,
+      w2: 5.4943,
+      d30: 7.2639,
+      m0: 5.3671
+    },
+    Meta: {
+      d0: 1.5418,
+      d1: 1.8956,
+      d3: 2.2817,
+      d4: 2.4344,
+      w1: 2.8407,
+      w2: 3.5360,
+      d30: 4.7543,
+      m0: 3.4924
+    }
+  },
+  // base D0: o D0 é a própria âncora (1,00x) → sem meta, e a coluna nem vai pra tela.
+  d0: {
+    Geral: {
+      d1: 1.2386,
+      d3: 1.5270,
+      d4: 1.6364,
+      w1: 1.9216,
+      w2: 2.3977,
+      d30: 3.1941,
+      m0: 2.3591
+    },
+    Google: {
+      d1: 1.3150,
+      d3: 1.6971,
+      d4: 1.8411,
+      w1: 2.1896,
+      w2: 2.7367,
+      d30: 3.6181,
+      m0: 2.6733
+    },
+    Meta: {
+      d1: 1.2294,
+      d3: 1.4798,
+      d4: 1.5789,
+      w1: 1.8424,
+      w2: 2.2934,
+      d30: 3.0835,
+      m0: 2.2651
+    }
+  }
+};
+// Mesma regra de escopo do resto do cockpit: sem canal (Total Casa ou Growth) = curva Geral; 1 canal =
+// a curva dele se o estudo declarou (só Google e Meta); 2+ canais ou canal sem curva = sem meta.
+// Faixa NÃO entra: o estudo calibrou no nível do canal.
+function pirBpScope_(chFilter, base) {
+  const T = PIR_META[base === 'ftd' ? 'ftd' : 'd0'];
+  const sel = chList_(chFilter);
+  if (sel.length === 0) return T.Geral;
+  if (sel.length === 1) return T[sel[0]] || null;
+  return null;
+}
 const PIR_RAMP = ['--pir1', '--pir2', '--pir3', '--pir4', '--pir5', '--pir6'];
 const PIR_INK = ['--pirI1', '--pirI2', '--pirI3', '--pirI4', '--pirI5', '--pirI6'];
 function TabPiramideCoorte({
@@ -9377,7 +9467,7 @@ function TabPiramideCoorte({
   // Base D0 → a coluna D0 seria 1,00x em toda linha (é a própria âncora). Sai da tela, como na aba
   // Multiplicadores, senão gasta uma coluna inteira pra repetir uma constante.
   const cols = PIR_COLS.filter(c => !(base === 'd0' && c.key === 'd0'));
-  const bpScope = mddBpScope_(chFilter, base);
+  const bpScope = pirBpScope_(chFilter, base);
   const chLbl = chLabel_(chFilter);
   const faixaLbl = faixaSel.length === 0 ? 'todas as faixas' : faixaSel.length <= 2 ? faixaSel.map(fxLabel_).join(' + ') : faixaSel.length + ' faixas';
   const metaDe = c => c.bp && bpScope ? bpScope[c.bp] : null;
@@ -9553,9 +9643,10 @@ function TabPiramideCoorte({
       color: 'var(--text-muted)'
     }
   }, "sem safra na janela / recorte"))), /*#__PURE__*/React.createElement("tfoot", null, /*#__PURE__*/React.createElement("tr", null, /*#__PURE__*/React.createElement("td", {
-    className: "ch-name"
-  }, "Total \xB7 safras fechadas"), cols.map(c => {
-    const v = pirTotal_(fechadasDe(c), c, base);
+    className: "ch-name",
+    title: "Todas as safras da janela, inclusive as que ainda n\xE3o fecharam o horizonte \u2014 mesma conta da aba Multiplicadores e Reten\xE7\xE3o."
+  }, "Total \xB7 todas as safras"), cols.map(c => {
+    const v = pirTotal_(bins, c, base);
     const mt = metaDe(c);
     return /*#__PURE__*/React.createElement("td", {
       key: c.key,
@@ -9565,20 +9656,23 @@ function TabPiramideCoorte({
     }, fmtDe(c)(v)));
   })), /*#__PURE__*/React.createElement("tr", {
     className: "pir-alt"
-  }, /*#__PURE__*/React.createElement("td", null, "safras fechadas"), cols.map(c => /*#__PURE__*/React.createElement("td", {
-    key: c.key,
-    className: c.sep ? 'pir-sep' : undefined
-  }, fechadasDe(c).length, "/", bins.length))), /*#__PURE__*/React.createElement("tr", {
-    className: "pir-alt"
-  }, /*#__PURE__*/React.createElement("td", null, "Total \xB7 todas as safras"), cols.map(c => {
-    const suja = fechadasDe(c).length < bins.length;
+  }, /*#__PURE__*/React.createElement("td", {
+    title: "A mesma conta, mas s\xF3 com as safras que j\xE1 fecharam o horizonte da coluna. \xC9 o n\xFAmero compar\xE1vel com a meta; a diferen\xE7a pro total de cima \xE9 matura\xE7\xE3o, n\xE3o performance."
+  }, "Total \xB7 s\xF3 safras fechadas"), cols.map(c => {
+    const fe = fechadasDe(c);
+    const suja = fe.length < bins.length;
     return /*#__PURE__*/React.createElement("td", {
       key: c.key,
       className: (c.sep ? 'pir-sep ' : '') + (suja ? 'pir-suja' : '')
-    }, fmtDe(c)(pirTotal_(bins, c, base)));
-  }))))), /*#__PURE__*/React.createElement("div", {
+    }, fmtDe(c)(pirTotal_(fe, c, base)));
+  })), /*#__PURE__*/React.createElement("tr", {
+    className: "pir-alt"
+  }, /*#__PURE__*/React.createElement("td", null, "safras fechadas"), cols.map(c => /*#__PURE__*/React.createElement("td", {
+    key: c.key,
+    className: c.sep ? 'pir-sep' : undefined
+  }, fechadasDe(c).length, "/", bins.length)))))), /*#__PURE__*/React.createElement("div", {
     className: "ch-note"
-  }, /*#__PURE__*/React.createElement("strong", null, "Por que a tabela \xE9 uma escada."), " Uma c\xE9lula s\xF3 fecha quando ", /*#__PURE__*/React.createElement("strong", null, "safra + horizonte \u2264 ", dataMax ? fmtBR_(dataMax) : 'último dia com dado'), ". A safra de ontem n\xE3o tem D7 \u2014 e o n\xFAmero que apareceria ali n\xE3o \xE9 um D7 baixo, \xE9 um D7 pela metade. As c\xE9lulas abertas mostram o ", /*#__PURE__*/React.createElement("strong", null, "acumulado corrente"), " hachurado: d\xE1 pra acompanhar, mas ele s\xF3 pode subir.", ' ', /*#__PURE__*/React.createElement("strong", null, "Escala por coluna"), ", calculada ", /*#__PURE__*/React.createElement("strong", null, "s\xF3 sobre as c\xE9lulas fechadas"), " \u2014 comparar cor dentro da coluna faz sentido; entre colunas diferentes, n\xE3o (D30 \xE9 naturalmente maior que D1).", ' ', /*#__PURE__*/React.createElement("strong", null, "As duas linhas de Total s\xE3o a raz\xE3o desta aba existir:"), " \u201Csafras fechadas\u201D usa s\xF3 as safras com o horizonte completo (\xE9 o n\xFAmero compar\xE1vel com a meta), e \u201Ctodas as safras\u201D inclui as imaturas \u2014 \xE9 o que as outras abas mostram. Quando as duas divergem muito, a diferen\xE7a \xE9 matura\xE7\xE3o, n\xE3o performance.", ' ', /*#__PURE__*/React.createElement("strong", null, "Meta"), " = a curva do estudo (mesma da aba M\xE9tricas do dia a dia), por escopo: existe para Geral, Google e Meta \u2014 em qualquer outro canal, ou com 2+ canais selecionados, some.", ' ', /*#__PURE__*/React.createElement("strong", null, "M0 fica sem meta"), " de prop\xF3sito: a curva do estudo \xE9 indexada por dia e M0 n\xE3o \xE9 um dia (\xE9 \u201Cat\xE9 o fim do m\xEAs do FTD\u201D); o alvo de M0 que existe no estudo est\xE1 em outra r\xE9gua.")));
+  }, /*#__PURE__*/React.createElement("strong", null, "Por que a tabela \xE9 uma escada."), " Uma c\xE9lula s\xF3 fecha quando ", /*#__PURE__*/React.createElement("strong", null, "safra + horizonte \u2264 ", dataMax ? fmtBR_(dataMax) : 'último dia com dado'), ". A safra de ontem n\xE3o tem D7 \u2014 e o n\xFAmero que apareceria ali n\xE3o \xE9 um D7 baixo, \xE9 um D7 pela metade. As c\xE9lulas abertas mostram o ", /*#__PURE__*/React.createElement("strong", null, "acumulado corrente"), " hachurado: d\xE1 pra acompanhar, mas ele s\xF3 pode subir.", ' ', /*#__PURE__*/React.createElement("strong", null, "Escala por coluna"), ", calculada ", /*#__PURE__*/React.createElement("strong", null, "s\xF3 sobre as c\xE9lulas fechadas"), " \u2014 comparar cor dentro da coluna faz sentido; entre colunas diferentes, n\xE3o (D30 \xE9 naturalmente maior que D1).", ' ', /*#__PURE__*/React.createElement("strong", null, "O Total de cima usa TODAS as safras"), ", maduras ou n\xE3o \u2014 \xE9 a mesma conta da aba", /*#__PURE__*/React.createElement("strong", null, " Multiplicadores e Reten\xE7\xE3o"), ", e os dois n\xFAmeros batem \xE0 v\xEDrgula. A linha \u201Cs\xF3 safras fechadas\u201D refaz a conta sem as imaturas: \xE9 o n\xFAmero compar\xE1vel com a meta. A diferen\xE7a entre as duas \xE9 ", /*#__PURE__*/React.createElement("strong", null, "matura\xE7\xE3o, n\xE3o performance"), " \u2014 e cresce com o horizonte (o D1 quase n\xE3o sente; o D30 sente muito).", ' ', /*#__PURE__*/React.createElement("strong", null, "Meta = r\xE9gua de CALEND\xC1RIO"), " (o compromisso do m\xEAs, ", /*#__PURE__*/React.createElement("code", null, "comp.canais"), " do estudo), nas duas bases \u2014 trocar entre ", /*#__PURE__*/React.createElement("em", null, "sobre FTD"), " e ", /*#__PURE__*/React.createElement("em", null, "sobre D0"), " muda o denominador e mais nada. \u26A0\uFE0F Ela \xE9 mais baixa que a meta da aba ", /*#__PURE__*/React.createElement("strong", null, "M\xE9tricas do dia a dia"), " na base sobre D0, que usa o", /*#__PURE__*/React.createElement("strong", null, " n\xEDvel BP"), ": o compromisso \xE9 um degrau at\xE9 o BP, n\xE3o o BP. Existe para Geral, Google e Meta \u2014 em outro canal, ou com 2+ canais selecionados, some.", ' ', /*#__PURE__*/React.createElement("strong", null, "M0"), " tem alvo pr\xF3prio (n\xE3o \xE9 ", /*#__PURE__*/React.createElement("code", null, "cum[30]"), "): o horizonte dele varia com o dia da safra, ent\xE3o o estudo declara o n\xFAmero \xE0 parte.")));
 }
 const TABS = [{
   id: 'farol',
