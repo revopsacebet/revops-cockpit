@@ -3295,6 +3295,26 @@ function applyScenarioBp_(M, farol, scenData, chFilter) {
       };
     }
   }
+  // --- Retenção mensal (abas *_Revenue do plano, backend v75+) — SÓ Total da Casa ---
+  // As 3 passagens saem da coluna do mês da janela na aba do cenário ATIVO: "M+1 %" → M0→M1,
+  // "M+2 %" → M1→M2, "M3+ %" → M3+ (ago/26 — Meta 75/72/88 · Conservador 70/67/86 · Forecast 54/65/86).
+  // Antes M1→M2 e M3+ eram constantes FLAT no backend (75%/88%) que não seguiam cenário nenhum — e o
+  // 75% era, na verdade, o "M+1 %" do Orçado sentado no card errado (o M+2 % do Orçado é 72%).
+  // Sem valor no plano pra aquele mês → NÃO zera: mantém o BP do backend (applyBpRetention_).
+  // ⚠️ É taxa MENSAL CHEIA e não é prorrateada (retenção é razão, não volume — não dá pra fatiar como
+  // o Turnover). Numa janela MTD parcial o ACT fica estruturalmente abaixo da meta do mês fechado;
+  // era assim antes também, agora com o número do plano em vez da constante. Daí o bpTitle.
+  const ret = scenData.retention;
+  if (ret && isTotal) {
+    const setRet = (m, v) => (pos(v) != null)
+      ? { ...setBp(m, v), bpTitle: 'Taxa do MÊS INTEIRO no plano (aba de cenário da planilha), sem prorrateio — retenção é razão, não volume. Numa janela parcial o realizado ainda está acumulando.' }
+      : m;
+    newM = { ...newM,
+      retM0M1:   setRet(newM.retM0M1,   ret.m0m1),
+      retM1M2:   setRet(newM.retM1M2,   ret.m1m2),
+      retM3plus: setRet(newM.retM3plus, ret.m3plus),
+    };
+  }
   return { M: newM, farol: newFarol };
 }
 
