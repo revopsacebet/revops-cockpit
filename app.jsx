@@ -5126,7 +5126,12 @@ function TabPiramideCoorte({ retencaoFaixa, chFilter, meta, retFaixaLive }) {
   const [gran, setGran] = usePersistedState('rvops:pirGran', 'day');
   const [base, setBase] = usePersistedState('rvops:pirBase', 'ftd');
   const [faixaSel, setFaixaSel] = React.useState([]);
-  const [hideOpen, setHideOpen] = usePersistedState('rvops:pirHideOpen', false);
+  // ⚠️ Este toggle mexe no CÁLCULO, não só na tela. Ele substituiu um "ocultar os valores que ainda não
+  // fecharam" que era só cosmético (pintava o texto de transparente) enquanto o Total seguia somando as
+  // safras imaturas — a tela ficava limpa e o número, contaminado, que é o pior dos dois mundos.
+  // OFF (padrão): tudo entra, e o Total bate com a aba Multiplicadores e Retenção.
+  // ON: safra que não fechou o horizonte sai da célula E do Total daquela coluna.
+  const [soMaduras, setSoMaduras] = usePersistedState('rvops:pirSoMaduras', false);
   const dataMax = meta && meta.dataMaxDate;
   const rows = benchApostouRows_(retencaoFaixa || []);
   const selCh = chSelector_(chFilter);
@@ -5164,6 +5169,16 @@ function TabPiramideCoorte({ retencaoFaixa, chFilter, meta, retFaixaLive }) {
     const aberta = !pirFechada_(b.fim, c.hz, dataMax);
     const mt = metaDe(c);
     const bateuAqui = !aberta && mt != null && v != null && v >= mt;
+    // Com o toggle ligado a célula imatura não vira "número menor": vira VAZIO. Mostrar um parcial
+    // apagadinho e tirá-lo da conta ao mesmo tempo daria duas versões da mesma coluna na mesma tela.
+    if (aberta && soMaduras) {
+      const fecha = (c.hz === 'm0') ? pirFimDoMes_(b.fim) : isoAddDays_(b.fim, PIR_HZ[c.hz]);
+      return (
+        <td key={c.key} className={c.sep ? 'pir-sep' : undefined}>
+          <span className="pir-v pir-excl" title={'Fora do cálculo: esta safra só fecha o horizonte em ' + fmtBR_(fecha) + '. Desligue “só safras maduras” para ver o acumulado corrente.'}>·</span>
+        </td>
+      );
+    }
     const cls = ['pir-v', aberta ? 'pir-open' : '', bateuAqui ? 'pir-meta' : '', c.plain ? 'pir-flat' : ''].filter(Boolean).join(' ');
     let st = null, dica;
     if (aberta) {
@@ -5223,9 +5238,10 @@ function TabPiramideCoorte({ retencaoFaixa, chFilter, meta, retFaixaLive }) {
           <button className={`preset-btn ${base === 'd0' ? 'active' : ''}`} onClick={() => setBase('d0')}
                   title="Acumulado ÷ depósito do D0. A coluna D0 sai (seria 1,00x sempre).">sobre D0</button>
         </div>
-        <label className="pir-tgl" style={{ marginLeft: '12px' }}>
-          <input type="checkbox" checked={!!hideOpen} onChange={(e) => setHideOpen(e.target.checked)} />
-          Ocultar o que ainda não fechou
+        <label className="pir-tgl" style={{ marginLeft: '12px' }}
+               title="Tira do CÁLCULO (não só da tela) toda safra que ainda não fechou o horizonte da coluna. Ligado, o Total de cada coluna usa só coorte madura — é o número comparável com a meta. Desligado, entra tudo e o Total bate com a aba Multiplicadores e Retenção.">
+          <input type="checkbox" checked={!!soMaduras} onChange={(e) => setSoMaduras(e.target.checked)} />
+          Só safras maduras <span style={{ opacity: .6 }}>(tira as imaturas do cálculo)</span>
         </label>
       </div>
       <div className="support">
@@ -5238,8 +5254,9 @@ function TabPiramideCoorte({ retencaoFaixa, chFilter, meta, retFaixaLive }) {
           <span>Escala <i className="pir-ramp">{PIR_RAMP.map((v) => <i key={v} style={{ background: 'var(' + v + ')' }} />)}</i> menor → maior</span>
           <span><i className="pir-sw pir-sw-meta">2,47x</i> bateu a meta</span>
           <span><i className="pir-sw pir-sw-open" /> ainda não fechou</span>
+          {soMaduras && <span style={{ color: 'var(--accent-yellow)' }}>⚠ só safras maduras: as imaturas estão FORA do cálculo</span>}
         </div>
-        <div className={`table-scroll tall ${hideOpen ? 'pir-hide-open' : ''}`}>
+        <div className="table-scroll tall">
           <table className="ch-table pir-table">
             <thead>
               <tr>
@@ -5271,10 +5288,18 @@ function TabPiramideCoorte({ retencaoFaixa, chFilter, meta, retFaixaLive }) {
                   conta da aba Multiplicadores e Retenção (soma as bases, depois divide, sem corte de
                   maturação) — os dois números têm que bater à vírgula, senão alguém vai achar que uma
                   das telas está errada. A leitura só-madura fica na linha de baixo, como contexto. */}
+              {/* O total PRINCIPAL segue o toggle. A outra leitura NUNCA some — fica na linha de baixo,
+                  esmaecida: quem liga o filtro continua vendo o que ele custou, e quem desliga continua
+                  vendo o número honesto de coorte. Esconder uma das duas é como o número errado vira
+                  consenso. */}
               <tr>
-                <td className="ch-name" title="Todas as safras da janela, inclusive as que ainda não fecharam o horizonte — mesma conta da aba Multiplicadores e Retenção.">Total · todas as safras</td>
+                <td className="ch-name" title={soMaduras
+                  ? 'Só as safras que já fecharam o horizonte de cada coluna. É o número comparável com a meta.'
+                  : 'Todas as safras da janela, inclusive as que ainda não fecharam — mesma conta da aba Multiplicadores e Retenção.'}>
+                  {soMaduras ? 'Total · só safras maduras' : 'Total · todas as safras'}
+                </td>
                 {cols.map((c) => {
-                  const v = pirTotal_(bins, c, base);
+                  const v = pirTotal_(soMaduras ? fechadasDe(c) : bins, c, base);
                   const mt = metaDe(c);
                   return <td key={c.key} className={c.sep ? 'pir-sep' : undefined}>
                     <span className={'pir-v' + (mt != null && v != null && v >= mt ? ' pir-meta' : '')}>{fmtDe(c)(v)}</span>
@@ -5282,11 +5307,16 @@ function TabPiramideCoorte({ retencaoFaixa, chFilter, meta, retFaixaLive }) {
                 })}
               </tr>
               <tr className="pir-alt">
-                <td title="A mesma conta, mas só com as safras que já fecharam o horizonte da coluna. É o número comparável com a meta; a diferença pro total de cima é maturação, não performance.">Total · só safras fechadas</td>
+                <td title={soMaduras
+                  ? 'A mesma conta COM as safras imaturas — é o que a aba Multiplicadores e Retenção mostra. A diferença pra linha de cima é maturação, não performance.'
+                  : 'A mesma conta SEM as safras imaturas. A diferença pra linha de cima é maturação, não performance.'}>
+                  {soMaduras ? 'com as imaturas (= Multiplicadores)' : 'sem as imaturas'}
+                </td>
                 {cols.map((c) => {
                   const fe = fechadasDe(c);
                   const suja = fe.length < bins.length;
-                  return <td key={c.key} className={(c.sep ? 'pir-sep ' : '') + (suja ? 'pir-suja' : '')}>{fmtDe(c)(pirTotal_(fe, c, base))}</td>;
+                  const v = pirTotal_(soMaduras ? bins : fe, c, base);
+                  return <td key={c.key} className={(c.sep ? 'pir-sep ' : '') + (suja ? 'pir-suja' : '')}>{fmtDe(c)(v)}</td>;
                 })}
               </tr>
               <tr className="pir-alt">
@@ -5302,11 +5332,12 @@ function TabPiramideCoorte({ retencaoFaixa, chFilter, meta, retFaixaLive }) {
           As células abertas mostram o <strong>acumulado corrente</strong> hachurado: dá pra acompanhar, mas ele só pode subir.
           {' '}<strong>Escala por coluna</strong>, calculada <strong>só sobre as células fechadas</strong> — comparar cor
           dentro da coluna faz sentido; entre colunas diferentes, não (D30 é naturalmente maior que D1).
-          {' '}<strong>O Total de cima usa TODAS as safras</strong>, maduras ou não — é a mesma conta da aba
-          <strong> Multiplicadores e Retenção</strong>, e os dois números batem à vírgula. A linha
-          “só safras fechadas” refaz a conta sem as imaturas: é o número comparável com a meta. A diferença
-          entre as duas é <strong>maturação, não performance</strong> — e cresce com o horizonte (o D1 quase
-          não sente; o D30 sente muito).
+          {' '}<strong>O toggle “só safras maduras” muda o CÁLCULO, não só a tela:</strong> ligado, toda safra
+          que ainda não fechou o horizonte da coluna sai da célula <em>e</em> do Total. Desligado (padrão),
+          entra tudo e o Total bate à vírgula com a aba <strong>Multiplicadores e Retenção</strong>.
+          As duas leituras aparecem sempre — a segunda linha do rodapé é a que o toggle não escolheu —, porque a
+          diferença entre elas é <strong>maturação, não performance</strong>, e ela cresce com o horizonte
+          (o D1 quase não sente; o D30 sente muito).
           {' '}<strong>Meta = régua de CALENDÁRIO</strong> (o compromisso do mês, <code>comp.canais</code> do estudo),
           nas duas bases — trocar entre <em>sobre FTD</em> e <em>sobre D0</em> muda o denominador e mais nada.
           ⚠️ Ela é mais baixa que a meta da aba <strong>Métricas do dia a dia</strong> na base sobre D0, que usa o

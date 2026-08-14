@@ -396,14 +396,19 @@
   .ch-band-verde { color: var(--positive); font-weight: 600; }
   .ch-band-amarelo { color: var(--warning); font-weight: 600; }
   .ch-band-vermelho { color: var(--negative); font-weight: 600; }
-  /* Pirâmide de Coorte — rampa sequencial VERDE de magnitude (uma cor só, luminosidade crescente).
-     Versão ESCURA da rampa: no fundo preto do cockpit o passo mais alto é o mais CLARO, senão o valor
-     maior seria o menos visível. A tinta (--pirI*) é fixada por passo pra garantir contraste do texto.
-     ⚠️ Este verde é ESCALA (magnitude), não farol: quem diz "bateu a meta" aqui é a fonte amarela.
-     Por isso a rampa não usa --positive/--negative, que já têm significado de atingimento no resto do app. */
+  /* Pirâmide de Coorte — rampa sequencial VERDE de magnitude: QUANTO MELHOR, MAIS VERDE.
+     ⚠️ 2026-08-14 (pedido do Luis): a rampa anterior ia de verde escuro (baixo) a verde PÁLIDO (alto) —
+     tecnicamente monotônica em luminosidade, mas lida ao contrário: o valor melhor saía lavado, quase
+     branco, e o pior é que era o mais chamativo. Agora sobe em SATURAÇÃO junto com a luminosidade: o
+     passo baixo é quase o fundo (verde apagado) e o alto é verde vivo. Fica óbvio de longe qual safra
+     puxou — que é pra isso que a aba existe.
+     A tinta (--pirI*) é fixada por passo, medida contra o fundo: branco nos 4 primeiros (os escuros),
+     preto nos 2 últimos (os vivos) — todos acima de 4,5:1.
+     ⚠️ Este verde é ESCALA (magnitude), não farol: quem diz "bateu a meta" aqui é a fonte amarela. Por
+     isso não usa --positive/--negative, que já significam atingimento no resto do app. */
   :root {
-    --pir1: #1d6839; --pir2: #2f854d; --pir3: #4ba166; --pir4: #6ebc85; --pir5: #97d6a7; --pir6: #c8e7cf;
-    --pirI1: #ffffff; --pirI2: #ffffff; --pirI3: #0b0b0b; --pirI4: #0b0b0b; --pirI5: #0b0b0b; --pirI6: #0b0b0b;
+    --pir1: #0d2b19; --pir2: #124a27; --pir3: #176b36; --pir4: #17803e; --pir5: #22b357; --pir6: #35d96b;
+    --pirI1: #ffffff; --pirI2: #ffffff; --pirI3: #ffffff; --pirI4: #ffffff; --pirI5: #0b0b0b; --pirI6: #0b0b0b;
     --pir-open: #f87171;
   }
   .pir-table th, .pir-table td { padding: 3px 6px; font-size: 11.5px; }
@@ -426,7 +431,9 @@
      par de risco pra daltonismo, então a distinção não pode depender só da cor. */
   .pir-v.pir-open { color: var(--pir-open); font-weight: 500; background: rgba(248,113,113,.05);
                     background-image: repeating-linear-gradient(45deg, transparent 0 3px, rgba(248,113,113,.20) 3px 4.5px); }
-  .pir-hide-open .pir-v.pir-open { color: transparent; }
+  /* célula fora do cálculo (toggle "só safras maduras"): não pode parecer valor nem parecer zero.
+     Um ponto discreto mantém a linha do grid e deixa a escada ainda mais legível que a hachura. */
+  .pir-v.pir-excl { color: var(--text-dim); font-weight: 400; }
   .pir-table tfoot .pir-alt td { font-weight: 500; color: var(--text-muted); font-size: 10.5px;
                                  border-top: 0; padding-top: 0; }
   .pir-table tfoot td.pir-suja { color: var(--pir-open); }   /* total que mistura safra imatura */
@@ -438,7 +445,7 @@
   .pir-sw { width: 13px; height: 13px; border-radius: 3px; flex: none; border: 1px solid var(--border); }
   .pir-sw-open { background: rgba(248,113,113,.05); border-color: var(--pir-open);
                  background-image: repeating-linear-gradient(45deg, transparent 0 2px, rgba(248,113,113,.45) 2px 3.5px); }
-  .pir-sw-meta { background: var(--pir3); border: 0; width: auto; height: auto; padding: 1px 5px;
+  .pir-sw-meta { background: var(--pir5); border: 0; width: auto; height: auto; padding: 1px 5px;
                  border-radius: 3px; color: var(--accent-yellow); font-weight: 700; font-size: 10px;
                  font-variant-numeric: tabular-nums; font-style: normal;
                  text-shadow: 0 0 2px rgba(0,0,0,.95), 0 0 4px rgba(0,0,0,.7); }
@@ -9488,7 +9495,12 @@ function TabPiramideCoorte({
   const [gran, setGran] = usePersistedState('rvops:pirGran', 'day');
   const [base, setBase] = usePersistedState('rvops:pirBase', 'ftd');
   const [faixaSel, setFaixaSel] = React.useState([]);
-  const [hideOpen, setHideOpen] = usePersistedState('rvops:pirHideOpen', false);
+  // ⚠️ Este toggle mexe no CÁLCULO, não só na tela. Ele substituiu um "ocultar os valores que ainda não
+  // fecharam" que era só cosmético (pintava o texto de transparente) enquanto o Total seguia somando as
+  // safras imaturas — a tela ficava limpa e o número, contaminado, que é o pior dos dois mundos.
+  // OFF (padrão): tudo entra, e o Total bate com a aba Multiplicadores e Retenção.
+  // ON: safra que não fechou o horizonte sai da célula E do Total daquela coluna.
+  const [soMaduras, setSoMaduras] = usePersistedState('rvops:pirSoMaduras', false);
   const dataMax = meta && meta.dataMaxDate;
   const rows = benchApostouRows_(retencaoFaixa || []);
   const selCh = chSelector_(chFilter);
@@ -9527,6 +9539,18 @@ function TabPiramideCoorte({
     const aberta = !pirFechada_(b.fim, c.hz, dataMax);
     const mt = metaDe(c);
     const bateuAqui = !aberta && mt != null && v != null && v >= mt;
+    // Com o toggle ligado a célula imatura não vira "número menor": vira VAZIO. Mostrar um parcial
+    // apagadinho e tirá-lo da conta ao mesmo tempo daria duas versões da mesma coluna na mesma tela.
+    if (aberta && soMaduras) {
+      const fecha = c.hz === 'm0' ? pirFimDoMes_(b.fim) : isoAddDays_(b.fim, PIR_HZ[c.hz]);
+      return /*#__PURE__*/React.createElement("td", {
+        key: c.key,
+        className: c.sep ? 'pir-sep' : undefined
+      }, /*#__PURE__*/React.createElement("span", {
+        className: "pir-v pir-excl",
+        title: 'Fora do cálculo: esta safra só fecha o horizonte em ' + fmtBR_(fecha) + '. Desligue “só safras maduras” para ver o acumulado corrente.'
+      }, "\xB7"));
+    }
     const cls = ['pir-v', aberta ? 'pir-open' : '', bateuAqui ? 'pir-meta' : '', c.plain ? 'pir-flat' : ''].filter(Boolean).join(' ');
     let st = null,
       dica;
@@ -9632,12 +9656,17 @@ function TabPiramideCoorte({
     className: "pir-tgl",
     style: {
       marginLeft: '12px'
-    }
+    },
+    title: "Tira do C\xC1LCULO (n\xE3o s\xF3 da tela) toda safra que ainda n\xE3o fechou o horizonte da coluna. Ligado, o Total de cada coluna usa s\xF3 coorte madura \u2014 \xE9 o n\xFAmero compar\xE1vel com a meta. Desligado, entra tudo e o Total bate com a aba Multiplicadores e Reten\xE7\xE3o."
   }, /*#__PURE__*/React.createElement("input", {
     type: "checkbox",
-    checked: !!hideOpen,
-    onChange: e => setHideOpen(e.target.checked)
-  }), "Ocultar o que ainda n\xE3o fechou")), /*#__PURE__*/React.createElement("div", {
+    checked: !!soMaduras,
+    onChange: e => setSoMaduras(e.target.checked)
+  }), "S\xF3 safras maduras ", /*#__PURE__*/React.createElement("span", {
+    style: {
+      opacity: .6
+    }
+  }, "(tira as imaturas do c\xE1lculo)"))), /*#__PURE__*/React.createElement("div", {
     className: "support"
   }, /*#__PURE__*/React.createElement("div", {
     className: "support-title"
@@ -9654,8 +9683,12 @@ function TabPiramideCoorte({
     className: "pir-sw pir-sw-meta"
   }, "2,47x"), " bateu a meta"), /*#__PURE__*/React.createElement("span", null, /*#__PURE__*/React.createElement("i", {
     className: "pir-sw pir-sw-open"
-  }), " ainda n\xE3o fechou")), /*#__PURE__*/React.createElement("div", {
-    className: `table-scroll tall ${hideOpen ? 'pir-hide-open' : ''}`
+  }), " ainda n\xE3o fechou"), soMaduras && /*#__PURE__*/React.createElement("span", {
+    style: {
+      color: 'var(--accent-yellow)'
+    }
+  }, "\u26A0 s\xF3 safras maduras: as imaturas est\xE3o FORA do c\xE1lculo")), /*#__PURE__*/React.createElement("div", {
+    className: "table-scroll tall"
   }, /*#__PURE__*/React.createElement("table", {
     className: "ch-table pir-table"
   }, /*#__PURE__*/React.createElement("thead", null, /*#__PURE__*/React.createElement("tr", null, /*#__PURE__*/React.createElement("th", null, gran === 'week' ? 'Semana do FTD' : 'Safra'), cols.map(c => {
@@ -9678,9 +9711,9 @@ function TabPiramideCoorte({
     }
   }, "sem safra na janela / recorte"))), /*#__PURE__*/React.createElement("tfoot", null, /*#__PURE__*/React.createElement("tr", null, /*#__PURE__*/React.createElement("td", {
     className: "ch-name",
-    title: "Todas as safras da janela, inclusive as que ainda n\xE3o fecharam o horizonte \u2014 mesma conta da aba Multiplicadores e Reten\xE7\xE3o."
-  }, "Total \xB7 todas as safras"), cols.map(c => {
-    const v = pirTotal_(bins, c, base);
+    title: soMaduras ? 'Só as safras que já fecharam o horizonte de cada coluna. É o número comparável com a meta.' : 'Todas as safras da janela, inclusive as que ainda não fecharam — mesma conta da aba Multiplicadores e Retenção.'
+  }, soMaduras ? 'Total · só safras maduras' : 'Total · todas as safras'), cols.map(c => {
+    const v = pirTotal_(soMaduras ? fechadasDe(c) : bins, c, base);
     const mt = metaDe(c);
     return /*#__PURE__*/React.createElement("td", {
       key: c.key,
@@ -9691,14 +9724,15 @@ function TabPiramideCoorte({
   })), /*#__PURE__*/React.createElement("tr", {
     className: "pir-alt"
   }, /*#__PURE__*/React.createElement("td", {
-    title: "A mesma conta, mas s\xF3 com as safras que j\xE1 fecharam o horizonte da coluna. \xC9 o n\xFAmero compar\xE1vel com a meta; a diferen\xE7a pro total de cima \xE9 matura\xE7\xE3o, n\xE3o performance."
-  }, "Total \xB7 s\xF3 safras fechadas"), cols.map(c => {
+    title: soMaduras ? 'A mesma conta COM as safras imaturas — é o que a aba Multiplicadores e Retenção mostra. A diferença pra linha de cima é maturação, não performance.' : 'A mesma conta SEM as safras imaturas. A diferença pra linha de cima é maturação, não performance.'
+  }, soMaduras ? 'com as imaturas (= Multiplicadores)' : 'sem as imaturas'), cols.map(c => {
     const fe = fechadasDe(c);
     const suja = fe.length < bins.length;
+    const v = pirTotal_(soMaduras ? bins : fe, c, base);
     return /*#__PURE__*/React.createElement("td", {
       key: c.key,
       className: (c.sep ? 'pir-sep ' : '') + (suja ? 'pir-suja' : '')
-    }, fmtDe(c)(pirTotal_(fe, c, base)));
+    }, fmtDe(c)(v));
   })), /*#__PURE__*/React.createElement("tr", {
     className: "pir-alt"
   }, /*#__PURE__*/React.createElement("td", null, "safras fechadas"), cols.map(c => /*#__PURE__*/React.createElement("td", {
@@ -9706,7 +9740,7 @@ function TabPiramideCoorte({
     className: c.sep ? 'pir-sep' : undefined
   }, fechadasDe(c).length, "/", bins.length)))))), /*#__PURE__*/React.createElement("div", {
     className: "ch-note"
-  }, /*#__PURE__*/React.createElement("strong", null, "Por que a tabela \xE9 uma escada."), " Uma c\xE9lula s\xF3 fecha quando ", /*#__PURE__*/React.createElement("strong", null, "safra + horizonte \u2264 ", dataMax ? fmtBR_(dataMax) : 'último dia com dado'), ". A safra de ontem n\xE3o tem D7 \u2014 e o n\xFAmero que apareceria ali n\xE3o \xE9 um D7 baixo, \xE9 um D7 pela metade. As c\xE9lulas abertas mostram o ", /*#__PURE__*/React.createElement("strong", null, "acumulado corrente"), " hachurado: d\xE1 pra acompanhar, mas ele s\xF3 pode subir.", ' ', /*#__PURE__*/React.createElement("strong", null, "Escala por coluna"), ", calculada ", /*#__PURE__*/React.createElement("strong", null, "s\xF3 sobre as c\xE9lulas fechadas"), " \u2014 comparar cor dentro da coluna faz sentido; entre colunas diferentes, n\xE3o (D30 \xE9 naturalmente maior que D1).", ' ', /*#__PURE__*/React.createElement("strong", null, "O Total de cima usa TODAS as safras"), ", maduras ou n\xE3o \u2014 \xE9 a mesma conta da aba", /*#__PURE__*/React.createElement("strong", null, " Multiplicadores e Reten\xE7\xE3o"), ", e os dois n\xFAmeros batem \xE0 v\xEDrgula. A linha \u201Cs\xF3 safras fechadas\u201D refaz a conta sem as imaturas: \xE9 o n\xFAmero compar\xE1vel com a meta. A diferen\xE7a entre as duas \xE9 ", /*#__PURE__*/React.createElement("strong", null, "matura\xE7\xE3o, n\xE3o performance"), " \u2014 e cresce com o horizonte (o D1 quase n\xE3o sente; o D30 sente muito).", ' ', /*#__PURE__*/React.createElement("strong", null, "Meta = r\xE9gua de CALEND\xC1RIO"), " (o compromisso do m\xEAs, ", /*#__PURE__*/React.createElement("code", null, "comp.canais"), " do estudo), nas duas bases \u2014 trocar entre ", /*#__PURE__*/React.createElement("em", null, "sobre FTD"), " e ", /*#__PURE__*/React.createElement("em", null, "sobre D0"), " muda o denominador e mais nada. \u26A0\uFE0F Ela \xE9 mais baixa que a meta da aba ", /*#__PURE__*/React.createElement("strong", null, "M\xE9tricas do dia a dia"), " na base sobre D0, que usa o", /*#__PURE__*/React.createElement("strong", null, " n\xEDvel BP"), ": o compromisso \xE9 um degrau at\xE9 o BP, n\xE3o o BP.", ' ', /*#__PURE__*/React.createElement("strong", null, "Growth e Total da Casa t\xEAm metas SEPARADAS."), " A curva de dias do estudo \xE9 do", /*#__PURE__*/React.createElement("strong", null, " Total da Casa"), " \u2014 medido contra julho/26, ela erra 5,6% na casa e 17,0% no growth. Em ", /*#__PURE__*/React.createElement("em", null, "Canais Growth"), " a \xFAnica meta \xE9 a de ", /*#__PURE__*/React.createElement("strong", null, "M0"), ", que vem do plano (linha \u201CMulti Growth\u201D da Projection_Revenue: 3,75x em ago/26 contra 3,60x da casa) e existe s\xF3 na base sobre FTD; as colunas de dia ficam sem meta porque ningu\xE9m calibrou curva de growth. Google e Meta t\xEAm curva pr\xF3pria; outro canal, ou 2+ canais, fica sem meta.", ' ', /*#__PURE__*/React.createElement("strong", null, "M0"), " tem alvo pr\xF3prio (n\xE3o \xE9 ", /*#__PURE__*/React.createElement("code", null, "cum[30]"), "): o horizonte dele varia com o dia da safra, ent\xE3o o estudo declara o n\xFAmero \xE0 parte.")));
+  }, /*#__PURE__*/React.createElement("strong", null, "Por que a tabela \xE9 uma escada."), " Uma c\xE9lula s\xF3 fecha quando ", /*#__PURE__*/React.createElement("strong", null, "safra + horizonte \u2264 ", dataMax ? fmtBR_(dataMax) : 'último dia com dado'), ". A safra de ontem n\xE3o tem D7 \u2014 e o n\xFAmero que apareceria ali n\xE3o \xE9 um D7 baixo, \xE9 um D7 pela metade. As c\xE9lulas abertas mostram o ", /*#__PURE__*/React.createElement("strong", null, "acumulado corrente"), " hachurado: d\xE1 pra acompanhar, mas ele s\xF3 pode subir.", ' ', /*#__PURE__*/React.createElement("strong", null, "Escala por coluna"), ", calculada ", /*#__PURE__*/React.createElement("strong", null, "s\xF3 sobre as c\xE9lulas fechadas"), " \u2014 comparar cor dentro da coluna faz sentido; entre colunas diferentes, n\xE3o (D30 \xE9 naturalmente maior que D1).", ' ', /*#__PURE__*/React.createElement("strong", null, "O toggle \u201Cs\xF3 safras maduras\u201D muda o C\xC1LCULO, n\xE3o s\xF3 a tela:"), " ligado, toda safra que ainda n\xE3o fechou o horizonte da coluna sai da c\xE9lula ", /*#__PURE__*/React.createElement("em", null, "e"), " do Total. Desligado (padr\xE3o), entra tudo e o Total bate \xE0 v\xEDrgula com a aba ", /*#__PURE__*/React.createElement("strong", null, "Multiplicadores e Reten\xE7\xE3o"), ". As duas leituras aparecem sempre \u2014 a segunda linha do rodap\xE9 \xE9 a que o toggle n\xE3o escolheu \u2014, porque a diferen\xE7a entre elas \xE9 ", /*#__PURE__*/React.createElement("strong", null, "matura\xE7\xE3o, n\xE3o performance"), ", e ela cresce com o horizonte (o D1 quase n\xE3o sente; o D30 sente muito).", ' ', /*#__PURE__*/React.createElement("strong", null, "Meta = r\xE9gua de CALEND\xC1RIO"), " (o compromisso do m\xEAs, ", /*#__PURE__*/React.createElement("code", null, "comp.canais"), " do estudo), nas duas bases \u2014 trocar entre ", /*#__PURE__*/React.createElement("em", null, "sobre FTD"), " e ", /*#__PURE__*/React.createElement("em", null, "sobre D0"), " muda o denominador e mais nada. \u26A0\uFE0F Ela \xE9 mais baixa que a meta da aba ", /*#__PURE__*/React.createElement("strong", null, "M\xE9tricas do dia a dia"), " na base sobre D0, que usa o", /*#__PURE__*/React.createElement("strong", null, " n\xEDvel BP"), ": o compromisso \xE9 um degrau at\xE9 o BP, n\xE3o o BP.", ' ', /*#__PURE__*/React.createElement("strong", null, "Growth e Total da Casa t\xEAm metas SEPARADAS."), " A curva de dias do estudo \xE9 do", /*#__PURE__*/React.createElement("strong", null, " Total da Casa"), " \u2014 medido contra julho/26, ela erra 5,6% na casa e 17,0% no growth. Em ", /*#__PURE__*/React.createElement("em", null, "Canais Growth"), " a \xFAnica meta \xE9 a de ", /*#__PURE__*/React.createElement("strong", null, "M0"), ", que vem do plano (linha \u201CMulti Growth\u201D da Projection_Revenue: 3,75x em ago/26 contra 3,60x da casa) e existe s\xF3 na base sobre FTD; as colunas de dia ficam sem meta porque ningu\xE9m calibrou curva de growth. Google e Meta t\xEAm curva pr\xF3pria; outro canal, ou 2+ canais, fica sem meta.", ' ', /*#__PURE__*/React.createElement("strong", null, "M0"), " tem alvo pr\xF3prio (n\xE3o \xE9 ", /*#__PURE__*/React.createElement("code", null, "cum[30]"), "): o horizonte dele varia com o dia da safra, ent\xE3o o estudo declara o n\xFAmero \xE0 parte.")));
 }
 const TABS = [{
   id: 'farol',
