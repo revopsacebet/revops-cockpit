@@ -396,19 +396,18 @@
   .ch-band-verde { color: var(--positive); font-weight: 600; }
   .ch-band-amarelo { color: var(--warning); font-weight: 600; }
   .ch-band-vermelho { color: var(--negative); font-weight: 600; }
-  /* Pirâmide de Coorte — rampa sequencial VERDE de magnitude: QUANTO MELHOR, MAIS VERDE.
-     ⚠️ 2026-08-14 (pedido do Luis): a rampa anterior ia de verde escuro (baixo) a verde PÁLIDO (alto) —
-     tecnicamente monotônica em luminosidade, mas lida ao contrário: o valor melhor saía lavado, quase
-     branco, e o pior é que era o mais chamativo. Agora sobe em SATURAÇÃO junto com a luminosidade: o
-     passo baixo é quase o fundo (verde apagado) e o alto é verde vivo. Fica óbvio de longe qual safra
-     puxou — que é pra isso que a aba existe.
-     A tinta (--pirI*) é fixada por passo, medida contra o fundo: branco nos 4 primeiros (os escuros),
-     preto nos 2 últimos (os vivos) — todos acima de 4,5:1.
-     ⚠️ Este verde é ESCALA (magnitude), não farol: quem diz "bateu a meta" aqui é a fonte amarela. Por
-     isso não usa --positive/--negative, que já significam atingimento no resto do app. */
+  /* Pirâmide de Coorte — rampa BRANCO → VERDE (pedido do Luis 14/08): quanto mais VERDE, melhor;
+     quanto mais BRANCO, pior. O que varia de ponta a ponta é a SATURAÇÃO do verde: o passo pior é
+     branco (verde zero) e o melhor é verde cheio. Duas tentativas anteriores erraram por variar só
+     luminosidade DENTRO do verde (escuro→claro e depois claro→escuro): as duas são escalas legítimas
+     de magnitude, mas nenhuma se lê como "bom vs ruim" — é preciso consultar a legenda pra saber
+     que ponta é qual. Com branco numa ponta não precisa: a cor é a mensagem.
+     A tinta é PRETA nos 6 passos — todos os passos são claros o bastante (contraste medido ≥ 7:1 em
+     todos, incluindo o verde mais cheio). Por isso --pirI* virou constante; mantive as 6 variáveis
+     pra não ter que mexer no JS se a rampa escurecer de novo. */
   :root {
-    --pir1: #0d2b19; --pir2: #124a27; --pir3: #176b36; --pir4: #17803e; --pir5: #22b357; --pir6: #35d96b;
-    --pirI1: #ffffff; --pirI2: #ffffff; --pirI3: #ffffff; --pirI4: #ffffff; --pirI5: #0b0b0b; --pirI6: #0b0b0b;
+    --pir1: #f5f5f5; --pir2: #d7f5e1; --pir3: #a6ebbe; --pir4: #6bdb93; --pir5: #38c86f; --pir6: #10b34e;
+    --pirI1: #0b0b0b; --pirI2: #0b0b0b; --pirI3: #0b0b0b; --pirI4: #0b0b0b; --pirI5: #0b0b0b; --pirI6: #0b0b0b;
     --pir-open: #f87171;
   }
   .pir-table th, .pir-table td { padding: 3px 6px; font-size: 11.5px; }
@@ -421,12 +420,13 @@
   .pir-v { display: block; padding: 5px 6px; border-radius: 4px; font-weight: 600;
            font-variant-numeric: tabular-nums; text-align: right; }
   .pir-v.pir-flat { color: var(--text-muted); font-weight: 500; }
-  /* meta batida: só a FONTE muda (amarelo + bold) e o preenchimento da escala fica — dá pra ver ao mesmo
-     tempo que bateu e onde está dentro da coluna. Amarelo sobre os passos médios do verde não fecha
-     4,5:1, então a legibilidade vem do HALO escuro, não de escurecer o amarelo (que deixaria de ler
-     como amarelo). Mesma técnica de rótulo sobre mapa. */
-  .pir-v.pir-meta { color: var(--accent-yellow) !important; font-weight: 700;
-                    text-shadow: 0 0 2px rgba(0,0,0,.95), 0 0 4px rgba(0,0,0,.7), 0 1px 1px rgba(0,0,0,.6); }
+  /* meta batida: ANEL escuro + bold, mantendo o preenchimento da escala — dá pra ver ao mesmo tempo que
+     bateu e onde está dentro da coluna.
+     ⚠️ Era fonte AMARELA com halo, que funcionava quando a rampa era escura. Com a rampa branco→verde
+     todos os passos são claros e amarelo sobre eles não fecha contraste em passo nenhum — nem com halo,
+     que sobre fundo claro vira uma sujeira cinza em volta da letra. Anel + peso não dependem de matiz,
+     valem em todos os 6 passos e sobrevivem à próxima troca de rampa. */
+  .pir-v.pir-meta { font-weight: 800; box-shadow: inset 0 0 0 2px rgba(11,11,11,.62); }
   /* não fechado: a HACHURA é o canal primário, não o matiz — vermelho-vazado vs verde-preenchido é um
      par de risco pra daltonismo, então a distinção não pode depender só da cor. */
   .pir-v.pir-open { color: var(--pir-open); font-weight: 500; background: rgba(248,113,113,.05);
@@ -446,9 +446,9 @@
   .pir-sw-open { background: rgba(248,113,113,.05); border-color: var(--pir-open);
                  background-image: repeating-linear-gradient(45deg, transparent 0 2px, rgba(248,113,113,.45) 2px 3.5px); }
   .pir-sw-meta { background: var(--pir5); border: 0; width: auto; height: auto; padding: 1px 5px;
-                 border-radius: 3px; color: var(--accent-yellow); font-weight: 700; font-size: 10px;
+                 border-radius: 3px; color: #0b0b0b; font-weight: 800; font-size: 10px;
                  font-variant-numeric: tabular-nums; font-style: normal;
-                 text-shadow: 0 0 2px rgba(0,0,0,.95), 0 0 4px rgba(0,0,0,.7); }
+                 box-shadow: inset 0 0 0 2px rgba(11,11,11,.62); }
   .pir-tgl { display: inline-flex; align-items: center; gap: 7px; font-size: 11px;
              color: var(--text-muted); cursor: pointer; user-select: none; }
   .pir-tgl input { width: 14px; height: 14px; accent-color: var(--pir4); cursor: pointer; margin: 0; }
@@ -9679,7 +9679,7 @@ function TabPiramideCoorte({
     style: {
       background: 'var(' + v + ')'
     }
-  }))), " menor \u2192 maior"), /*#__PURE__*/React.createElement("span", null, /*#__PURE__*/React.createElement("i", {
+  }))), " pior \u2192 melhor"), /*#__PURE__*/React.createElement("span", null, /*#__PURE__*/React.createElement("i", {
     className: "pir-sw pir-sw-meta"
   }, "2,47x"), " bateu a meta"), /*#__PURE__*/React.createElement("span", null, /*#__PURE__*/React.createElement("i", {
     className: "pir-sw pir-sw-open"

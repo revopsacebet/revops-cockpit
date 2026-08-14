@@ -5251,7 +5251,9 @@ function TabPiramideCoorte({ retencaoFaixa, chFilter, meta, retFaixaLive }) {
           {comMeta > 0 ? ' · bateu a meta em ' + bateu + ' de ' + comMeta + ' células fechadas com meta' : ''}
         </div>
         <div className="pir-legend">
-          <span>Escala <i className="pir-ramp">{PIR_RAMP.map((v) => <i key={v} style={{ background: 'var(' + v + ')' }} />)}</i> menor → maior</span>
+          {/* rótulo em "pior → melhor" (não "menor → maior"): nestas colunas maior É melhor, e a rampa
+              branco→verde foi escolhida justamente pra ser lida como qualidade, não como magnitude. */}
+          <span>Escala <i className="pir-ramp">{PIR_RAMP.map((v) => <i key={v} style={{ background: 'var(' + v + ')' }} />)}</i> pior → melhor</span>
           <span><i className="pir-sw pir-sw-meta">2,47x</i> bateu a meta</span>
           <span><i className="pir-sw pir-sw-open" /> ainda não fechou</span>
           {soMaduras && <span style={{ color: 'var(--accent-yellow)' }}>⚠ só safras maduras: as imaturas estão FORA do cálculo</span>}
