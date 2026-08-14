@@ -9293,6 +9293,40 @@ const PIR_COLS = [{
   hz: 'd30',
   acc: a => a.d0 + a.vd30,
   bp: 'd30'
+},
+// ---- RETENÇÃO SOBRE D0 ----
+// Identidade do anexo: RET % = (MULT Dk − MULT D0) ÷ MULT D0. Expandindo, o FTD$ e o próprio D0 se
+// cancelam e sobra `depósitos do dia 1 em diante ÷ depósito do D0` — que é o que a coluna mede: quanto
+// o dinheiro do primeiro dia trouxe DEPOIS dele.
+// ⚠️ NÃO MUDA COM O TOGGLE DE BASE, e isso é da definição, não um bug: a razão cancela o denominador,
+// então sobre FTD e sobre D0 dão o mesmo número. Só as colunas de multiplicador reagem ao toggle.
+// ⚠️ SEM META (como no anexo): a D1 teria par no estudo (`comp.share[1]`), mas W1/W2/M0 não têm — e
+// meia coluna com meta e meia sem, no mesmo bloco, convida a comparar o que não é comparável.
+{
+  key: 'r1',
+  lb: 'D1 ret %',
+  hz: 'd1',
+  ret: a => a.d0 ? a.vd1 / a.d0 : null,
+  fmt: v => fmtPct(v, 1),
+  sep: true
+}, {
+  key: 'r7',
+  lb: 'D7 ret %',
+  hz: 'w1',
+  ret: a => a.d0 ? a.vw1 / a.d0 : null,
+  fmt: v => fmtPct(v, 1)
+}, {
+  key: 'r14',
+  lb: 'D14 ret %',
+  hz: 'w2',
+  ret: a => a.d0 ? a.vw2 / a.d0 : null,
+  fmt: v => fmtPct(v, 1)
+}, {
+  key: 'rm0',
+  lb: 'M0 ret %',
+  hz: 'm0',
+  ret: a => a.d0 ? a.vm0 / a.d0 : null,
+  fmt: v => fmtPct(v, 1)
 }];
 // Agrupa as safras da janela em linhas da pirâmide. `ini`/`fim` guardam a borda real do bin — o `fim`
 // é quem decide maturação (ver pirFechada_) e o `ini` rotula a semana.
@@ -9336,6 +9370,7 @@ function pirBins_(rows, selCh, selFx, gran) {
 function pirValor_(col, a, base) {
   if (!a) return null;
   if (col.plain) return col.of(a);
+  if (col.ret) return col.ret(a); // razão sobre o D0 — independe da base (ver nota em PIR_COLS)
   const den = base === 'ftd' ? a.ftd : a.d0;
   return den > 0 ? col.acc(a) / den : null;
 }
@@ -9740,7 +9775,7 @@ function TabPiramideCoorte({
     className: c.sep ? 'pir-sep' : undefined
   }, fechadasDe(c).length, "/", bins.length)))))), /*#__PURE__*/React.createElement("div", {
     className: "ch-note"
-  }, /*#__PURE__*/React.createElement("strong", null, "Por que a tabela \xE9 uma escada."), " Uma c\xE9lula s\xF3 fecha quando ", /*#__PURE__*/React.createElement("strong", null, "safra + horizonte \u2264 ", dataMax ? fmtBR_(dataMax) : 'último dia com dado'), ". A safra de ontem n\xE3o tem D7 \u2014 e o n\xFAmero que apareceria ali n\xE3o \xE9 um D7 baixo, \xE9 um D7 pela metade. As c\xE9lulas abertas mostram o ", /*#__PURE__*/React.createElement("strong", null, "acumulado corrente"), " hachurado: d\xE1 pra acompanhar, mas ele s\xF3 pode subir.", ' ', /*#__PURE__*/React.createElement("strong", null, "Escala por coluna"), ", calculada ", /*#__PURE__*/React.createElement("strong", null, "s\xF3 sobre as c\xE9lulas fechadas"), " \u2014 comparar cor dentro da coluna faz sentido; entre colunas diferentes, n\xE3o (D30 \xE9 naturalmente maior que D1).", ' ', /*#__PURE__*/React.createElement("strong", null, "O toggle \u201Cs\xF3 safras maduras\u201D muda o C\xC1LCULO, n\xE3o s\xF3 a tela:"), " ligado, toda safra que ainda n\xE3o fechou o horizonte da coluna sai da c\xE9lula ", /*#__PURE__*/React.createElement("em", null, "e"), " do Total. Desligado (padr\xE3o), entra tudo e o Total bate \xE0 v\xEDrgula com a aba ", /*#__PURE__*/React.createElement("strong", null, "Multiplicadores e Reten\xE7\xE3o"), ". As duas leituras aparecem sempre \u2014 a segunda linha do rodap\xE9 \xE9 a que o toggle n\xE3o escolheu \u2014, porque a diferen\xE7a entre elas \xE9 ", /*#__PURE__*/React.createElement("strong", null, "matura\xE7\xE3o, n\xE3o performance"), ", e ela cresce com o horizonte (o D1 quase n\xE3o sente; o D30 sente muito).", ' ', /*#__PURE__*/React.createElement("strong", null, "Meta = r\xE9gua de CALEND\xC1RIO"), " (o compromisso do m\xEAs, ", /*#__PURE__*/React.createElement("code", null, "comp.canais"), " do estudo), nas duas bases \u2014 trocar entre ", /*#__PURE__*/React.createElement("em", null, "sobre FTD"), " e ", /*#__PURE__*/React.createElement("em", null, "sobre D0"), " muda o denominador e mais nada. \u26A0\uFE0F Ela \xE9 mais baixa que a meta da aba ", /*#__PURE__*/React.createElement("strong", null, "M\xE9tricas do dia a dia"), " na base sobre D0, que usa o", /*#__PURE__*/React.createElement("strong", null, " n\xEDvel BP"), ": o compromisso \xE9 um degrau at\xE9 o BP, n\xE3o o BP.", ' ', /*#__PURE__*/React.createElement("strong", null, "Growth e Total da Casa t\xEAm metas SEPARADAS."), " A curva de dias do estudo \xE9 do", /*#__PURE__*/React.createElement("strong", null, " Total da Casa"), " \u2014 medido contra julho/26, ela erra 5,6% na casa e 17,0% no growth. Em ", /*#__PURE__*/React.createElement("em", null, "Canais Growth"), " a \xFAnica meta \xE9 a de ", /*#__PURE__*/React.createElement("strong", null, "M0"), ", que vem do plano (linha \u201CMulti Growth\u201D da Projection_Revenue: 3,75x em ago/26 contra 3,60x da casa) e existe s\xF3 na base sobre FTD; as colunas de dia ficam sem meta porque ningu\xE9m calibrou curva de growth. Google e Meta t\xEAm curva pr\xF3pria; outro canal, ou 2+ canais, fica sem meta.", ' ', /*#__PURE__*/React.createElement("strong", null, "M0"), " tem alvo pr\xF3prio (n\xE3o \xE9 ", /*#__PURE__*/React.createElement("code", null, "cum[30]"), "): o horizonte dele varia com o dia da safra, ent\xE3o o estudo declara o n\xFAmero \xE0 parte.")));
+  }, /*#__PURE__*/React.createElement("strong", null, "Por que a tabela \xE9 uma escada."), " Uma c\xE9lula s\xF3 fecha quando ", /*#__PURE__*/React.createElement("strong", null, "safra + horizonte \u2264 ", dataMax ? fmtBR_(dataMax) : 'último dia com dado'), ". A safra de ontem n\xE3o tem D7 \u2014 e o n\xFAmero que apareceria ali n\xE3o \xE9 um D7 baixo, \xE9 um D7 pela metade. As c\xE9lulas abertas mostram o ", /*#__PURE__*/React.createElement("strong", null, "acumulado corrente"), " hachurado: d\xE1 pra acompanhar, mas ele s\xF3 pode subir.", ' ', /*#__PURE__*/React.createElement("strong", null, "Escala por coluna"), ", calculada ", /*#__PURE__*/React.createElement("strong", null, "s\xF3 sobre as c\xE9lulas fechadas"), " \u2014 comparar cor dentro da coluna faz sentido; entre colunas diferentes, n\xE3o (D30 \xE9 naturalmente maior que D1).", ' ', /*#__PURE__*/React.createElement("strong", null, "O toggle \u201Cs\xF3 safras maduras\u201D muda o C\xC1LCULO, n\xE3o s\xF3 a tela:"), " ligado, toda safra que ainda n\xE3o fechou o horizonte da coluna sai da c\xE9lula ", /*#__PURE__*/React.createElement("em", null, "e"), " do Total. Desligado (padr\xE3o), entra tudo e o Total bate \xE0 v\xEDrgula com a aba ", /*#__PURE__*/React.createElement("strong", null, "Multiplicadores e Reten\xE7\xE3o"), ". As duas leituras aparecem sempre \u2014 a segunda linha do rodap\xE9 \xE9 a que o toggle n\xE3o escolheu \u2014, porque a diferen\xE7a entre elas \xE9 ", /*#__PURE__*/React.createElement("strong", null, "matura\xE7\xE3o, n\xE3o performance"), ", e ela cresce com o horizonte (o D1 quase n\xE3o sente; o D30 sente muito).", ' ', /*#__PURE__*/React.createElement("strong", null, "Meta = r\xE9gua de CALEND\xC1RIO"), " (o compromisso do m\xEAs, ", /*#__PURE__*/React.createElement("code", null, "comp.canais"), " do estudo), nas duas bases \u2014 trocar entre ", /*#__PURE__*/React.createElement("em", null, "sobre FTD"), " e ", /*#__PURE__*/React.createElement("em", null, "sobre D0"), " muda o denominador e mais nada. \u26A0\uFE0F Ela \xE9 mais baixa que a meta da aba ", /*#__PURE__*/React.createElement("strong", null, "M\xE9tricas do dia a dia"), " na base sobre D0, que usa o", /*#__PURE__*/React.createElement("strong", null, " n\xEDvel BP"), ": o compromisso \xE9 um degrau at\xE9 o BP, n\xE3o o BP.", ' ', /*#__PURE__*/React.createElement("strong", null, "Growth e Total da Casa t\xEAm metas SEPARADAS."), " A curva de dias do estudo \xE9 do", /*#__PURE__*/React.createElement("strong", null, " Total da Casa"), " \u2014 medido contra julho/26, ela erra 5,6% na casa e 17,0% no growth. Em ", /*#__PURE__*/React.createElement("em", null, "Canais Growth"), " a \xFAnica meta \xE9 a de ", /*#__PURE__*/React.createElement("strong", null, "M0"), ", que vem do plano (linha \u201CMulti Growth\u201D da Projection_Revenue: 3,75x em ago/26 contra 3,60x da casa) e existe s\xF3 na base sobre FTD; as colunas de dia ficam sem meta porque ningu\xE9m calibrou curva de growth. Google e Meta t\xEAm curva pr\xF3pria; outro canal, ou 2+ canais, fica sem meta.", ' ', /*#__PURE__*/React.createElement("strong", null, "M0"), " tem alvo pr\xF3prio (n\xE3o \xE9 ", /*#__PURE__*/React.createElement("code", null, "cum[30]"), "): o horizonte dele varia com o dia da safra, ent\xE3o o estudo declara o n\xFAmero \xE0 parte.", ' ', /*#__PURE__*/React.createElement("strong", null, "As colunas \u201Cret %\u201D"), " s\xE3o a mesma coorte lida sobre o D0: ", /*#__PURE__*/React.createElement("code", null, "(Mult Dk \u2212 Mult D0) \xF7 Mult D0"), ", que \xE9 o dep\xF3sito do dia 1 em diante dividido pelo do D0 \u2014 quanto o dinheiro do primeiro dia trouxe depois dele. Elas ", /*#__PURE__*/React.createElement("strong", null, "n\xE3o mudam com o toggle de base"), " (a raz\xE3o cancela o denominador), e ficam sem meta: s\xF3 a de D1 teria par no estudo.")));
 }
 const TABS = [{
   id: 'farol',

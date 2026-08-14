@@ -5008,6 +5008,18 @@ const PIR_COLS = [
   // o horizonte dele varia com o dia da safra.
   { key: 'm0',  lb: 'M0',  hz: 'm0',  acc: (a) => a.d0 + a.vm0,       bp: 'm0' },
   { key: 'd30', lb: 'D30', hz: 'd30', acc: (a) => a.d0 + a.vd30,      bp: 'd30' },
+  // ---- RETENÇÃO SOBRE D0 ----
+  // Identidade do anexo: RET % = (MULT Dk − MULT D0) ÷ MULT D0. Expandindo, o FTD$ e o próprio D0 se
+  // cancelam e sobra `depósitos do dia 1 em diante ÷ depósito do D0` — que é o que a coluna mede: quanto
+  // o dinheiro do primeiro dia trouxe DEPOIS dele.
+  // ⚠️ NÃO MUDA COM O TOGGLE DE BASE, e isso é da definição, não um bug: a razão cancela o denominador,
+  // então sobre FTD e sobre D0 dão o mesmo número. Só as colunas de multiplicador reagem ao toggle.
+  // ⚠️ SEM META (como no anexo): a D1 teria par no estudo (`comp.share[1]`), mas W1/W2/M0 não têm — e
+  // meia coluna com meta e meia sem, no mesmo bloco, convida a comparar o que não é comparável.
+  { key: 'r1',  lb: 'D1 ret %',  hz: 'd1', ret: (a) => a.d0 ? a.vd1 / a.d0 : null,  fmt: (v) => fmtPct(v, 1), sep: true },
+  { key: 'r7',  lb: 'D7 ret %',  hz: 'w1', ret: (a) => a.d0 ? a.vw1 / a.d0 : null,  fmt: (v) => fmtPct(v, 1) },
+  { key: 'r14', lb: 'D14 ret %', hz: 'w2', ret: (a) => a.d0 ? a.vw2 / a.d0 : null,  fmt: (v) => fmtPct(v, 1) },
+  { key: 'rm0', lb: 'M0 ret %',  hz: 'm0', ret: (a) => a.d0 ? a.vm0 / a.d0 : null,  fmt: (v) => fmtPct(v, 1) },
 ];
 // Agrupa as safras da janela em linhas da pirâmide. `ini`/`fim` guardam a borda real do bin — o `fim`
 // é quem decide maturação (ver pirFechada_) e o `ini` rotula a semana.
@@ -5030,6 +5042,7 @@ function pirBins_(rows, selCh, selFx, gran) {
 function pirValor_(col, a, base) {
   if (!a) return null;
   if (col.plain) return col.of(a);
+  if (col.ret) return col.ret(a);   // razão sobre o D0 — independe da base (ver nota em PIR_COLS)
   const den = (base === 'ftd') ? a.ftd : a.d0;
   return (den > 0) ? col.acc(a) / den : null;
 }
@@ -5352,6 +5365,10 @@ function TabPiramideCoorte({ retencaoFaixa, chFilter, meta, retFaixaLive }) {
           têm curva própria; outro canal, ou 2+ canais, fica sem meta.
           {' '}<strong>M0</strong> tem alvo próprio (não é <code>cum[30]</code>): o horizonte dele varia com o dia da
           safra, então o estudo declara o número à parte.
+          {' '}<strong>As colunas “ret %”</strong> são a mesma coorte lida sobre o D0: <code>(Mult Dk − Mult D0) ÷ Mult D0</code>,
+          que é o depósito do dia 1 em diante dividido pelo do D0 — quanto o dinheiro do primeiro dia trouxe
+          depois dele. Elas <strong>não mudam com o toggle de base</strong> (a razão cancela o denominador),
+          e ficam sem meta: só a de D1 teria par no estudo.
         </div>
       </div>
     </React.Fragment>
