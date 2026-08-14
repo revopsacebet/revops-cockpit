@@ -5001,11 +5001,13 @@ const PIR_COLS = [
   { key: 'd4',  lb: 'D4',  hz: 'd4',  acc: (a) => a.d0 + a.vd4,       bp: 'd4' },
   { key: 'w1',  lb: 'D7',  hz: 'w1',  acc: (a) => a.d0 + a.vw1,       bp: 'w1' },
   { key: 'w2',  lb: 'D14', hz: 'w2',  acc: (a) => a.d0 + a.vw2,       bp: 'w2' },
-  { key: 'd30', lb: 'D30', hz: 'd30', acc: (a) => a.d0 + a.vd30,      bp: 'd30' },
-  // M0 TEM meta: é o alvo de CALENDÁRIO do estudo (`comp.canais.<esc>.m0`), a mesma régua das outras
-  // colunas desta aba. Não é um ponto da curva por dia — M0 é "até o fim do mês do FTD", horizonte que
-  // varia com o dia da safra —, por isso o alvo é declarado à parte em vez de sair de cum[30].
+  // M0 vem ANTES do D30 (pedido do Luis 14/08) — e é a ordem certa de horizonte: o M0 médio é ~15 dias
+  // (vai do dia do FTD até o fim do mês), então ele é MAIS CURTO que o D30. Deixá-lo no fim sugeria uma
+  // escada crescente que não existe: é normal o D30 ser maior que o M0.
+  // Alvo de CALENDÁRIO, declarado à parte no plano/estudo em vez de sair de cum[30], justamente porque
+  // o horizonte dele varia com o dia da safra.
   { key: 'm0',  lb: 'M0',  hz: 'm0',  acc: (a) => a.d0 + a.vm0,       bp: 'm0' },
+  { key: 'd30', lb: 'D30', hz: 'd30', acc: (a) => a.d0 + a.vd30,      bp: 'd30' },
 ];
 // Agrupa as safras da janela em linhas da pirâmide. `ini`/`fim` guardam a borda real do bin — o `fim`
 // é quem decide maturação (ver pirFechada_) e o `ini` rotula a semana.
@@ -5082,13 +5084,38 @@ const PIR_META = {
     Meta:   { d1: 1.2294, d3: 1.4798, d4: 1.5789, w1: 1.8424, w2: 2.2934, d30: 3.0835, m0: 2.2651 },
   },
 };
-// Mesma regra de escopo do resto do cockpit: sem canal (Total Casa ou Growth) = curva Geral; 1 canal =
-// a curva dele se o estudo declarou (só Google e Meta); 2+ canais ou canal sem curva = sem meta.
-// Faixa NÃO entra: o estudo calibrou no nível do canal.
-function pirBpScope_(chFilter, base) {
+// ============================================================
+// GROWTH ≠ TOTAL DA CASA (pedido do Luis 14/08)
+// ============================================================
+// Até aqui os dois escopos caíam na MESMA curva "Geral" — e isso estava errado. MEDIDO em jul/26
+// (safras do BQ vs o realizado que o próprio estudo publica): o "Geral" do estudo é TOTAL DA CASA.
+//   erro médio do Geral contra Total da Casa = 5,6%  ·  contra Growth = 17,0%
+//   e perde nas 8 métricas testadas (D0/D1/D3/D7/D14/M0/rsD1/jogD1).
+// Controle do método: Google (estudo 2,1745 vs BQ 2,2148) e Meta (1,8515 vs 1,8559) batem quase exato.
+// Logo: a curva de DIAS do estudo vale só p/ Total da Casa (e p/ Google/Meta, que têm curva própria).
+//
+// GROWTH não tem curva de dias em lugar nenhum — o estudo só declara Geral/Google/Meta (a palavra
+// "growth" não aparece no arquivo). O que existe é o alvo de M0, e ele vem do PLANO, não do estudo:
+// linha "Multi Growth" da aba Projection_Revenue (o mesmo bloco que alimenta as metas de retenção).
+// ⚠️ POR MÊS, e por isso esta tabela é indexada por mês: o número muda todo mês e um valor de agosto
+// aplicado em setembro é o tipo de erro que não dá sintoma. Mês fora da tabela → SEM meta, de propósito.
+// (Cross-check que valida a leitura: a linha irmã "Dep Multiplier/FTD" (Total da Casa) de jul/26 dá
+// 2,5831 e o M0/FTD Total da Casa medido no BQ p/ julho dá 2,5831 — mesma definição, à quarta casa.)
+// Só na base FTD: o plano declara M0/FTD, e não existe alvo de D0/FTD do growth p/ converter pra base D0.
+const PIR_M0_GROWTH = { '2026-07': 2.8514, '2026-08': 3.7500 };
+// Total da Casa segue no 3,60x do estudo (comp.alvoM0) — o plano diz 3,5725 p/ ago, mesma coisa dentro
+// do arredondamento. Mantido o do estudo porque é o compromisso declarado, igual às colunas de dia.
+function pirBpScope_(chFilter, base, mk) {
   const T = PIR_META[base === 'ftd' ? 'ftd' : 'd0'];
   const sel = chList_(chFilter);
-  if (sel.length === 0) return T.Geral;
+  if (sel.length === 0) {
+    // Canais Growth: SEM curva de dias (ninguém calibrou) — só o M0 do plano, e só na base FTD.
+    if (chFilter && chFilter.scope === 'growth') {
+      const m0 = (base === 'ftd' && mk) ? PIR_M0_GROWTH[mk] : null;
+      return m0 != null ? { m0: m0 } : null;
+    }
+    return T.Geral;   // Total da Casa
+  }
   if (sel.length === 1) return T[sel[0]] || null;
   return null;
 }
@@ -5111,7 +5138,9 @@ function TabPiramideCoorte({ retencaoFaixa, chFilter, meta, retFaixaLive }) {
   // Base D0 → a coluna D0 seria 1,00x em toda linha (é a própria âncora). Sai da tela, como na aba
   // Multiplicadores, senão gasta uma coluna inteira pra repetir uma constante.
   const cols = PIR_COLS.filter((c) => !(base === 'd0' && c.key === 'd0'));
-  const bpScope = pirBpScope_(chFilter, base);
+  // Mês de referência da meta = mês do INÍCIO da janela (o mesmo critério das metas de retenção do Farol).
+  const mkJanela = String((meta && meta.from) || (bins[0] && bins[0].ini) || '').slice(0, 7) || null;
+  const bpScope = pirBpScope_(chFilter, base, mkJanela);
   const chLbl = chLabel_(chFilter);
   const faixaLbl = faixaSel.length === 0 ? 'todas as faixas' : (faixaSel.length <= 2 ? faixaSel.map(fxLabel_).join(' + ') : faixaSel.length + ' faixas');
   const metaDe = (c) => (c.bp && bpScope) ? bpScope[c.bp] : null;
@@ -5281,8 +5310,13 @@ function TabPiramideCoorte({ retencaoFaixa, chFilter, meta, retFaixaLive }) {
           {' '}<strong>Meta = régua de CALENDÁRIO</strong> (o compromisso do mês, <code>comp.canais</code> do estudo),
           nas duas bases — trocar entre <em>sobre FTD</em> e <em>sobre D0</em> muda o denominador e mais nada.
           ⚠️ Ela é mais baixa que a meta da aba <strong>Métricas do dia a dia</strong> na base sobre D0, que usa o
-          <strong> nível BP</strong>: o compromisso é um degrau até o BP, não o BP. Existe para Geral, Google e
-          Meta — em outro canal, ou com 2+ canais selecionados, some.
+          <strong> nível BP</strong>: o compromisso é um degrau até o BP, não o BP.
+          {' '}<strong>Growth e Total da Casa têm metas SEPARADAS.</strong> A curva de dias do estudo é do
+          <strong> Total da Casa</strong> — medido contra julho/26, ela erra 5,6% na casa e 17,0% no growth.
+          Em <em>Canais Growth</em> a única meta é a de <strong>M0</strong>, que vem do plano (linha
+          “Multi Growth” da Projection_Revenue: 3,75x em ago/26 contra 3,60x da casa) e existe só na base
+          sobre FTD; as colunas de dia ficam sem meta porque ninguém calibrou curva de growth. Google e Meta
+          têm curva própria; outro canal, ou 2+ canais, fica sem meta.
           {' '}<strong>M0</strong> tem alvo próprio (não é <code>cum[30]</code>): o horizonte dele varia com o dia da
           safra, então o estudo declara o número à parte.
         </div>
