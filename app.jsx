@@ -4606,12 +4606,16 @@ function TabDailyCashflow({ range, meta }) {
 // ⚠️ Duas mudanças nessa reconferência: (a) entrou **m30** = cum[30] — o estudo NÃO para no D14, era
 // engano meu; (b) o **m14 de Google e Meta subiu 3,5%** (3,1264→3,2351 e 2,5162→2,6049), o arquivo
 // atual traz outro número. Geral não se moveu em nada.
+// ⚠️ 2026-08-14: entrou **m4** = cum[4] (o Luis trocou o degrau D3 pelo D4 na tabela). m3 fica aqui de
+// propósito — a linha saiu de MDD_ROWS, a constante não; religar é devolver a linha, sem recalcular.
+// Extraído do MESMO arquivo do estudo, e o m3 de lá bate EXATO com o que já estava aqui nos 3 escopos
+// (1,6804 / 1,8204 / 1,5571), que é o que garante que o índice da curva é `cum[dia]` e não outro.
 const MDD_BP = {
-  Geral:  { jogD1: 0.1111, rsD1: 0.2976, m1: 1.2976, m3: 1.6804, m7: 2.2307, m14: 2.9155, m30: 4.0646, rsS1: 0.6256, jogS1: 0.2806,
+  Geral:  { jogD1: 0.1111, rsD1: 0.2976, m1: 1.2976, m3: 1.6804, m4: 1.8297, m7: 2.2307, m14: 2.9155, m30: 4.0646, rsS1: 0.6256, jogS1: 0.2806,
             pStd: 0.2642, pTtd: 0.4700, pQtd: 0.6289 },
-  Google: { jogD1: 0.1566, rsD1: 0.3672, m1: 1.3672, m3: 1.8204, m7: 2.4569, m14: 3.2351, m30: 4.5219, rsS1: 0.6119, jogS1: 0.3863,
+  Google: { jogD1: 0.1566, rsD1: 0.3672, m1: 1.3672, m3: 1.8204, m4: 1.9989, m7: 2.4569, m14: 3.2351, m30: 4.5219, rsS1: 0.6119, jogS1: 0.3863,
             pStd: 0.3664, pTtd: 0.5656, pQtd: 0.7588 },
-  Meta:   { jogD1: 0.0943, rsD1: 0.2603, m1: 1.2603, m3: 1.5571, m7: 2.0197, m14: 2.6049, m30: 3.6286, rsS1: 0.5432, jogS1: 0.2385,
+  Meta:   { jogD1: 0.0943, rsD1: 0.2603, m1: 1.2603, m3: 1.5571, m4: 1.6796, m7: 2.0197, m14: 2.6049, m30: 3.6286, rsS1: 0.5432, jogS1: 0.2385,
             pStd: 0.2343, pTtd: 0.4121, pQtd: 0.5460 },
 };
 // ------------------------------------------------------------
@@ -4623,9 +4627,9 @@ const MDD_BP = {
 // Só os multiplicadores mudam de base; retenção/passagem/semanal são razões que não têm D0 no
 // denominador, então herdam MDD_BP.
 const MDD_BP_FTD_MULT = {
-  Geral:  { m1: 1.8901, m3: 2.3302, m7: 2.9323, m14: 3.6590, m30: 4.8742 },
-  Google: { m1: 2.6401, m3: 3.4072, m7: 4.3960, m14: 5.4943, m30: 7.2639 },
-  Meta:   { m1: 1.8956, m3: 2.2817, m7: 2.8407, m14: 3.5360, m30: 4.7543 },
+  Geral:  { m1: 1.8901, m3: 2.3302, m4: 2.4971, m7: 2.9323, m14: 3.6590, m30: 4.8742 },
+  Google: { m1: 2.6401, m3: 3.4072, m4: 3.6963, m7: 4.3960, m14: 5.4943, m30: 7.2639 },
+  Meta:   { m1: 1.8956, m3: 2.2817, m4: 2.4344, m7: 2.8407, m14: 3.5360, m30: 4.7543 },
 };
 const MDD_BP_FTD = {};
 Object.keys(MDD_BP).forEach(k => { MDD_BP_FTD[k] = Object.assign({}, MDD_BP[k], MDD_BP_FTD_MULT[k]); });
@@ -4649,7 +4653,9 @@ const MDD_ROWS = [
   // `mult: true` = a linha muda de BASE com o toggle (sobre D0 ↔ sobre FTD). O NUMERADOR é sempre
   // D0 + depósitos da janela; só o denominador troca. `den` chega do componente já resolvido.
   { key: 'm1',    label: 'Multiplicador D1',                   mat: 1,  fmt: 'multiple', mult: true, of: (a, den) => (a.d0 && den && a.vd1) ? (a.d0 + a.vd1) / den : null, bp: 'm1' },
-  { key: 'm3',    label: 'Multiplicador D3',                   mat: 3,  fmt: 'multiple', mult: true, of: (a, den) => (a.d0 && den && a.vd3) ? (a.d0 + a.vd3) / den : null, bp: 'm3' },
+  // D4 (era D3 até 2026-08-14, troca pedida pelo Luis). vd4 = Σ depósitos dos dias 1–4 da safra — já vem
+  // no MESMO payload (`valD4` do queryRetencaoFaixa_), não precisou de backend. Meta = cum[4]/cumFTD[4].
+  { key: 'm4',    label: 'Multiplicador D4',                   mat: 4,  fmt: 'multiple', mult: true, of: (a, den) => (a.d0 && den && a.vd4) ? (a.d0 + a.vd4) / den : null, bp: 'm4' },
   { key: 'm7',    label: 'Multiplicador D7',                   mat: 7,  fmt: 'multiple', mult: true, of: (a, den) => (a.d0 && den && a.vw1) ? (a.d0 + a.vw1) / den : null, bp: 'm7' },
   { key: 'm14',   label: 'Multiplicador D14',                  mat: 14, fmt: 'multiple', mult: true, of: (a, den) => (a.d0 && den && a.vw2) ? (a.d0 + a.vw2) / den : null, bp: 'm14' },
   // D30 = depósitos dos dias 1..30 da safra (val_d30 do backend), mesma régua dos demais: sobre o D0.
@@ -4698,10 +4704,10 @@ function mddByDay_(rows, selCh, selFx, selGr) {
     // ⚠️ Toda métrica nova precisa da sua base AQUI. O Multiplicador D30 entrou em MDD_ROWS lendo
     // `a.vd30` sem que vd30 fosse somado nesta função — resultado: undefined, `of()` devolvia null e a
     // linha ficava "—" como se fosse falta de maturação. O dado sempre esteve no payload.
-    if (!m[k]) m[k] = { date: k, qtd: 0, ftd: 0, d0: 0, cd1: 0, vd1: 0, vd3: 0, vw1: 0, vw2: 0, vd30: 0, vs0: 0, vs1: 0, cs1: 0, cstd: 0, cttd: 0, cqtd4: 0, _pass: 0 };
+    if (!m[k]) m[k] = { date: k, qtd: 0, ftd: 0, d0: 0, cd1: 0, vd1: 0, vd3: 0, vd4: 0, vw1: 0, vw2: 0, vd30: 0, vs0: 0, vs1: 0, cs1: 0, cstd: 0, cttd: 0, cqtd4: 0, _pass: 0 };
     const a = m[k];
     a.qtd += r.qtd || 0; a.ftd += r.ftd || 0; a.d0 += r.d0 || 0; a.cd1 += r.cd1 || 0; a.vd1 += r.vd1 || 0;
-    a.vd3 += r.vd3 || 0; a.vw1 += r.vw1 || 0; a.vw2 += r.vw2 || 0; a.vd30 += r.vd30 || 0;
+    a.vd3 += r.vd3 || 0; a.vd4 += r.vd4 || 0; a.vw1 += r.vw1 || 0; a.vw2 += r.vw2 || 0; a.vd30 += r.vd30 || 0;
     a.vs0 += r.vs0 || 0; a.vs1 += r.vs1 || 0; a.cs1 += r.cs1 || 0;
     a.cstd += r.cstd || 0; a.cttd += r.cttd || 0; a.cqtd4 += r.cqtd4 || 0; a._pass += r._pass || 0;
   });
@@ -4745,9 +4751,17 @@ function TabMetricasDia({ retencaoFaixa, chFilter, meta, retFaixaLive }) {
   const selCh = chSelector_(chFilter);
   const selFx = (fx) => faixaSel.length === 0 || faixaSel.includes(fx);
   const selGr = (g) => !grupoActive || grupoSel.indexOf(g || 'sem grupo') >= 0;
+  // ⚠️ CHAVE DO SLICER DE CANAL PROS useMemo ABAIXO — não inline `chFilter.canals` de novo.
+  // Até 2026-08-14 os deps liam `chFilter.canals`, que é o nome do OUTRO shape (o `sel` da aba
+  // Benchmark, ver aggBench_); no chFilter global o campo é `channels` e `canals` vinha SEMPRE
+  // undefined. Resultado: trocar de canal não invalidava o memo, o `byDay` ficava congelado no
+  // primeiro render e a tabela seguia mostrando Total Casa — enquanto o subtítulo, calculado FORA do
+  // memo, já exibia o canal novo. Parecia "filtro não funciona" e era cache de memo. Só `scope`
+  // (growth) reagia, porque esse dep estava certo. chList_ é a fonte única e cobre `channels` E
+  // `channel` (singular), então a chave não depende de qual das duas formas o slicer produziu.
+  const chKey = chList_(chFilter).join('|') + '#' + ((chFilter && chFilter.scope) || '');
   const byDay = React.useMemo(() => mddByDay_(rows, selCh, selFx, selGr),
-    [srcRows, chFilter && chFilter.scope, JSON.stringify(chFilter && chFilter.canals),
-     JSON.stringify(faixaSel), JSON.stringify(grupoSel)]);
+    [srcRows, chKey, JSON.stringify(faixaSel), JSON.stringify(grupoSel)]);
   // Cauda ANTERIOR à janela — só serve de fallback de coorte quando nenhuma safra da janela fechou a
   // maturação da linha (pedido do Luis 06/08: "pega a última safra que maturou nesse dado"). Nunca
   // entra no agregado da janela; é uma base separada, e a tabela marca a linha que caiu nela.
@@ -4765,8 +4779,7 @@ function TabMetricasDia({ retencaoFaixa, chFilter, meta, retFaixaLive }) {
     return () => { live = false; };
   }, [tailFrom, tailTo, grupoActive]);
   const byDayTail = React.useMemo(() => mddByDay_(benchApostouRows_(tail.rows || []), selCh, selFx, selGr),
-    [tail.rows, chFilter && chFilter.scope, JSON.stringify(chFilter && chFilter.canals),
-     JSON.stringify(faixaSel), JSON.stringify(grupoSel)]);
+    [tail.rows, chKey, JSON.stringify(faixaSel), JSON.stringify(grupoSel)]);
   const bpScope = mddBpScope_(chFilter, multBase);
   const out = MDD_ROWS.map(row => {
     // Só safras que já fecharam a janela da métrica (maturação).
