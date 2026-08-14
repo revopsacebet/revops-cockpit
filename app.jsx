@@ -4991,23 +4991,26 @@ const pirInt_ = (v) => (v == null || !isFinite(v)) ? '—' : Math.round(v).toLoc
 // `plain` = contexto da safra (tamanho/ticket), não magnitude a comparar entre dias → fica sem escala
 // de cor, igual ao anexo. `acc` = numerador acumulado; o denominador vem do toggle de base.
 // `bp` = chave da curva do estudo (MDD_BP / MDD_BP_FTD), a MESMA meta da aba Métricas do dia a dia.
+// `blk` = BLOCO de métrica ('ctx' contexto da safra · 'mult' multiplicadores · 'ret' retenção sobre D0).
+// A divisória entre blocos é DERIVADA daqui, não marcada coluna a coluna: com um `sep: true` fixo na
+// coluna D0, a base "sobre D0" — que remove essa coluna — perdia a divisória em silêncio.
 const PIR_COLS = [
-  { key: 'qtd', lb: 'Qtd FTD',     hz: 'd0', plain: true, of: (a) => a.qtd || null,                 fmt: pirInt_ },
-  { key: 'tkt', lb: 'FTD $$',      hz: 'd0', plain: true, of: (a) => a.qtd ? a.ftd / a.qtd : null,  fmt: fmtBRL },
-  { key: 'dm',  lb: 'Dep D0 méd',  hz: 'd0', plain: true, of: (a) => a.qtd ? a.d0 / a.qtd : null,   fmt: fmtBRL },
-  { key: 'd0',  lb: 'D0',  hz: 'd0',  acc: (a) => a.d0,               bp: 'd0',  sep: true },
-  { key: 'd1',  lb: 'D1',  hz: 'd1',  acc: (a) => a.d0 + a.vd1,       bp: 'd1' },
-  { key: 'd3',  lb: 'D3',  hz: 'd3',  acc: (a) => a.d0 + a.vd3,       bp: 'd3' },
-  { key: 'd4',  lb: 'D4',  hz: 'd4',  acc: (a) => a.d0 + a.vd4,       bp: 'd4' },
-  { key: 'w1',  lb: 'D7',  hz: 'w1',  acc: (a) => a.d0 + a.vw1,       bp: 'w1' },
-  { key: 'w2',  lb: 'D14', hz: 'w2',  acc: (a) => a.d0 + a.vw2,       bp: 'w2' },
+  { key: 'qtd', lb: 'Qtd FTD',     hz: 'd0', blk: 'ctx', plain: true, of: (a) => a.qtd || null,                 fmt: pirInt_ },
+  { key: 'tkt', lb: 'FTD $$',      hz: 'd0', blk: 'ctx', plain: true, of: (a) => a.qtd ? a.ftd / a.qtd : null,  fmt: fmtBRL },
+  { key: 'dm',  lb: 'Dep D0 méd',  hz: 'd0', blk: 'ctx', plain: true, of: (a) => a.qtd ? a.d0 / a.qtd : null,   fmt: fmtBRL },
+  { key: 'd0',  lb: 'D0',  hz: 'd0',  blk: 'mult', acc: (a) => a.d0,               bp: 'd0' },
+  { key: 'd1',  lb: 'D1',  hz: 'd1',  blk: 'mult', acc: (a) => a.d0 + a.vd1,       bp: 'd1' },
+  { key: 'd3',  lb: 'D3',  hz: 'd3',  blk: 'mult', acc: (a) => a.d0 + a.vd3,       bp: 'd3' },
+  { key: 'd4',  lb: 'D4',  hz: 'd4',  blk: 'mult', acc: (a) => a.d0 + a.vd4,       bp: 'd4' },
+  { key: 'w1',  lb: 'D7',  hz: 'w1',  blk: 'mult', acc: (a) => a.d0 + a.vw1,       bp: 'w1' },
+  { key: 'w2',  lb: 'D14', hz: 'w2',  blk: 'mult', acc: (a) => a.d0 + a.vw2,       bp: 'w2' },
   // M0 vem ANTES do D30 (pedido do Luis 14/08) — e é a ordem certa de horizonte: o M0 médio é ~15 dias
   // (vai do dia do FTD até o fim do mês), então ele é MAIS CURTO que o D30. Deixá-lo no fim sugeria uma
   // escada crescente que não existe: é normal o D30 ser maior que o M0.
   // Alvo de CALENDÁRIO, declarado à parte no plano/estudo em vez de sair de cum[30], justamente porque
   // o horizonte dele varia com o dia da safra.
-  { key: 'm0',  lb: 'M0',  hz: 'm0',  acc: (a) => a.d0 + a.vm0,       bp: 'm0' },
-  { key: 'd30', lb: 'D30', hz: 'd30', acc: (a) => a.d0 + a.vd30,      bp: 'd30' },
+  { key: 'm0',  lb: 'M0',  hz: 'm0',  blk: 'mult', acc: (a) => a.d0 + a.vm0,       bp: 'm0' },
+  { key: 'd30', lb: 'D30', hz: 'd30', blk: 'mult', acc: (a) => a.d0 + a.vd30,      bp: 'd30' },
   // ---- RETENÇÃO SOBRE D0 ----
   // Identidade do anexo: RET % = (MULT Dk − MULT D0) ÷ MULT D0. Expandindo, o FTD$ e o próprio D0 se
   // cancelam e sobra `depósitos do dia 1 em diante ÷ depósito do D0` — que é o que a coluna mede: quanto
@@ -5016,11 +5019,21 @@ const PIR_COLS = [
   // então sobre FTD e sobre D0 dão o mesmo número. Só as colunas de multiplicador reagem ao toggle.
   // ⚠️ SEM META (como no anexo): a D1 teria par no estudo (`comp.share[1]`), mas W1/W2/M0 não têm — e
   // meia coluna com meta e meia sem, no mesmo bloco, convida a comparar o que não é comparável.
-  { key: 'r1',  lb: 'D1 ret %',  hz: 'd1', ret: (a) => a.d0 ? a.vd1 / a.d0 : null,  fmt: (v) => fmtPct(v, 1), sep: true },
-  { key: 'r7',  lb: 'D7 ret %',  hz: 'w1', ret: (a) => a.d0 ? a.vw1 / a.d0 : null,  fmt: (v) => fmtPct(v, 1) },
-  { key: 'r14', lb: 'D14 ret %', hz: 'w2', ret: (a) => a.d0 ? a.vw2 / a.d0 : null,  fmt: (v) => fmtPct(v, 1) },
-  { key: 'rm0', lb: 'M0 ret %',  hz: 'm0', ret: (a) => a.d0 ? a.vm0 / a.d0 : null,  fmt: (v) => fmtPct(v, 1) },
+  { key: 'r1',  lb: 'D1 ret %',  hz: 'd1', blk: 'ret', ret: (a) => a.d0 ? a.vd1 / a.d0 : null,  fmt: (v) => fmtPct(v, 1) },
+  { key: 'r7',  lb: 'D7 ret %',  hz: 'w1', blk: 'ret', ret: (a) => a.d0 ? a.vw1 / a.d0 : null,  fmt: (v) => fmtPct(v, 1) },
+  { key: 'r14', lb: 'D14 ret %', hz: 'w2', blk: 'ret', ret: (a) => a.d0 ? a.vw2 / a.d0 : null,  fmt: (v) => fmtPct(v, 1) },
+  { key: 'rm0', lb: 'M0 ret %',  hz: 'm0', blk: 'ret', ret: (a) => a.d0 ? a.vm0 / a.d0 : null,  fmt: (v) => fmtPct(v, 1) },
 ];
+// Classe de fronteira de cada coluna VISÍVEL: 'pir-sep' na 1ª de um bloco novo (fio + calha à esquerda)
+// e 'pir-sep-end' na última do bloco anterior (calha à direita). Derivado da lista já filtrada, então
+// some/entra coluna sem quebrar a divisória.
+function pirSepCls_(cols) {
+  return cols.map((c, i) => {
+    const ini = i > 0 && cols[i - 1].blk !== c.blk;
+    const fim = i < cols.length - 1 && cols[i + 1].blk !== c.blk;
+    return (ini ? 'pir-sep' : '') + (ini && fim ? ' ' : '') + (fim ? 'pir-sep-end' : '');
+  });
+}
 // Agrupa as safras da janela em linhas da pirâmide. `ini`/`fim` guardam a borda real do bin — o `fim`
 // é quem decide maturação (ver pirFechada_) e o `ini` rotula a semana.
 function pirBins_(rows, selCh, selFx, gran) {
@@ -5156,6 +5169,7 @@ function TabPiramideCoorte({ retencaoFaixa, chFilter, meta, retFaixaLive }) {
   // Base D0 → a coluna D0 seria 1,00x em toda linha (é a própria âncora). Sai da tela, como na aba
   // Multiplicadores, senão gasta uma coluna inteira pra repetir uma constante.
   const cols = PIR_COLS.filter((c) => !(base === 'd0' && c.key === 'd0'));
+  const sepCls = pirSepCls_(cols);
   // Mês de referência da meta = mês do INÍCIO da janela (o mesmo critério das metas de retenção do Farol).
   const mkJanela = String((meta && meta.from) || (bins[0] && bins[0].ini) || '').slice(0, 7) || null;
   const bpScope = pirBpScope_(chFilter, base, mkJanela);
@@ -5177,7 +5191,7 @@ function TabPiramideCoorte({ retencaoFaixa, chFilter, meta, retFaixaLive }) {
     if (v != null && v >= mt) bateu++;
   }));
 
-  const celula = (b, c) => {
+  const celula = (b, c, sep) => {
     const v = pirValor_(c, b, base);
     const aberta = !pirFechada_(b.fim, c.hz, dataMax);
     const mt = metaDe(c);
@@ -5187,7 +5201,7 @@ function TabPiramideCoorte({ retencaoFaixa, chFilter, meta, retFaixaLive }) {
     if (aberta && soMaduras) {
       const fecha = (c.hz === 'm0') ? pirFimDoMes_(b.fim) : isoAddDays_(b.fim, PIR_HZ[c.hz]);
       return (
-        <td key={c.key} className={c.sep ? 'pir-sep' : undefined}>
+        <td key={c.key} className={sep || undefined}>
           <span className="pir-v pir-excl" title={'Fora do cálculo: esta safra só fecha o horizonte em ' + fmtBR_(fecha) + '. Desligue “só safras maduras” para ver o acumulado corrente.'}>·</span>
         </td>
       );
@@ -5211,7 +5225,7 @@ function TabPiramideCoorte({ retencaoFaixa, chFilter, meta, retFaixaLive }) {
       dica = 'Fechado' + (mt != null ? ' · meta ' + fmtMultiple(mt) + (bateuAqui ? ' (bateu)' : '') : '');
     }
     return (
-      <td key={c.key} className={c.sep ? 'pir-sep' : undefined}>
+      <td key={c.key} className={sep || undefined}>
         <span className={cls} style={st || undefined} title={dica}>{fmtDe(c)(v)}</span>
       </td>
     );
@@ -5276,10 +5290,10 @@ function TabPiramideCoorte({ retencaoFaixa, chFilter, meta, retFaixaLive }) {
             <thead>
               <tr>
                 <th>{gran === 'week' ? 'Semana do FTD' : 'Safra'}</th>
-                {cols.map((c) => {
+                {cols.map((c, i) => {
                   const mt = metaDe(c);
                   return (
-                    <th key={c.key} className={c.sep ? 'pir-sep' : undefined}>
+                    <th key={c.key} className={sepCls[i] || undefined}>
                       {c.lb}
                       {mt != null && <span className="pir-meta-tag">meta {fmtMultiple(mt)}</span>}
                     </th>
@@ -5291,7 +5305,7 @@ function TabPiramideCoorte({ retencaoFaixa, chFilter, meta, retFaixaLive }) {
               {bins.map((b) => (
                 <tr key={b.key}>
                   <td className="ch-name" title={gran === 'week' ? ('Safras de ' + fmtBR_(b.ini) + ' a ' + fmtBR_(b.fim)) : undefined}>{rotulo(b)}</td>
-                  {cols.map((c) => celula(b, c))}
+                  {cols.map((c, i) => celula(b, c, sepCls[i]))}
                 </tr>
               ))}
               {!bins.length && (
@@ -5313,10 +5327,10 @@ function TabPiramideCoorte({ retencaoFaixa, chFilter, meta, retFaixaLive }) {
                   : 'Todas as safras da janela, inclusive as que ainda não fecharam — mesma conta da aba Multiplicadores e Retenção.'}>
                   {soMaduras ? 'Total · só safras maduras' : 'Total · todas as safras'}
                 </td>
-                {cols.map((c) => {
+                {cols.map((c, i) => {
                   const v = pirTotal_(soMaduras ? fechadasDe(c) : bins, c, base);
                   const mt = metaDe(c);
-                  return <td key={c.key} className={c.sep ? 'pir-sep' : undefined}>
+                  return <td key={c.key} className={sepCls[i] || undefined}>
                     <span className={'pir-v' + (mt != null && v != null && v >= mt ? ' pir-meta' : '')}>{fmtDe(c)(v)}</span>
                   </td>;
                 })}
@@ -5327,16 +5341,16 @@ function TabPiramideCoorte({ retencaoFaixa, chFilter, meta, retFaixaLive }) {
                   : 'A mesma conta SEM as safras imaturas. A diferença pra linha de cima é maturação, não performance.'}>
                   {soMaduras ? 'com as imaturas (= Multiplicadores)' : 'sem as imaturas'}
                 </td>
-                {cols.map((c) => {
+                {cols.map((c, i) => {
                   const fe = fechadasDe(c);
                   const suja = fe.length < bins.length;
                   const v = pirTotal_(soMaduras ? bins : fe, c, base);
-                  return <td key={c.key} className={(c.sep ? 'pir-sep ' : '') + (suja ? 'pir-suja' : '')}>{fmtDe(c)(v)}</td>;
+                  return <td key={c.key} className={(sepCls[i] ? sepCls[i] + ' ' : '') + (suja ? 'pir-suja' : '')}>{fmtDe(c)(v)}</td>;
                 })}
               </tr>
               <tr className="pir-alt">
                 <td>safras fechadas</td>
-                {cols.map((c) => <td key={c.key} className={c.sep ? 'pir-sep' : undefined}>{fechadasDe(c).length}/{bins.length}</td>)}
+                {cols.map((c, i) => <td key={c.key} className={sepCls[i] || undefined}>{fechadasDe(c).length}/{bins.length}</td>)}
               </tr>
             </tfoot>
           </table>

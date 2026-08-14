@@ -413,7 +413,18 @@
   .pir-table th, .pir-table td { padding: 3px 6px; font-size: 11.5px; }
   .pir-table thead th { padding: 8px 6px; vertical-align: bottom; line-height: 1.35; }
   .pir-table tbody td:first-child, .pir-table tfoot td:first-child { padding-left: 12px; }
-  .pir-table th.pir-sep, .pir-table td.pir-sep { border-left: 1px solid var(--border-strong); }
+  /* Fronteira entre BLOCOS de métrica (contexto da safra | multiplicadores | retenção sobre D0).
+     Não é a mesma coisa que a divisão entre duas colunas do mesmo bloco, então não pode ser só mais um
+     fio de 1px: leva uma calha de ar de verdade + fio mais forte. Sem isso as colunas de ret % encostam
+     nas de multiplicador e a tabela é lida como uma escada só, com "2,47x" e "28,6%" na mesma sequência. */
+  .pir-table th.pir-sep, .pir-table td.pir-sep {
+    border-left: 2px solid var(--border-strong);
+    padding-left: 22px;
+  }
+  /* a calha também do lado de fora do fio: empurra a última coluna do bloco anterior.
+     Classe explícita em vez de `:has(+ .pir-sep)` — isto é estrutura, não enfeite, e não deve depender
+     de suporte a seletor. */
+  .pir-table th.pir-sep-end, .pir-table td.pir-sep-end { padding-right: 16px; }
   .pir-meta-tag { display: block; font-weight: 400; text-transform: none; letter-spacing: 0;
                   color: var(--accent-yellow); font-size: 9px; opacity: .85; }
   /* a célula é um bloco preenchido: a cor tem que encostar nas vizinhas pra escada ser legível de longe */
@@ -9217,10 +9228,14 @@ const pirInt_ = v => v == null || !isFinite(v) ? '—' : Math.round(v).toLocaleS
 // `plain` = contexto da safra (tamanho/ticket), não magnitude a comparar entre dias → fica sem escala
 // de cor, igual ao anexo. `acc` = numerador acumulado; o denominador vem do toggle de base.
 // `bp` = chave da curva do estudo (MDD_BP / MDD_BP_FTD), a MESMA meta da aba Métricas do dia a dia.
+// `blk` = BLOCO de métrica ('ctx' contexto da safra · 'mult' multiplicadores · 'ret' retenção sobre D0).
+// A divisória entre blocos é DERIVADA daqui, não marcada coluna a coluna: com um `sep: true` fixo na
+// coluna D0, a base "sobre D0" — que remove essa coluna — perdia a divisória em silêncio.
 const PIR_COLS = [{
   key: 'qtd',
   lb: 'Qtd FTD',
   hz: 'd0',
+  blk: 'ctx',
   plain: true,
   of: a => a.qtd || null,
   fmt: pirInt_
@@ -9228,6 +9243,7 @@ const PIR_COLS = [{
   key: 'tkt',
   lb: 'FTD $$',
   hz: 'd0',
+  blk: 'ctx',
   plain: true,
   of: a => a.qtd ? a.ftd / a.qtd : null,
   fmt: fmtBRL
@@ -9235,6 +9251,7 @@ const PIR_COLS = [{
   key: 'dm',
   lb: 'Dep D0 méd',
   hz: 'd0',
+  blk: 'ctx',
   plain: true,
   of: a => a.qtd ? a.d0 / a.qtd : null,
   fmt: fmtBRL
@@ -9242,37 +9259,42 @@ const PIR_COLS = [{
   key: 'd0',
   lb: 'D0',
   hz: 'd0',
+  blk: 'mult',
   acc: a => a.d0,
-  bp: 'd0',
-  sep: true
+  bp: 'd0'
 }, {
   key: 'd1',
   lb: 'D1',
   hz: 'd1',
+  blk: 'mult',
   acc: a => a.d0 + a.vd1,
   bp: 'd1'
 }, {
   key: 'd3',
   lb: 'D3',
   hz: 'd3',
+  blk: 'mult',
   acc: a => a.d0 + a.vd3,
   bp: 'd3'
 }, {
   key: 'd4',
   lb: 'D4',
   hz: 'd4',
+  blk: 'mult',
   acc: a => a.d0 + a.vd4,
   bp: 'd4'
 }, {
   key: 'w1',
   lb: 'D7',
   hz: 'w1',
+  blk: 'mult',
   acc: a => a.d0 + a.vw1,
   bp: 'w1'
 }, {
   key: 'w2',
   lb: 'D14',
   hz: 'w2',
+  blk: 'mult',
   acc: a => a.d0 + a.vw2,
   bp: 'w2'
 },
@@ -9285,12 +9307,14 @@ const PIR_COLS = [{
   key: 'm0',
   lb: 'M0',
   hz: 'm0',
+  blk: 'mult',
   acc: a => a.d0 + a.vm0,
   bp: 'm0'
 }, {
   key: 'd30',
   lb: 'D30',
   hz: 'd30',
+  blk: 'mult',
   acc: a => a.d0 + a.vd30,
   bp: 'd30'
 },
@@ -9306,28 +9330,41 @@ const PIR_COLS = [{
   key: 'r1',
   lb: 'D1 ret %',
   hz: 'd1',
+  blk: 'ret',
   ret: a => a.d0 ? a.vd1 / a.d0 : null,
-  fmt: v => fmtPct(v, 1),
-  sep: true
+  fmt: v => fmtPct(v, 1)
 }, {
   key: 'r7',
   lb: 'D7 ret %',
   hz: 'w1',
+  blk: 'ret',
   ret: a => a.d0 ? a.vw1 / a.d0 : null,
   fmt: v => fmtPct(v, 1)
 }, {
   key: 'r14',
   lb: 'D14 ret %',
   hz: 'w2',
+  blk: 'ret',
   ret: a => a.d0 ? a.vw2 / a.d0 : null,
   fmt: v => fmtPct(v, 1)
 }, {
   key: 'rm0',
   lb: 'M0 ret %',
   hz: 'm0',
+  blk: 'ret',
   ret: a => a.d0 ? a.vm0 / a.d0 : null,
   fmt: v => fmtPct(v, 1)
 }];
+// Classe de fronteira de cada coluna VISÍVEL: 'pir-sep' na 1ª de um bloco novo (fio + calha à esquerda)
+// e 'pir-sep-end' na última do bloco anterior (calha à direita). Derivado da lista já filtrada, então
+// some/entra coluna sem quebrar a divisória.
+function pirSepCls_(cols) {
+  return cols.map((c, i) => {
+    const ini = i > 0 && cols[i - 1].blk !== c.blk;
+    const fim = i < cols.length - 1 && cols[i + 1].blk !== c.blk;
+    return (ini ? 'pir-sep' : '') + (ini && fim ? ' ' : '') + (fim ? 'pir-sep-end' : '');
+  });
+}
 // Agrupa as safras da janela em linhas da pirâmide. `ini`/`fim` guardam a borda real do bin — o `fim`
 // é quem decide maturação (ver pirFechada_) e o `ini` rotula a semana.
 function pirBins_(rows, selCh, selFx, gran) {
@@ -9546,6 +9583,7 @@ function TabPiramideCoorte({
   // Base D0 → a coluna D0 seria 1,00x em toda linha (é a própria âncora). Sai da tela, como na aba
   // Multiplicadores, senão gasta uma coluna inteira pra repetir uma constante.
   const cols = PIR_COLS.filter(c => !(base === 'd0' && c.key === 'd0'));
+  const sepCls = pirSepCls_(cols);
   // Mês de referência da meta = mês do INÍCIO da janela (o mesmo critério das metas de retenção do Farol).
   const mkJanela = String(meta && meta.from || bins[0] && bins[0].ini || '').slice(0, 7) || null;
   const bpScope = pirBpScope_(chFilter, base, mkJanela);
@@ -9569,7 +9607,7 @@ function TabPiramideCoorte({
     const v = pirValor_(c, b, base);
     if (v != null && v >= mt) bateu++;
   }));
-  const celula = (b, c) => {
+  const celula = (b, c, sep) => {
     const v = pirValor_(c, b, base);
     const aberta = !pirFechada_(b.fim, c.hz, dataMax);
     const mt = metaDe(c);
@@ -9580,7 +9618,7 @@ function TabPiramideCoorte({
       const fecha = c.hz === 'm0' ? pirFimDoMes_(b.fim) : isoAddDays_(b.fim, PIR_HZ[c.hz]);
       return /*#__PURE__*/React.createElement("td", {
         key: c.key,
-        className: c.sep ? 'pir-sep' : undefined
+        className: sep || undefined
       }, /*#__PURE__*/React.createElement("span", {
         className: "pir-v pir-excl",
         title: 'Fora do cálculo: esta safra só fecha o horizonte em ' + fmtBR_(fecha) + '. Desligue “só safras maduras” para ver o acumulado corrente.'
@@ -9608,7 +9646,7 @@ function TabPiramideCoorte({
     }
     return /*#__PURE__*/React.createElement("td", {
       key: c.key,
-      className: c.sep ? 'pir-sep' : undefined
+      className: sep || undefined
     }, /*#__PURE__*/React.createElement("span", {
       className: cls,
       style: st || undefined,
@@ -9726,11 +9764,11 @@ function TabPiramideCoorte({
     className: "table-scroll tall"
   }, /*#__PURE__*/React.createElement("table", {
     className: "ch-table pir-table"
-  }, /*#__PURE__*/React.createElement("thead", null, /*#__PURE__*/React.createElement("tr", null, /*#__PURE__*/React.createElement("th", null, gran === 'week' ? 'Semana do FTD' : 'Safra'), cols.map(c => {
+  }, /*#__PURE__*/React.createElement("thead", null, /*#__PURE__*/React.createElement("tr", null, /*#__PURE__*/React.createElement("th", null, gran === 'week' ? 'Semana do FTD' : 'Safra'), cols.map((c, i) => {
     const mt = metaDe(c);
     return /*#__PURE__*/React.createElement("th", {
       key: c.key,
-      className: c.sep ? 'pir-sep' : undefined
+      className: sepCls[i] || undefined
     }, c.lb, mt != null && /*#__PURE__*/React.createElement("span", {
       className: "pir-meta-tag"
     }, "meta ", fmtMultiple(mt)));
@@ -9739,7 +9777,7 @@ function TabPiramideCoorte({
   }, /*#__PURE__*/React.createElement("td", {
     className: "ch-name",
     title: gran === 'week' ? 'Safras de ' + fmtBR_(b.ini) + ' a ' + fmtBR_(b.fim) : undefined
-  }, rotulo(b)), cols.map(c => celula(b, c)))), !bins.length && /*#__PURE__*/React.createElement("tr", null, /*#__PURE__*/React.createElement("td", {
+  }, rotulo(b)), cols.map((c, i) => celula(b, c, sepCls[i])))), !bins.length && /*#__PURE__*/React.createElement("tr", null, /*#__PURE__*/React.createElement("td", {
     colSpan: cols.length + 1,
     style: {
       color: 'var(--text-muted)'
@@ -9747,12 +9785,12 @@ function TabPiramideCoorte({
   }, "sem safra na janela / recorte"))), /*#__PURE__*/React.createElement("tfoot", null, /*#__PURE__*/React.createElement("tr", null, /*#__PURE__*/React.createElement("td", {
     className: "ch-name",
     title: soMaduras ? 'Só as safras que já fecharam o horizonte de cada coluna. É o número comparável com a meta.' : 'Todas as safras da janela, inclusive as que ainda não fecharam — mesma conta da aba Multiplicadores e Retenção.'
-  }, soMaduras ? 'Total · só safras maduras' : 'Total · todas as safras'), cols.map(c => {
+  }, soMaduras ? 'Total · só safras maduras' : 'Total · todas as safras'), cols.map((c, i) => {
     const v = pirTotal_(soMaduras ? fechadasDe(c) : bins, c, base);
     const mt = metaDe(c);
     return /*#__PURE__*/React.createElement("td", {
       key: c.key,
-      className: c.sep ? 'pir-sep' : undefined
+      className: sepCls[i] || undefined
     }, /*#__PURE__*/React.createElement("span", {
       className: 'pir-v' + (mt != null && v != null && v >= mt ? ' pir-meta' : '')
     }, fmtDe(c)(v)));
@@ -9760,19 +9798,19 @@ function TabPiramideCoorte({
     className: "pir-alt"
   }, /*#__PURE__*/React.createElement("td", {
     title: soMaduras ? 'A mesma conta COM as safras imaturas — é o que a aba Multiplicadores e Retenção mostra. A diferença pra linha de cima é maturação, não performance.' : 'A mesma conta SEM as safras imaturas. A diferença pra linha de cima é maturação, não performance.'
-  }, soMaduras ? 'com as imaturas (= Multiplicadores)' : 'sem as imaturas'), cols.map(c => {
+  }, soMaduras ? 'com as imaturas (= Multiplicadores)' : 'sem as imaturas'), cols.map((c, i) => {
     const fe = fechadasDe(c);
     const suja = fe.length < bins.length;
     const v = pirTotal_(soMaduras ? bins : fe, c, base);
     return /*#__PURE__*/React.createElement("td", {
       key: c.key,
-      className: (c.sep ? 'pir-sep ' : '') + (suja ? 'pir-suja' : '')
+      className: (sepCls[i] ? sepCls[i] + ' ' : '') + (suja ? 'pir-suja' : '')
     }, fmtDe(c)(v));
   })), /*#__PURE__*/React.createElement("tr", {
     className: "pir-alt"
-  }, /*#__PURE__*/React.createElement("td", null, "safras fechadas"), cols.map(c => /*#__PURE__*/React.createElement("td", {
+  }, /*#__PURE__*/React.createElement("td", null, "safras fechadas"), cols.map((c, i) => /*#__PURE__*/React.createElement("td", {
     key: c.key,
-    className: c.sep ? 'pir-sep' : undefined
+    className: sepCls[i] || undefined
   }, fechadasDe(c).length, "/", bins.length)))))), /*#__PURE__*/React.createElement("div", {
     className: "ch-note"
   }, /*#__PURE__*/React.createElement("strong", null, "Por que a tabela \xE9 uma escada."), " Uma c\xE9lula s\xF3 fecha quando ", /*#__PURE__*/React.createElement("strong", null, "safra + horizonte \u2264 ", dataMax ? fmtBR_(dataMax) : 'último dia com dado'), ". A safra de ontem n\xE3o tem D7 \u2014 e o n\xFAmero que apareceria ali n\xE3o \xE9 um D7 baixo, \xE9 um D7 pela metade. As c\xE9lulas abertas mostram o ", /*#__PURE__*/React.createElement("strong", null, "acumulado corrente"), " hachurado: d\xE1 pra acompanhar, mas ele s\xF3 pode subir.", ' ', /*#__PURE__*/React.createElement("strong", null, "Escala por coluna"), ", calculada ", /*#__PURE__*/React.createElement("strong", null, "s\xF3 sobre as c\xE9lulas fechadas"), " \u2014 comparar cor dentro da coluna faz sentido; entre colunas diferentes, n\xE3o (D30 \xE9 naturalmente maior que D1).", ' ', /*#__PURE__*/React.createElement("strong", null, "O toggle \u201Cs\xF3 safras maduras\u201D muda o C\xC1LCULO, n\xE3o s\xF3 a tela:"), " ligado, toda safra que ainda n\xE3o fechou o horizonte da coluna sai da c\xE9lula ", /*#__PURE__*/React.createElement("em", null, "e"), " do Total. Desligado (padr\xE3o), entra tudo e o Total bate \xE0 v\xEDrgula com a aba ", /*#__PURE__*/React.createElement("strong", null, "Multiplicadores e Reten\xE7\xE3o"), ". As duas leituras aparecem sempre \u2014 a segunda linha do rodap\xE9 \xE9 a que o toggle n\xE3o escolheu \u2014, porque a diferen\xE7a entre elas \xE9 ", /*#__PURE__*/React.createElement("strong", null, "matura\xE7\xE3o, n\xE3o performance"), ", e ela cresce com o horizonte (o D1 quase n\xE3o sente; o D30 sente muito).", ' ', /*#__PURE__*/React.createElement("strong", null, "Meta = r\xE9gua de CALEND\xC1RIO"), " (o compromisso do m\xEAs, ", /*#__PURE__*/React.createElement("code", null, "comp.canais"), " do estudo), nas duas bases \u2014 trocar entre ", /*#__PURE__*/React.createElement("em", null, "sobre FTD"), " e ", /*#__PURE__*/React.createElement("em", null, "sobre D0"), " muda o denominador e mais nada. \u26A0\uFE0F Ela \xE9 mais baixa que a meta da aba ", /*#__PURE__*/React.createElement("strong", null, "M\xE9tricas do dia a dia"), " na base sobre D0, que usa o", /*#__PURE__*/React.createElement("strong", null, " n\xEDvel BP"), ": o compromisso \xE9 um degrau at\xE9 o BP, n\xE3o o BP.", ' ', /*#__PURE__*/React.createElement("strong", null, "Growth e Total da Casa t\xEAm metas SEPARADAS."), " A curva de dias do estudo \xE9 do", /*#__PURE__*/React.createElement("strong", null, " Total da Casa"), " \u2014 medido contra julho/26, ela erra 5,6% na casa e 17,0% no growth. Em ", /*#__PURE__*/React.createElement("em", null, "Canais Growth"), " a \xFAnica meta \xE9 a de ", /*#__PURE__*/React.createElement("strong", null, "M0"), ", que vem do plano (linha \u201CMulti Growth\u201D da Projection_Revenue: 3,75x em ago/26 contra 3,60x da casa) e existe s\xF3 na base sobre FTD; as colunas de dia ficam sem meta porque ningu\xE9m calibrou curva de growth. Google e Meta t\xEAm curva pr\xF3pria; outro canal, ou 2+ canais, fica sem meta.", ' ', /*#__PURE__*/React.createElement("strong", null, "M0"), " tem alvo pr\xF3prio (n\xE3o \xE9 ", /*#__PURE__*/React.createElement("code", null, "cum[30]"), "): o horizonte dele varia com o dia da safra, ent\xE3o o estudo declara o n\xFAmero \xE0 parte.", ' ', /*#__PURE__*/React.createElement("strong", null, "As colunas \u201Cret %\u201D"), " s\xE3o a mesma coorte lida sobre o D0: ", /*#__PURE__*/React.createElement("code", null, "(Mult Dk \u2212 Mult D0) \xF7 Mult D0"), ", que \xE9 o dep\xF3sito do dia 1 em diante dividido pelo do D0 \u2014 quanto o dinheiro do primeiro dia trouxe depois dele. Elas ", /*#__PURE__*/React.createElement("strong", null, "n\xE3o mudam com o toggle de base"), " (a raz\xE3o cancela o denominador), e ficam sem meta: s\xF3 a de D1 teria par no estudo.")));
