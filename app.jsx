@@ -1320,7 +1320,14 @@ function weekBinISO_(iso, anchor) {
 // das %). mode 'qtd'|'val' afeta só as colunas de retenção. ggrM0/m0PerPlayer ficam p/ ROAS GGR e heroes.
 // `weekAnchor` (opcional): no gran='week', ancora os bins de 7 dias nesse dia em vez de usar a
 // semana-calendário — ver weekBinISO_. Só os GRÁFICOS passam; a tabela segue em semana-calendário.
-function aggRetFaixaBench_(retencaoFaixa, chFilter, faixa, mode, gran, gCurve, dataMax, dim, grupoSel, weekAnchor) {
+// `matRef` (opcional, ÚLTIMO DIA FECHADO) liga o TOTAL MADURO: além do total normal, acumula um bucket
+// POR HORIZONTE contendo só as safras que já fecharam aquele horizonte, e devolve em `matTotals`.
+// Existe porque o Total desta aba mistura maturidades — o W1 dele sai de todas as safras da janela,
+// inclusive as de ontem, que ainda não têm W1 — e isso puxa o número pra baixo sem avisar (medido em
+// 14/08: D4 2,50x com as imaturas vs 2,60x sem). Sem `matRef` o retorno é byte a byte o de antes, então
+// os outros call sites (gráfico, por canal/faixa/grupo/campanha, mês anterior) não mudam.
+const AGG_MAT_HZ = ['d0', 'd1', 'd3', 'd4', 'w1', 'w2', 'm0'];   // as mesmas chaves do retMultCols_
+function aggRetFaixaBench_(retencaoFaixa, chFilter, faixa, mode, gran, gCurve, dataMax, dim, grupoSel, weekAnchor, matRef) {
   const rows = benchApostouRows_(retencaoFaixa);
   const selCh = chSelector_(chFilter);
   const faixaArr = Array.isArray(faixa) ? faixa : (faixa && faixa !== 'all' ? [faixa] : []);   // [] = todas
@@ -1335,11 +1342,20 @@ function aggRetFaixaBench_(retencaoFaixa, chFilter, faixa, mode, gran, gCurve, d
   const groupOf = (r) => dim === 'canal' ? r.canal : dim === 'faixa' ? r.faixa : dim === 'grupo' ? (r.grupo || 'sem grupo') : dim === 'campanha' ? (r.campanha || '(sem campanha)') : (weekly ? weekBinISO_(r.date, weekAnchor) : r.date);
   const labelOf = (k) => dim === 'canal' ? k : dim === 'faixa' ? fxLabel_(k) : dim === 'grupo' ? grupoLabel_(k) : dim === 'campanha' ? k : (weekly ? weekLabel_(k) : k);
   const by = {}, tot = zero();
+  const matBy = {}, matN = {};
+  if (matRef) AGG_MAT_HZ.forEach(h => { matBy[h] = zero(); matN[h] = 0; });
   rows.forEach(r => {
     if (!selCh(r.canal) || !selFx(r.faixa) || !selGr(r.grupo)) return;
     const b = groupOf(r);
     if (!by[b]) by[b] = zero();
     keys.forEach(k => { by[b][k] += r[k] || 0; tot[k] += r[k] || 0; });
+    // buckets maduros: a MESMA linha entra em vários horizontes (a safra de 01/08 é madura pra D1 e
+    // pra W1), e não entra em nenhum daqueles que ainda não fecharam.
+    if (matRef) AGG_MAT_HZ.forEach(h => {
+      if (!pirFechada_(String(r.date), h, matRef)) return;
+      keys.forEach(k => { matBy[h][k] += r[k] || 0; });
+      matN[h]++;
+    });
     // M0 ESPERADO (ancorado no realizado): pega o que a coorte JÁ depositou (realized = D0 + M0-até-hoje)
     // e completa só o runway que falta usando a forma da curva: realized × G(runway) ÷ G(idade atual).
     // Em mês fechado idade ≥ runway → vira o próprio realizado. Respeita junho rodar abaixo de maio.
@@ -1364,7 +1380,14 @@ function aggRetFaixaBench_(retencaoFaixa, chFilter, faixa, mode, gran, gCurve, d
     benchMetrics_(b, mode));
   // período/faixa: chave ISO/prefixo ordinal ordenam sozinhos · canal: maior FTD$ primeiro (comparação)
   const ks = Object.keys(by).sort((dim === 'canal' || dim === 'campanha') ? (a, b) => (by[b].ftd || 0) - (by[a].ftd || 0) : undefined);
-  return { rows: ks.map(k => fin(by[k], labelOf(k), k)), totals: fin(tot, 'Total', null) };
+  // matTotals[h] é um objeto de métricas COMPLETO por horizonte — assim a tabela lê cada coluna do
+  // bucket dela (`matTotals[c.key]`) usando o MESMO getter das colunas normais, sem caso especial.
+  let matTotals = null;
+  if (matRef) {
+    matTotals = { _n: matN, _total: Object.keys(by).length };
+    AGG_MAT_HZ.forEach(h => { matTotals[h] = benchMetrics_(matBy[h], mode); });
+  }
+  return { rows: ks.map(k => fin(by[k], labelOf(k), k)), totals: fin(tot, 'Total', null), matTotals: matTotals };
 }
 
 // Colunas de multiplicador da Ret. Faixa. base 'ftd' (padrão) = acúmulo (incl. D0) ÷ FTD, começando no D0.
@@ -1429,17 +1452,24 @@ function RetFaixaTable({ data, dateLabel, m0Label, base }) {
     const bg = heat ? heatBg_(v, rng.min, rng.max) : 'rgba(250,204,21,0.10)';
     return left ? { background: bg, borderLeft: '2px solid rgba(250,204,21,0.45)' } : { background: bg };
   };
-  const cells = (r, heat) => [
-    <td key="q">{fmtQty(r.qtd)}</td>,
-    <td key="ftd">{fmtBRL(r.ftdMedio)}</td>,
-    <td key="d0">{fmtBRL(r.d0Medio)}</td>,
-    ...multCols.map(c => <td key={c.key}>{fmtMultiple(c.get(r))}</td>),
-    espCell(r),
-    <td key="r1" style={retCell(r.retD1, rD1, heat, true)}>{fmtPct(r.retD1, 1)}</td>,
-    <td key="rw1" style={retCell(r.retW1, rW1, heat, false)}>{fmtPct(r.retW1, 1)}</td>,
-    <td key="rw2" style={retCell(r.retW2, rW2, heat, false)}>{fmtPct(r.retW2, 1)}</td>,
-    <td key="rm0" style={retCell(r.retM0, rM0, heat, false)}>{fmtPct(r.retM0, 1)}</td>,
-  ];
+  // `mat` = totais MADUROS por horizonte (só no Total, e só quando o agregador recebeu matRef). Cada
+  // coluna lê do bucket DELA — o getter é o mesmo das linhas, só muda de qual objeto ele lê.
+  const cells = (r, heat, mat) => {
+    const src = (hz) => (mat && mat[hz]) ? mat[hz] : r;
+    const nOf = (hz) => (mat && mat._n && mat._n[hz] != null) ? mat._n[hz] + '/' + mat._total + ' safras maduras' : null;
+    const tipMat = (hz) => nOf(hz) ? 'Só safras que já fecharam este horizonte (' + nOf(hz) + '). As imaturas ficam de fora do cálculo.' : undefined;
+    return [
+      <td key="q">{fmtQty(r.qtd)}</td>,
+      <td key="ftd">{fmtBRL(r.ftdMedio)}</td>,
+      <td key="d0">{fmtBRL(r.d0Medio)}</td>,
+      ...multCols.map(c => <td key={c.key} title={tipMat(c.key)}>{fmtMultiple(c.get(src(c.key)))}</td>),
+      espCell(r),
+      <td key="r1" style={retCell(src('d1').retD1, rD1, heat, true)} title={tipMat('d1')}>{fmtPct(src('d1').retD1, 1)}</td>,
+      <td key="rw1" style={retCell(src('w1').retW1, rW1, heat, false)} title={tipMat('w1')}>{fmtPct(src('w1').retW1, 1)}</td>,
+      <td key="rw2" style={retCell(src('w2').retW2, rW2, heat, false)} title={tipMat('w2')}>{fmtPct(src('w2').retW2, 1)}</td>,
+      <td key="rm0" style={retCell(src('m0').retM0, rM0, heat, false)} title={tipMat('m0')}>{fmtPct(src('m0').retM0, 1)}</td>,
+    ];
+  };
   // Ordenação client-side por coluna: clique no cabeçalho ordena (1º clique = desc); reclique inverte.
   // sortKey null = ordem que veio do agregador. O Total fica sempre no rodapé (tfoot, fora da ordenação).
   const [sortKey, setSortKey] = React.useState(null);
@@ -1470,7 +1500,14 @@ function RetFaixaTable({ data, dateLabel, m0Label, base }) {
         {sortedRows.map((r, i) => (<tr key={i}><td className="ch-name">{dm(r.date)}</td>{cells(r, true)}</tr>))}
       </tbody>
       <tfoot>
-        <tr><td>Total</td>{cells(t, false)}</tr>
+        {/* ⚠️ O Total usa SÓ SAFRAS MADURAS por coluna quando o agregador manda `matTotals` (2026-08-14,
+            alinhado com a Pirâmide de Coorte). Antes ele misturava maturidades: o W1 saía de todas as
+            safras da janela, inclusive as de ontem, que ainda não têm W1 — e o número caía sem avisar.
+            As LINHAS por período seguem cruas de propósito: ali cada linha é uma safra e o leitor vê a
+            idade dela na própria data. */}
+        <tr><td title={data.matTotals ? 'Cada coluna usa só as safras que já fecharam aquele horizonte — passe o mouse na célula pra ver quantas entraram.' : undefined}>
+          Total{data.matTotals ? ' · safras maduras' : ''}
+        </td>{cells(t, false, data.matTotals)}</tr>
       </tfoot>
     </table></div>
   );
@@ -1998,13 +2035,18 @@ function TabRetencaoFaixa({ retencaoFaixa, chFilter, channels, bp, meta }) {
   // Coluna "M0 Esperado": curva G do escopo (Total/Growth; canal específico → null). Same-day usa
   // curva própria (m0Curve_ escolhe). OFF só na Coorte 30d (janela fixa de 30d ≠ mês-calendário → runway não se aplica).
   const gCurve = !cohort ? m0Curve_(chFilter, sameday) : null;
-  const data = aggRetFaixaBench_(srcE, chFilter, faixaSel, mode, gran, gCurve, dataMax, null, grupoSel);
+  // ⚠️ TOTAL MADURO (2026-08-14, alinhado com a Pirâmide de Coorte): passa o último dia FECHADO e o
+  // agregador devolve `matTotals` — cada coluna do Total calculada só com as safras que fecharam AQUELE
+  // horizonte. Só no modo CALENDÁRIO: a visão Coorte 30/60/90d já corta coorte fechada na fonte, e
+  // aplicar o corte duas vezes esvaziaria a tabela. `null` quando não se aplica → Total volta ao antigo.
+  const matRef = cohort ? null : ultimoDiaFechado_(dataMax);
+  const data = aggRetFaixaBench_(srcE, chFilter, faixaSel, mode, gran, gCurve, dataMax, null, grupoSel, undefined, matRef);
   const t = data.totals || {};
   // Tabela de baixo: reagrupada por canal/faixa/grupo quando "Ver por" ≠ "período". Grupo sempre usa a base byGrupo.
   const tableData = tableDim === 'periodo' ? data
-    : tableDim === 'grupo' ? aggRetFaixaBench_(srcRFGrupo, chFilter, faixaSel, mode, gran, gCurve, dataMax, 'grupo', grupoSel)
-    : tableDim === 'campanha' ? aggRetFaixaBench_(campDimSrc, chFilter, faixaSel, mode, gran, gCurve, dataMax, 'campanha', grupoSel)
-    : aggRetFaixaBench_(srcE, chFilter, faixaSel, mode, gran, gCurve, dataMax, tableDim, grupoSel);
+    : tableDim === 'grupo' ? aggRetFaixaBench_(srcRFGrupo, chFilter, faixaSel, mode, gran, gCurve, dataMax, 'grupo', grupoSel, undefined, matRef)
+    : tableDim === 'campanha' ? aggRetFaixaBench_(campDimSrc, chFilter, faixaSel, mode, gran, gCurve, dataMax, 'campanha', grupoSel, undefined, matRef)
+    : aggRetFaixaBench_(srcE, chFilter, faixaSel, mode, gran, gCurve, dataMax, tableDim, grupoSel, undefined, matRef);
   // Mês anterior fechado: mesmo recorte (canal/faixa/modo) num único agregado (.totals). Sem curva (já maduro).
   const pmRow = pmFetch.rows ? aggRetFaixaBench_(pmFetch.rows, chFilter, faixaSel, mode, 'day', null, dataMax, null, grupoSel).totals : null;
   // BP do escopo (Total/Growth/canal). Só faz sentido p/ "Todas as faixas" — o plano não tem meta
@@ -4732,6 +4774,7 @@ function TabMetricasDia({ retencaoFaixa, chFilter, meta, retFaixaLive }) {
   // igual ao toggle da aba Multiplicadores). Troca o denominador do realizado E a tabela de Planejado.
   const [multBase, setMultBase] = usePersistedState('rvops:mddMultBase', 'd0');
   const dataMax = meta && meta.dataMaxDate;
+  const diaOk = ultimoDiaFechado_(dataMax);   // maturação parte do último dia FECHADO — ver o `cut` abaixo
   const grupoActive = grupoSel.length > 0;
   // A base `retencaoFaixa` do payload NÃO traz grupo de risco — precisa do fetch com &byGrupo=1 (mesma
   // mecânica da aba Multiplicadores e Retenção). Só busca quando o filtro de grupo está ligado.
@@ -4786,7 +4829,11 @@ function TabMetricasDia({ retencaoFaixa, chFilter, meta, retFaixaLive }) {
   const bpScope = mddBpScope_(chFilter, multBase);
   const out = MDD_ROWS.map(row => {
     // Só safras que já fecharam a janela da métrica (maturação).
-    const cut = dataMax ? isoAddDays_(dataMax, -row.mat) : null;
+    // ⚠️ 2026-08-14: o corte parte do último dia FECHADO, não do dataMax cru. `meta.dataMaxDate` é o MAX
+    // da partição do player_metrics = o último dia com ALGUM dado, que na prática é HOJE ainda
+    // carregando. Com o dataMax cru, a safra de ONTEM entrava no D1 com a galera ainda depositando e
+    // afundava a média com numerador incompleto — o mesmo defeito que a Pirâmide de Coorte expôs.
+    const cut = diaOk ? isoAddDays_(diaOk, -row.mat) : null;
     const naJanela = byDay.filter(d => !cut || d.date <= cut);
     // FALLBACK DE COORTE: se NENHUMA safra da janela maturou, cai nas safras maduras mais recentes do
     // dado (a cauda anterior à janela). O SPAN é MÉDIA MÓVEL DA PRÓPRIA JANELA DA MÉTRICA (regra do
@@ -4824,7 +4871,7 @@ function TabMetricasDia({ retencaoFaixa, chFilter, meta, retFaixaLive }) {
     // Só sobra "—" quando nem a cauda tem safra madura (janela muito antiga, ou dado ainda não chegou).
     const imatura = !missing && days.length === 0 && byDay.length > 0;
     // isoDiffDays_(a, b) = b − a. Idade da safra MAIS VELHA da janela = dataMax − primeiro dia.
-    const faltamDias = (imatura && dataMax) ? Math.max(1, row.mat - isoDiffDays_(byDay[0].date, dataMax)) : null;
+    const faltamDias = (imatura && diaOk) ? Math.max(1, row.mat - isoDiffDays_(byDay[0].date, diaOk)) : null;
     return {
       ...row, n: days.length, real, imatura, faltamDias, coorte,
       bpVal: (row.bp && bpScope) ? bpScope[row.bp] : null,
@@ -4872,7 +4919,7 @@ function TabMetricasDia({ retencaoFaixa, chFilter, meta, retFaixaLive }) {
         </span>
       </div>
       <div className="support">
-        <div className="support-title">Escada de retenção precoce · {chLbl} · {faixaLbl} · {grupoLbl} · mult {multBase === 'ftd' ? 'sobre FTD' : 'sobre D0'} · safras do período{dataMax ? ' (até ' + dataMax.slice(8, 10) + '/' + dataMax.slice(5, 7) + ')' : ''}{grFetch.loading ? ' · carregando grupos…' : ''}{grFetch.error ? ' · erro ao carregar grupos' : ''}
+        <div className="support-title">Escada de retenção precoce · {chLbl} · {faixaLbl} · {grupoLbl} · mult {multBase === 'ftd' ? 'sobre FTD' : 'sobre D0'} · safras do período{diaOk ? ' (maduras até ' + diaOk.slice(8, 10) + '/' + diaOk.slice(5, 7) + ')' : ''}{grFetch.loading ? ' · carregando grupos…' : ''}{grFetch.error ? ' · erro ao carregar grupos' : ''}
           {/* Sem isto, uma falha no fetch da cauda derruba o fallback de coorte em silêncio e as linhas
               de maturação longa (D14, D30, S1/S0) voltam a aparecer vazias "sem motivo". */}
           {tail.loading ? ' · carregando safras maduras…' : ''}
@@ -4985,13 +5032,13 @@ function pirFimDoMes_(iso) {
 // Contar esse dia como completo fazia a safra de ontem exibir D1 com a galera ainda depositando —
 // exatamente o que o Luis pegou na tela. O dia de referência da maturação é o ANTERIOR ao dataMax.
 // Consequência: a escada anda um dia pra trás e é isso que se quer — "safra fechada" é fechada mesmo.
-function pirDiaCompleto_(dataMax) {
+function ultimoDiaFechado_(dataMax) {
   return dataMax ? isoAddDays_(dataMax, -1) : null;
 }
 // ⚠️ `safra` aqui é o dia MAIS NOVO do bin. Na visão semanal a semana só fecha quando a ÚLTIMA safra
 // dela fecha — senão o bin misturaria coorte madura com imatura e o número cairia sem avisar, que é
 // exatamente o defeito que esta aba existe pra tornar visível.
-// ⚠️ `ref` é o último dia COMPLETO (ver pirDiaCompleto_), não o dataMax cru.
+// ⚠️ `ref` é o último dia COMPLETO (ver ultimoDiaFechado_), não o dataMax cru.
 function pirFechada_(safra, hz, ref) {
   if (!ref || !safra) return false;
   if (hz === 'm0') return pirFimDoMes_(safra) <= ref;
@@ -5206,7 +5253,7 @@ function TabPiramideCoorte({ retencaoFaixa, chFilter, meta, retFaixaLive }) {
   const [soMaduras, setSoMaduras] = usePersistedState('rvops:pirSoMaduras', false);
   // TUDO que decide maturação nesta aba usa `diaOk` (último dia COMPLETO), nunca o dataMax cru.
   const dataMax = meta && meta.dataMaxDate;
-  const diaOk = pirDiaCompleto_(dataMax);
+  const diaOk = ultimoDiaFechado_(dataMax);
   const rows = benchApostouRows_(retencaoFaixa || []);
   const selCh = chSelector_(chFilter);
   const selFx = (fx) => faixaSel.length === 0 || faixaSel.includes(fx);
@@ -5475,8 +5522,10 @@ function TabPiramideCoorte({ retencaoFaixa, chFilter, meta, retFaixaLive }) {
           {' '}<strong>Escala por coluna</strong>, calculada <strong>só sobre as células fechadas</strong> — comparar cor
           dentro da coluna faz sentido; entre colunas diferentes, não (D30 é naturalmente maior que D1).
           {' '}<strong>O toggle “só safras maduras” muda o CÁLCULO, não só a tela:</strong> ligado, toda safra
-          que ainda não fechou o horizonte da coluna sai da célula <em>e</em> do Total. Desligado (padrão),
-          entra tudo e o Total bate à vírgula com a aba <strong>Multiplicadores e Retenção</strong>.
+          que ainda não fechou o horizonte da coluna sai da célula <em>e</em> do Total. É essa leitura que bate
+          à vírgula com o Total da aba <strong>Multiplicadores e Retenção</strong>, que desde 14/08 também
+          usa só safras maduras por coluna. Desligado (padrão), entra tudo — é o que o dinheiro da janela
+          rendeu até agora, número que sobe sozinho nos próximos dias.
           As duas leituras aparecem sempre — a segunda linha do rodapé é a que o toggle não escolheu —, porque a
           diferença entre elas é <strong>maturação, não performance</strong>, e ela cresce com o horizonte
           (o D1 quase não sente; o D30 sente muito).
