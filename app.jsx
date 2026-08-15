@@ -5145,6 +5145,42 @@ function pirBpScope_(chFilter, base, mk) {
   if (sel.length === 1) return T[sel[0]] || null;
   return null;
 }
+// ============================================================
+// COMPARAÇÃO COM O MÊS ANTERIOR (o "farol" do anexo)
+// ============================================================
+// Janela homóloga = a MESMA faixa de dias, um mês atrás (01–13/08 → 01–13/07). Dia que não existe no
+// mês anterior é grampeado no último (31/03 → 28/02) — sem isso a janela viraria março de novo.
+function pirMesAntes_(iso) {
+  const [y, m, d] = String(iso).split('-').map(Number);
+  const ultimo = new Date(Date.UTC(y, m - 1, 0)).getUTCDate();   // último dia do mês ANTERIOR
+  const dd = Math.min(d, ultimo);
+  const ay = (m === 1) ? y - 1 : y, am = (m === 1) ? 12 : m - 1;
+  return ay + '-' + ('0' + am).slice(-2) + '-' + ('0' + dd).slice(-2);
+}
+// bins do mês anterior → função de lookup do bin homólogo.
+//   DIA:    casa por DIA DO MÊS (07/08 ↔ 07/07) — é o pareamento do anexo, e é exato.
+//   SEMANA: casa por POSIÇÃO na janela (1ª semana ↔ 1ª semana). Semana-calendário não tem homólogo
+//           exato num outro mês, então aqui o pareamento é aproximado — está dito no tooltip.
+function pirHomologo_(binsPrev, gran) {
+  if (gran === 'week') return (b, i) => binsPrev[i] || null;
+  const porDia = {};
+  binsPrev.forEach((b) => { porDia[b.key.slice(8, 10)] = b; });
+  return (b) => porDia[b.key.slice(8, 10)] || null;
+}
+// Compara a célula com a homóloga. Devolve 'up' | 'down' | null.
+// ⚠️ REGRA DE MATURAÇÃO, e ela não é simetria: numa célula que AINDA NÃO FECHOU o valor está truncado,
+// então um "abaixo" é artefato de maturação e não diz nada — mas um "acima" JÁ é conclusivo, porque o
+// multiplicador só acumula: se a safra nova já passou a velha antes de fechar, vai continuar passando.
+// Por isso célula aberta só pode mostrar ▲ (esmaecido), nunca ▼.
+function pirCmp_(v, ref, aberta) {
+  if (v == null || ref == null || !isFinite(v) || !isFinite(ref) || ref === 0) return null;
+  if (v > ref) return 'up';
+  // ⚠️ EMPATE NÃO É PIORA. A primeira versão caía no 'down' em tudo que não fosse maior, e a coluna D0
+  // — cujo valor costuma repetir entre meses — ficou vermelha inteira no preview. Sem dado que se mexeu,
+  // não há direção pra mostrar.
+  if (v === ref) return null;
+  return aberta ? null : 'down';
+}
 const PIR_RAMP = ['--pir1', '--pir2', '--pir3', '--pir4', '--pir5', '--pir6'];
 const PIR_INK  = ['--pirI1', '--pirI2', '--pirI3', '--pirI4', '--pirI5', '--pirI6'];
 
@@ -5166,6 +5202,25 @@ function TabPiramideCoorte({ retencaoFaixa, chFilter, meta, retFaixaLive }) {
   const chKey = chList_(chFilter).join('|') + '#' + ((chFilter && chFilter.scope) || '');
   const bins = React.useMemo(() => pirBins_(rows, selCh, selFx, gran),
     [retencaoFaixa, chKey, JSON.stringify(faixaSel), gran]);
+  // --- janela HOMÓLOGA (mesmo intervalo de dias, um mês atrás) — fetch próprio, igual ao das outras abas.
+  // Falha silenciosa de propósito: sem ela a tabela inteira segue funcionando, só sem as bolinhas.
+  const prevFrom = (meta && meta.from) ? pirMesAntes_(meta.from) : null;
+  const prevTo   = (meta && meta.to)   ? pirMesAntes_(meta.to)   : null;
+  const [prev, setPrev] = React.useState({ rows: null, loading: false, error: null });
+  React.useEffect(() => {
+    if (!ENDPOINT_URL || !prevFrom || !prevTo) return;
+    let vivo = true;
+    setPrev((s) => ({ ...s, loading: true, error: null }));
+    fetch(`${ENDPOINT_URL}?${authParam_()}&from=${prevFrom}&to=${prevTo}&only=retfaixa`)
+      .then((r) => r.ok ? r.json() : Promise.reject(new Error('HTTP ' + r.status)))
+      .then((j) => { if (!vivo) return; if (j.error) throw new Error(j.error); setPrev({ rows: j.retencaoFaixa || [], loading: false, error: null }); })
+      .catch((e) => { if (vivo) setPrev({ rows: null, loading: false, error: String(e.message || e) }); });
+    return () => { vivo = false; };
+  }, [prevFrom, prevTo]);
+  const binsPrev = React.useMemo(() => pirBins_(benchApostouRows_(prev.rows || []), selCh, selFx, gran),
+    [prev.rows, chKey, JSON.stringify(faixaSel), gran]);
+  const homologo = pirHomologo_(binsPrev, gran);
+  const temPrev = binsPrev.length > 0;
   // Base D0 → a coluna D0 seria 1,00x em toda linha (é a própria âncora). Sai da tela, como na aba
   // Multiplicadores, senão gasta uma coluna inteira pra repetir uma constante.
   const cols = PIR_COLS.filter((c) => !(base === 'd0' && c.key === 'd0'));
@@ -5191,9 +5246,36 @@ function TabPiramideCoorte({ retencaoFaixa, chFilter, meta, retFaixaLive }) {
     if (v != null && v >= mt) bateu++;
   }));
 
-  const celula = (b, c, sep) => {
+  // Bolinha de comparação com o mês anterior. `plain` (contexto da safra) não leva: tamanho de safra não
+  // é "melhor/pior", é só o que aconteceu.
+  const bolinha = (c, v, ref, aberta) => {
+    if (c.plain || ref == null) return null;
+    const dir = pirCmp_(v, ref, aberta);
+    if (!dir) return null;
+    const txt = (dir === 'up' ? 'Melhorou' : 'Piorou') + ' vs o mesmo período do mês anterior ('
+      + fmtDe(c)(ref) + ')' + (aberta ? ' — e esta célula ainda não fechou, então o "melhorou" já é conclusivo: o acumulado só sobe.' : '');
+    return <i className={'pir-dot pir-dot-' + dir + (aberta ? ' pir-dot-open' : '')} title={txt} />;
+  };
+  // Bins do mês anterior que pareiam com os que ENTRARAM no total desta coluna.
+  // ⚠️ Não é "a janela homóloga inteira": com o toggle "só maduras" a linha de cima cobre menos dias
+  // (D7 só até a safra que fechou), e comparar isso contra o mês anterior INTEIRO mediria maturação e
+  // chamaria de melhora. Aqui o homólogo é montado a partir dos mesmos bins, um a um.
+  const refBins = (c) => {
+    if (!temPrev) return null;
+    const usados = soMaduras ? bins.filter((b) => pirFechada_(b.fim, c.hz, dataMax)) : bins;
+    const out = [];
+    bins.forEach((b, i) => {
+      if (usados.indexOf(b) < 0) return;
+      const p = homologo(b, i);
+      if (p) out.push(p);
+    });
+    return out.length ? out : null;
+  };
+  const celula = (b, c, sep, idx) => {
     const v = pirValor_(c, b, base);
     const aberta = !pirFechada_(b.fim, c.hz, dataMax);
+    const bAnt = homologo(b, idx);
+    const ref = bAnt ? pirValor_(c, bAnt, base) : null;
     const mt = metaDe(c);
     const bateuAqui = !aberta && mt != null && v != null && v >= mt;
     // Com o toggle ligado a célula imatura não vira "número menor": vira VAZIO. Mostrar um parcial
@@ -5224,9 +5306,12 @@ function TabPiramideCoorte({ retencaoFaixa, chFilter, meta, retFaixaLive }) {
       }
       dica = 'Fechado' + (mt != null ? ' · meta ' + fmtMultiple(mt) + (bateuAqui ? ' (bateu)' : '') : '');
     }
+    if (ref != null && !c.plain) dica += ' · mês anterior: ' + fmtDe(c)(ref);
     return (
       <td key={c.key} className={sep || undefined}>
-        <span className={cls} style={st || undefined} title={dica}>{fmtDe(c)(v)}</span>
+        <span className={cls} style={st || undefined} title={dica}>
+          {bolinha(c, v, ref, aberta)}<span>{fmtDe(c)(v)}</span>
+        </span>
       </td>
     );
   };
@@ -5282,7 +5367,10 @@ function TabPiramideCoorte({ retencaoFaixa, chFilter, meta, retFaixaLive }) {
               branco→verde foi escolhida justamente pra ser lida como qualidade, não como magnitude. */}
           <span>Escala <i className="pir-ramp">{PIR_RAMP.map((v) => <i key={v} style={{ background: 'var(' + v + ')' }} />)}</i> pior → melhor</span>
           <span><i className="pir-sw pir-sw-meta">2,47x</i> bateu a meta</span>
+          <span><i className="pir-dot pir-dot-up" /> melhorou vs o mesmo período do mês anterior</span>
+          <span><i className="pir-dot pir-dot-down" /> piorou</span>
           <span><i className="pir-sw pir-sw-open" /> ainda não fechou</span>
+          {prev.error && <span style={{ color: 'var(--negative)' }}>⚠ falhou buscar o mês anterior — sem bolinhas ({prev.error})</span>}
           {soMaduras && <span style={{ color: 'var(--accent-yellow)' }}>⚠ só safras maduras: as imaturas estão FORA do cálculo</span>}
         </div>
         <div className="table-scroll tall">
@@ -5302,10 +5390,10 @@ function TabPiramideCoorte({ retencaoFaixa, chFilter, meta, retFaixaLive }) {
               </tr>
             </thead>
             <tbody>
-              {bins.map((b) => (
+              {bins.map((b, bi) => (
                 <tr key={b.key}>
                   <td className="ch-name" title={gran === 'week' ? ('Safras de ' + fmtBR_(b.ini) + ' a ' + fmtBR_(b.fim)) : undefined}>{rotulo(b)}</td>
-                  {cols.map((c, i) => celula(b, c, sepCls[i]))}
+                  {cols.map((c, i) => celula(b, c, sepCls[i], bi))}
                 </tr>
               ))}
               {!bins.length && (
@@ -5330,8 +5418,12 @@ function TabPiramideCoorte({ retencaoFaixa, chFilter, meta, retFaixaLive }) {
                 {cols.map((c, i) => {
                   const v = pirTotal_(soMaduras ? fechadasDe(c) : bins, c, base);
                   const mt = metaDe(c);
+                  const ref = pirTotal_(refBins(c), c, base);
                   return <td key={c.key} className={sepCls[i] || undefined}>
-                    <span className={'pir-v' + (mt != null && v != null && v >= mt ? ' pir-meta' : '')}>{fmtDe(c)(v)}</span>
+                    <span className={'pir-v' + (mt != null && v != null && v >= mt ? ' pir-meta' : '')}
+                          title={ref != null && !c.plain ? 'Mesmo período do mês anterior: ' + fmtDe(c)(ref) : undefined}>
+                      {bolinha(c, v, ref, false)}<span>{fmtDe(c)(v)}</span>
+                    </span>
                   </td>;
                 })}
               </tr>
@@ -5379,6 +5471,19 @@ function TabPiramideCoorte({ retencaoFaixa, chFilter, meta, retFaixaLive }) {
           têm curva própria; outro canal, ou 2+ canais, fica sem meta.
           {' '}<strong>M0</strong> tem alvo próprio (não é <code>cum[30]</code>): o horizonte dele varia com o dia da
           safra, então o estudo declara o número à parte.
+          {' '}<strong>A bolinha compara com o mesmo período do mês anterior</strong> ({prevFrom ? fmtBR_(prevFrom) + ' a ' + fmtBR_(prevTo) : '—'}):
+          verde = melhorou, vermelha = piorou. Na visão por dia o par é o <strong>mesmo dia do mês</strong>;
+          na semanal é a <strong>mesma posição na janela</strong> (semana-calendário não tem homólogo exato).
+          ⚠️ Em célula que <strong>ainda não fechou</strong> só aparece bolinha VERDE, e de propósito: ali o valor está
+          truncado, então um “piorou” seria artefato de maturação — mas um “melhorou” já é conclusivo, porque o
+          acumulado só sobe. No Total, o mês anterior é recortado nos mesmos bins que entraram na linha, então
+          ligar “só safras maduras” não distorce a comparação.
+          {' '}<strong>A bolinha compara com o mesmo período do mês anterior</strong>{prevFrom ? ' (' + fmtBR_(prevFrom) + ' a ' + fmtBR_(prevTo) + ')' : ''}:
+          verde melhorou, vermelha piorou. Por dia o par é o <strong>mesmo dia do mês</strong>; na semanal é a
+          mesma posição na janela. ⚠️ Em célula que <strong>ainda não fechou</strong> só aparece bolinha verde:
+          ali o valor está truncado, então “piorou” seria artefato de maturação, mas “melhorou” já é conclusivo
+          porque o acumulado só sobe. No Total o mês anterior é recortado nos mesmos bins que entraram na linha,
+          então ligar “só safras maduras” não distorce a comparação.
           {' '}<strong>As colunas “ret %”</strong> são a mesma coorte lida sobre o D0: <code>(Mult Dk − Mult D0) ÷ Mult D0</code>,
           que é o depósito do dia 1 em diante dividido pelo do D0 — quanto o dinheiro do primeiro dia trouxe
           depois dele. Elas <strong>não mudam com o toggle de base</strong> (a razão cancela o denominador),
