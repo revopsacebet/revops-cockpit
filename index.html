@@ -437,12 +437,15 @@
   /* bolinha vs o mesmo período do mês anterior. O anel colorido diz a direção e o `currentColor` (a
      tinta da própria célula, que já tem contraste garantido contra o passo da rampa) faz o contorno —
      sem ele o anel verde some em cima dos passos mais verdes da escala. */
-  .pir-dot { width: 8px; height: 8px; border-radius: 50%; flex: none; margin-right: auto;
-             border: 2px solid transparent; box-shadow: 0 0 0 1px currentColor; }
-  .pir-dot-up   { border-color: var(--positive); }
-  .pir-dot-down { border-color: var(--negative); }
-  /* célula ainda não fechada: o sinal vale (ver a regra em pirCmp_), mas é secundário */
-  .pir-dot-open { opacity: .55; }
+  /* ⚠️ bolinha CHEIA e sempre na mesma intensidade (pedido do Luis 14/08). Antes era um anel fino de
+     2px e a versão de célula aberta vinha com opacity .55 — sobre os passos claros da rampa virava um
+     fiapo cinza. Agora é disco sólido, cor fixa, com halo escuro pra não sumir no verde vivo do topo
+     da escala. O "esta célula ainda não fechou" continua dito pela hachura da própria célula e pelo
+     tooltip; não precisa (nem deve) sair na cor do sinal. */
+  .pir-dot { width: 10px; height: 10px; border-radius: 50%; flex: none; margin-right: auto;
+             box-shadow: 0 0 0 1.5px rgba(11,11,11,.55); }
+  .pir-dot-up   { background: #00e05a; }
+  .pir-dot-down { background: #ff4d4d; }
   .pir-v.pir-flat { color: var(--text-muted); font-weight: 500; }
   /* meta batida: ANEL escuro + bold, mantendo o preenchimento da escala — dá pra ver ao mesmo tempo que
      bateu e onde está dentro da coluna.
@@ -9229,13 +9232,23 @@ function pirFimDoMes_(iso) {
   const d = new Date(Date.UTC(y, m, 0)); // dia 0 do mês seguinte = último dia deste mês
   return d.toISOString().slice(0, 10);
 }
+// ⚠️⚠️ O ÚLTIMO DIA COM DADO NÃO É UM DIA FECHADO. `meta.dataMaxDate` vem do MAX da partição de
+// `player_metrics`, ou seja, é o último dia que tem ALGUM dado — que na prática é HOJE, ainda
+// carregando (conferido no BQ em 14/08/2026: max partition = 2026-08-15 = a data de hoje).
+// Contar esse dia como completo fazia a safra de ontem exibir D1 com a galera ainda depositando —
+// exatamente o que o Luis pegou na tela. O dia de referência da maturação é o ANTERIOR ao dataMax.
+// Consequência: a escada anda um dia pra trás e é isso que se quer — "safra fechada" é fechada mesmo.
+function pirDiaCompleto_(dataMax) {
+  return dataMax ? isoAddDays_(dataMax, -1) : null;
+}
 // ⚠️ `safra` aqui é o dia MAIS NOVO do bin. Na visão semanal a semana só fecha quando a ÚLTIMA safra
 // dela fecha — senão o bin misturaria coorte madura com imatura e o número cairia sem avisar, que é
 // exatamente o defeito que esta aba existe pra tornar visível.
-function pirFechada_(safra, hz, dataMax) {
-  if (!dataMax || !safra) return false;
-  if (hz === 'm0') return pirFimDoMes_(safra) <= dataMax;
-  return isoAddDays_(safra, PIR_HZ[hz]) <= dataMax;
+// ⚠️ `ref` é o último dia COMPLETO (ver pirDiaCompleto_), não o dataMax cru.
+function pirFechada_(safra, hz, ref) {
+  if (!ref || !safra) return false;
+  if (hz === 'm0') return pirFimDoMes_(safra) <= ref;
+  return isoAddDays_(safra, PIR_HZ[hz]) <= ref;
 }
 const pirInt_ = v => v == null || !isFinite(v) ? '—' : Math.round(v).toLocaleString('pt-BR');
 // `plain` = contexto da safra (tamanho/ticket), não magnitude a comparar entre dias → fica sem escala
@@ -9625,7 +9638,9 @@ function TabPiramideCoorte({
   // OFF (padrão): tudo entra, e o Total bate com a aba Multiplicadores e Retenção.
   // ON: safra que não fechou o horizonte sai da célula E do Total daquela coluna.
   const [soMaduras, setSoMaduras] = usePersistedState('rvops:pirSoMaduras', false);
+  // TUDO que decide maturação nesta aba usa `diaOk` (último dia COMPLETO), nunca o dataMax cru.
   const dataMax = meta && meta.dataMaxDate;
+  const diaOk = pirDiaCompleto_(dataMax);
   const rows = benchApostouRows_(retencaoFaixa || []);
   const selCh = chSelector_(chFilter);
   const selFx = fx => faixaSel.length === 0 || faixaSel.includes(fx);
@@ -9684,16 +9699,16 @@ function TabPiramideCoorte({
   const rotulo = b => gran === 'week' ? weekLabel_(b.key) : b.key.slice(8, 10) + '/' + b.key.slice(5, 7);
   const fmtDe = c => c.fmt || fmtMultiple;
   // n de safras fechadas por coluna — o rodapé mostra, e é o que separa o Total honesto do Total sujo.
-  const fechadasDe = c => bins.filter(b => pirFechada_(b.fim, c.hz, dataMax));
+  const fechadasDe = c => bins.filter(b => pirFechada_(b.fim, c.hz, diaOk));
   const escalas = {};
   cols.forEach(c => {
-    if (!c.plain) escalas[c.key] = pirEscala_(bins, c, base, dataMax);
+    if (!c.plain) escalas[c.key] = pirEscala_(bins, c, base, diaOk);
   });
   let bateu = 0,
     comMeta = 0;
   bins.forEach(b => cols.forEach(c => {
     const mt = metaDe(c);
-    if (mt == null || c.plain || !pirFechada_(b.fim, c.hz, dataMax)) return;
+    if (mt == null || c.plain || !pirFechada_(b.fim, c.hz, diaOk)) return;
     comMeta++;
     const v = pirValor_(c, b, base);
     if (v != null && v >= mt) bateu++;
@@ -9717,7 +9732,7 @@ function TabPiramideCoorte({
   // chamaria de melhora. Aqui o homólogo é montado a partir dos mesmos bins, um a um.
   const refBins = c => {
     if (!temPrev) return null;
-    const usados = soMaduras ? bins.filter(b => pirFechada_(b.fim, c.hz, dataMax)) : bins;
+    const usados = soMaduras ? bins.filter(b => pirFechada_(b.fim, c.hz, diaOk)) : bins;
     const out = [];
     bins.forEach((b, i) => {
       if (usados.indexOf(b) < 0) return;
@@ -9728,7 +9743,7 @@ function TabPiramideCoorte({
   };
   const celula = (b, c, sep, idx) => {
     const v = pirValor_(c, b, base);
-    const aberta = !pirFechada_(b.fim, c.hz, dataMax);
+    const aberta = !pirFechada_(b.fim, c.hz, diaOk);
     const bAnt = homologo(b, idx);
     const ref = bAnt ? pirValor_(c, bAnt, base) : null;
     const mt = metaDe(c);
@@ -9758,10 +9773,14 @@ function TabPiramideCoorte({
         const i = Math.min(5, Math.max(0, Math.round(t * 5)));
         // Célula de meta mantém o preenchimento da escala; só a FONTE vira amarela (a cor diz "bateu",
         // o fundo diz "onde está na coluna") — as duas informações sem disputar o mesmo canal.
+        // ⚠️ A TINTA É SEMPRE FIXADA. Havia um `if (!bateuAqui)` aqui, resquício de quando "bateu a meta"
+        // era fonte AMARELA e precisava sobreviver ao inline style. Com a meta virando anel, a célula que
+        // batia ficava sem cor definida e herdava a tinta CLARA da tabela — texto branco sobre o passo
+        // branco da rampa, ilegível. Pego pelo Luis na tela.
         st = {
-          background: 'var(' + PIR_RAMP[i] + ')'
+          background: 'var(' + PIR_RAMP[i] + ')',
+          color: 'var(' + PIR_INK[i] + ')'
         };
-        if (!bateuAqui) st.color = 'var(' + PIR_INK[i] + ')';
       }
       dica = 'Fechado' + (mt != null ? ' · meta ' + fmtMultiple(mt) + (bateuAqui ? ' (bateu)' : '') : '');
     }
@@ -9865,7 +9884,7 @@ function TabPiramideCoorte({
     className: "support"
   }, /*#__PURE__*/React.createElement("div", {
     className: "support-title"
-  }, "Safra por ", gran === 'week' ? 'semana' : 'dia', " \xB7 ", chLbl, " \xB7 ", faixaLbl, " \xB7 mult ", base === 'ftd' ? 'sobre FTD' : 'sobre D0', dataMax ? ' · dado até ' + fmtBR_(dataMax) : '', comMeta > 0 ? ' · bateu a meta em ' + bateu + ' de ' + comMeta + ' células fechadas com meta' : ''), /*#__PURE__*/React.createElement("div", {
+  }, "Safra por ", gran === 'week' ? 'semana' : 'dia', " \xB7 ", chLbl, " \xB7 ", faixaLbl, " \xB7 mult ", base === 'ftd' ? 'sobre FTD' : 'sobre D0', diaOk ? ' · último dia FECHADO ' + fmtBR_(diaOk) + (dataMax ? ' (dado entra até ' + fmtBR_(dataMax) + ', mas esse dia ainda não fechou)' : '') : '', comMeta > 0 ? ' · bateu a meta em ' + bateu + ' de ' + comMeta + ' células fechadas com meta' : ''), /*#__PURE__*/React.createElement("div", {
     className: "pir-legend"
   }, /*#__PURE__*/React.createElement("span", null, "Escala ", /*#__PURE__*/React.createElement("i", {
     className: "pir-ramp"
@@ -9945,7 +9964,7 @@ function TabPiramideCoorte({
     className: sepCls[i] || undefined
   }, fechadasDe(c).length, "/", bins.length)))))), /*#__PURE__*/React.createElement("div", {
     className: "ch-note"
-  }, /*#__PURE__*/React.createElement("strong", null, "Por que a tabela \xE9 uma escada."), " Uma c\xE9lula s\xF3 fecha quando ", /*#__PURE__*/React.createElement("strong", null, "safra + horizonte \u2264 ", dataMax ? fmtBR_(dataMax) : 'último dia com dado'), ". A safra de ontem n\xE3o tem D7 \u2014 e o n\xFAmero que apareceria ali n\xE3o \xE9 um D7 baixo, \xE9 um D7 pela metade. As c\xE9lulas abertas mostram o ", /*#__PURE__*/React.createElement("strong", null, "acumulado corrente"), " hachurado: d\xE1 pra acompanhar, mas ele s\xF3 pode subir.", ' ', /*#__PURE__*/React.createElement("strong", null, "Escala por coluna"), ", calculada ", /*#__PURE__*/React.createElement("strong", null, "s\xF3 sobre as c\xE9lulas fechadas"), " \u2014 comparar cor dentro da coluna faz sentido; entre colunas diferentes, n\xE3o (D30 \xE9 naturalmente maior que D1).", ' ', /*#__PURE__*/React.createElement("strong", null, "O toggle \u201Cs\xF3 safras maduras\u201D muda o C\xC1LCULO, n\xE3o s\xF3 a tela:"), " ligado, toda safra que ainda n\xE3o fechou o horizonte da coluna sai da c\xE9lula ", /*#__PURE__*/React.createElement("em", null, "e"), " do Total. Desligado (padr\xE3o), entra tudo e o Total bate \xE0 v\xEDrgula com a aba ", /*#__PURE__*/React.createElement("strong", null, "Multiplicadores e Reten\xE7\xE3o"), ". As duas leituras aparecem sempre \u2014 a segunda linha do rodap\xE9 \xE9 a que o toggle n\xE3o escolheu \u2014, porque a diferen\xE7a entre elas \xE9 ", /*#__PURE__*/React.createElement("strong", null, "matura\xE7\xE3o, n\xE3o performance"), ", e ela cresce com o horizonte (o D1 quase n\xE3o sente; o D30 sente muito).", ' ', /*#__PURE__*/React.createElement("strong", null, "Meta = r\xE9gua de CALEND\xC1RIO"), " (o compromisso do m\xEAs, ", /*#__PURE__*/React.createElement("code", null, "comp.canais"), " do estudo), nas duas bases \u2014 trocar entre ", /*#__PURE__*/React.createElement("em", null, "sobre FTD"), " e ", /*#__PURE__*/React.createElement("em", null, "sobre D0"), " muda o denominador e mais nada. \u26A0\uFE0F Ela \xE9 mais baixa que a meta da aba ", /*#__PURE__*/React.createElement("strong", null, "M\xE9tricas do dia a dia"), " na base sobre D0, que usa o", /*#__PURE__*/React.createElement("strong", null, " n\xEDvel BP"), ": o compromisso \xE9 um degrau at\xE9 o BP, n\xE3o o BP.", ' ', /*#__PURE__*/React.createElement("strong", null, "Growth e Total da Casa t\xEAm metas SEPARADAS."), " A curva de dias do estudo \xE9 do", /*#__PURE__*/React.createElement("strong", null, " Total da Casa"), " \u2014 medido contra julho/26, ela erra 5,6% na casa e 17,0% no growth. Em ", /*#__PURE__*/React.createElement("em", null, "Canais Growth"), " a \xFAnica meta \xE9 a de ", /*#__PURE__*/React.createElement("strong", null, "M0"), ", que vem do plano (linha \u201CMulti Growth\u201D da Projection_Revenue: 3,75x em ago/26 contra 3,60x da casa) e existe s\xF3 na base sobre FTD; as colunas de dia ficam sem meta porque ningu\xE9m calibrou curva de growth. Google e Meta t\xEAm curva pr\xF3pria; outro canal, ou 2+ canais, fica sem meta.", ' ', /*#__PURE__*/React.createElement("strong", null, "M0"), " tem alvo pr\xF3prio (n\xE3o \xE9 ", /*#__PURE__*/React.createElement("code", null, "cum[30]"), "): o horizonte dele varia com o dia da safra, ent\xE3o o estudo declara o n\xFAmero \xE0 parte.", ' ', /*#__PURE__*/React.createElement("strong", null, "A bolinha compara com o mesmo per\xEDodo do m\xEAs anterior"), " (", prevFrom ? fmtBR_(prevFrom) + ' a ' + fmtBR_(prevTo) : '—', "): verde = melhorou, vermelha = piorou. Na vis\xE3o por dia o par \xE9 o ", /*#__PURE__*/React.createElement("strong", null, "mesmo dia do m\xEAs"), "; na semanal \xE9 a ", /*#__PURE__*/React.createElement("strong", null, "mesma posi\xE7\xE3o na janela"), " (semana-calend\xE1rio n\xE3o tem hom\xF3logo exato). \u26A0\uFE0F Em c\xE9lula que ", /*#__PURE__*/React.createElement("strong", null, "ainda n\xE3o fechou"), " s\xF3 aparece bolinha VERDE, e de prop\xF3sito: ali o valor est\xE1 truncado, ent\xE3o um \u201Cpiorou\u201D seria artefato de matura\xE7\xE3o \u2014 mas um \u201Cmelhorou\u201D j\xE1 \xE9 conclusivo, porque o acumulado s\xF3 sobe. No Total, o m\xEAs anterior \xE9 recortado nos mesmos bins que entraram na linha, ent\xE3o ligar \u201Cs\xF3 safras maduras\u201D n\xE3o distorce a compara\xE7\xE3o.", ' ', /*#__PURE__*/React.createElement("strong", null, "A bolinha compara com o mesmo per\xEDodo do m\xEAs anterior"), prevFrom ? ' (' + fmtBR_(prevFrom) + ' a ' + fmtBR_(prevTo) + ')' : '', ": verde melhorou, vermelha piorou. Por dia o par \xE9 o ", /*#__PURE__*/React.createElement("strong", null, "mesmo dia do m\xEAs"), "; na semanal \xE9 a mesma posi\xE7\xE3o na janela. \u26A0\uFE0F Em c\xE9lula que ", /*#__PURE__*/React.createElement("strong", null, "ainda n\xE3o fechou"), " s\xF3 aparece bolinha verde: ali o valor est\xE1 truncado, ent\xE3o \u201Cpiorou\u201D seria artefato de matura\xE7\xE3o, mas \u201Cmelhorou\u201D j\xE1 \xE9 conclusivo porque o acumulado s\xF3 sobe. No Total o m\xEAs anterior \xE9 recortado nos mesmos bins que entraram na linha, ent\xE3o ligar \u201Cs\xF3 safras maduras\u201D n\xE3o distorce a compara\xE7\xE3o.", ' ', /*#__PURE__*/React.createElement("strong", null, "As colunas \u201Cret %\u201D"), " s\xE3o a mesma coorte lida sobre o D0: ", /*#__PURE__*/React.createElement("code", null, "(Mult Dk \u2212 Mult D0) \xF7 Mult D0"), ", que \xE9 o dep\xF3sito do dia 1 em diante dividido pelo do D0 \u2014 quanto o dinheiro do primeiro dia trouxe depois dele. Elas ", /*#__PURE__*/React.createElement("strong", null, "n\xE3o mudam com o toggle de base"), " (a raz\xE3o cancela o denominador), e ficam sem meta: s\xF3 a de D1 teria par no estudo.")));
+  }, /*#__PURE__*/React.createElement("strong", null, "Por que a tabela \xE9 uma escada."), " Uma c\xE9lula s\xF3 fecha quando ", /*#__PURE__*/React.createElement("strong", null, "safra + horizonte \u2264 ", diaOk ? fmtBR_(diaOk) : 'último dia fechado'), ".", ' ', "\u26A0\uFE0F Esse corte \xE9 o \xFAltimo dia ", /*#__PURE__*/React.createElement("strong", null, "completo"), ", n\xE3o o \xFAltimo dia com dado: o dia mais recente da base \xE9 o de hoje, ainda carregando, ent\xE3o uma safra de ontem n\xE3o tem D1 \u2014 a galera ainda est\xE1 depositando. A safra de ontem n\xE3o tem D7 \u2014 e o n\xFAmero que apareceria ali n\xE3o \xE9 um D7 baixo, \xE9 um D7 pela metade. As c\xE9lulas abertas mostram o ", /*#__PURE__*/React.createElement("strong", null, "acumulado corrente"), " hachurado: d\xE1 pra acompanhar, mas ele s\xF3 pode subir.", ' ', /*#__PURE__*/React.createElement("strong", null, "Escala por coluna"), ", calculada ", /*#__PURE__*/React.createElement("strong", null, "s\xF3 sobre as c\xE9lulas fechadas"), " \u2014 comparar cor dentro da coluna faz sentido; entre colunas diferentes, n\xE3o (D30 \xE9 naturalmente maior que D1).", ' ', /*#__PURE__*/React.createElement("strong", null, "O toggle \u201Cs\xF3 safras maduras\u201D muda o C\xC1LCULO, n\xE3o s\xF3 a tela:"), " ligado, toda safra que ainda n\xE3o fechou o horizonte da coluna sai da c\xE9lula ", /*#__PURE__*/React.createElement("em", null, "e"), " do Total. Desligado (padr\xE3o), entra tudo e o Total bate \xE0 v\xEDrgula com a aba ", /*#__PURE__*/React.createElement("strong", null, "Multiplicadores e Reten\xE7\xE3o"), ". As duas leituras aparecem sempre \u2014 a segunda linha do rodap\xE9 \xE9 a que o toggle n\xE3o escolheu \u2014, porque a diferen\xE7a entre elas \xE9 ", /*#__PURE__*/React.createElement("strong", null, "matura\xE7\xE3o, n\xE3o performance"), ", e ela cresce com o horizonte (o D1 quase n\xE3o sente; o D30 sente muito).", ' ', /*#__PURE__*/React.createElement("strong", null, "Meta = r\xE9gua de CALEND\xC1RIO"), " (o compromisso do m\xEAs, ", /*#__PURE__*/React.createElement("code", null, "comp.canais"), " do estudo), nas duas bases \u2014 trocar entre ", /*#__PURE__*/React.createElement("em", null, "sobre FTD"), " e ", /*#__PURE__*/React.createElement("em", null, "sobre D0"), " muda o denominador e mais nada. \u26A0\uFE0F Ela \xE9 mais baixa que a meta da aba ", /*#__PURE__*/React.createElement("strong", null, "M\xE9tricas do dia a dia"), " na base sobre D0, que usa o", /*#__PURE__*/React.createElement("strong", null, " n\xEDvel BP"), ": o compromisso \xE9 um degrau at\xE9 o BP, n\xE3o o BP.", ' ', /*#__PURE__*/React.createElement("strong", null, "Growth e Total da Casa t\xEAm metas SEPARADAS."), " A curva de dias do estudo \xE9 do", /*#__PURE__*/React.createElement("strong", null, " Total da Casa"), " \u2014 medido contra julho/26, ela erra 5,6% na casa e 17,0% no growth. Em ", /*#__PURE__*/React.createElement("em", null, "Canais Growth"), " a \xFAnica meta \xE9 a de ", /*#__PURE__*/React.createElement("strong", null, "M0"), ", que vem do plano (linha \u201CMulti Growth\u201D da Projection_Revenue: 3,75x em ago/26 contra 3,60x da casa) e existe s\xF3 na base sobre FTD; as colunas de dia ficam sem meta porque ningu\xE9m calibrou curva de growth. Google e Meta t\xEAm curva pr\xF3pria; outro canal, ou 2+ canais, fica sem meta.", ' ', /*#__PURE__*/React.createElement("strong", null, "M0"), " tem alvo pr\xF3prio (n\xE3o \xE9 ", /*#__PURE__*/React.createElement("code", null, "cum[30]"), "): o horizonte dele varia com o dia da safra, ent\xE3o o estudo declara o n\xFAmero \xE0 parte.", ' ', /*#__PURE__*/React.createElement("strong", null, "A bolinha compara com o mesmo per\xEDodo do m\xEAs anterior"), " (", prevFrom ? fmtBR_(prevFrom) + ' a ' + fmtBR_(prevTo) : '—', "): verde = melhorou, vermelha = piorou. Na vis\xE3o por dia o par \xE9 o ", /*#__PURE__*/React.createElement("strong", null, "mesmo dia do m\xEAs"), "; na semanal \xE9 a ", /*#__PURE__*/React.createElement("strong", null, "mesma posi\xE7\xE3o na janela"), " (semana-calend\xE1rio n\xE3o tem hom\xF3logo exato). \u26A0\uFE0F Em c\xE9lula que ", /*#__PURE__*/React.createElement("strong", null, "ainda n\xE3o fechou"), " s\xF3 aparece bolinha VERDE, e de prop\xF3sito: ali o valor est\xE1 truncado, ent\xE3o um \u201Cpiorou\u201D seria artefato de matura\xE7\xE3o \u2014 mas um \u201Cmelhorou\u201D j\xE1 \xE9 conclusivo, porque o acumulado s\xF3 sobe. No Total, o m\xEAs anterior \xE9 recortado nos mesmos bins que entraram na linha, ent\xE3o ligar \u201Cs\xF3 safras maduras\u201D n\xE3o distorce a compara\xE7\xE3o.", ' ', /*#__PURE__*/React.createElement("strong", null, "A bolinha compara com o mesmo per\xEDodo do m\xEAs anterior"), prevFrom ? ' (' + fmtBR_(prevFrom) + ' a ' + fmtBR_(prevTo) + ')' : '', ": verde melhorou, vermelha piorou. Por dia o par \xE9 o ", /*#__PURE__*/React.createElement("strong", null, "mesmo dia do m\xEAs"), "; na semanal \xE9 a mesma posi\xE7\xE3o na janela. \u26A0\uFE0F Em c\xE9lula que ", /*#__PURE__*/React.createElement("strong", null, "ainda n\xE3o fechou"), " s\xF3 aparece bolinha verde: ali o valor est\xE1 truncado, ent\xE3o \u201Cpiorou\u201D seria artefato de matura\xE7\xE3o, mas \u201Cmelhorou\u201D j\xE1 \xE9 conclusivo porque o acumulado s\xF3 sobe. No Total o m\xEAs anterior \xE9 recortado nos mesmos bins que entraram na linha, ent\xE3o ligar \u201Cs\xF3 safras maduras\u201D n\xE3o distorce a compara\xE7\xE3o.", ' ', /*#__PURE__*/React.createElement("strong", null, "As colunas \u201Cret %\u201D"), " s\xE3o a mesma coorte lida sobre o D0: ", /*#__PURE__*/React.createElement("code", null, "(Mult Dk \u2212 Mult D0) \xF7 Mult D0"), ", que \xE9 o dep\xF3sito do dia 1 em diante dividido pelo do D0 \u2014 quanto o dinheiro do primeiro dia trouxe depois dele. Elas ", /*#__PURE__*/React.createElement("strong", null, "n\xE3o mudam com o toggle de base"), " (a raz\xE3o cancela o denominador), e ficam sem meta: s\xF3 a de D1 teria par no estudo.")));
 }
 const TABS = [{
   id: 'farol',

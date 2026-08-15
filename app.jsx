@@ -4979,13 +4979,23 @@ function pirFimDoMes_(iso) {
   const d = new Date(Date.UTC(y, m, 0));   // dia 0 do mês seguinte = último dia deste mês
   return d.toISOString().slice(0, 10);
 }
+// ⚠️⚠️ O ÚLTIMO DIA COM DADO NÃO É UM DIA FECHADO. `meta.dataMaxDate` vem do MAX da partição de
+// `player_metrics`, ou seja, é o último dia que tem ALGUM dado — que na prática é HOJE, ainda
+// carregando (conferido no BQ em 14/08/2026: max partition = 2026-08-15 = a data de hoje).
+// Contar esse dia como completo fazia a safra de ontem exibir D1 com a galera ainda depositando —
+// exatamente o que o Luis pegou na tela. O dia de referência da maturação é o ANTERIOR ao dataMax.
+// Consequência: a escada anda um dia pra trás e é isso que se quer — "safra fechada" é fechada mesmo.
+function pirDiaCompleto_(dataMax) {
+  return dataMax ? isoAddDays_(dataMax, -1) : null;
+}
 // ⚠️ `safra` aqui é o dia MAIS NOVO do bin. Na visão semanal a semana só fecha quando a ÚLTIMA safra
 // dela fecha — senão o bin misturaria coorte madura com imatura e o número cairia sem avisar, que é
 // exatamente o defeito que esta aba existe pra tornar visível.
-function pirFechada_(safra, hz, dataMax) {
-  if (!dataMax || !safra) return false;
-  if (hz === 'm0') return pirFimDoMes_(safra) <= dataMax;
-  return isoAddDays_(safra, PIR_HZ[hz]) <= dataMax;
+// ⚠️ `ref` é o último dia COMPLETO (ver pirDiaCompleto_), não o dataMax cru.
+function pirFechada_(safra, hz, ref) {
+  if (!ref || !safra) return false;
+  if (hz === 'm0') return pirFimDoMes_(safra) <= ref;
+  return isoAddDays_(safra, PIR_HZ[hz]) <= ref;
 }
 const pirInt_ = (v) => (v == null || !isFinite(v)) ? '—' : Math.round(v).toLocaleString('pt-BR');
 // `plain` = contexto da safra (tamanho/ticket), não magnitude a comparar entre dias → fica sem escala
@@ -5194,7 +5204,9 @@ function TabPiramideCoorte({ retencaoFaixa, chFilter, meta, retFaixaLive }) {
   // OFF (padrão): tudo entra, e o Total bate com a aba Multiplicadores e Retenção.
   // ON: safra que não fechou o horizonte sai da célula E do Total daquela coluna.
   const [soMaduras, setSoMaduras] = usePersistedState('rvops:pirSoMaduras', false);
+  // TUDO que decide maturação nesta aba usa `diaOk` (último dia COMPLETO), nunca o dataMax cru.
   const dataMax = meta && meta.dataMaxDate;
+  const diaOk = pirDiaCompleto_(dataMax);
   const rows = benchApostouRows_(retencaoFaixa || []);
   const selCh = chSelector_(chFilter);
   const selFx = (fx) => faixaSel.length === 0 || faixaSel.includes(fx);
@@ -5234,13 +5246,13 @@ function TabPiramideCoorte({ retencaoFaixa, chFilter, meta, retFaixaLive }) {
   const rotulo = (b) => (gran === 'week') ? weekLabel_(b.key) : b.key.slice(8, 10) + '/' + b.key.slice(5, 7);
   const fmtDe = (c) => c.fmt || fmtMultiple;
   // n de safras fechadas por coluna — o rodapé mostra, e é o que separa o Total honesto do Total sujo.
-  const fechadasDe = (c) => bins.filter((b) => pirFechada_(b.fim, c.hz, dataMax));
+  const fechadasDe = (c) => bins.filter((b) => pirFechada_(b.fim, c.hz, diaOk));
   const escalas = {};
-  cols.forEach((c) => { if (!c.plain) escalas[c.key] = pirEscala_(bins, c, base, dataMax); });
+  cols.forEach((c) => { if (!c.plain) escalas[c.key] = pirEscala_(bins, c, base, diaOk); });
   let bateu = 0, comMeta = 0;
   bins.forEach((b) => cols.forEach((c) => {
     const mt = metaDe(c);
-    if (mt == null || c.plain || !pirFechada_(b.fim, c.hz, dataMax)) return;
+    if (mt == null || c.plain || !pirFechada_(b.fim, c.hz, diaOk)) return;
     comMeta++;
     const v = pirValor_(c, b, base);
     if (v != null && v >= mt) bateu++;
@@ -5262,7 +5274,7 @@ function TabPiramideCoorte({ retencaoFaixa, chFilter, meta, retFaixaLive }) {
   // chamaria de melhora. Aqui o homólogo é montado a partir dos mesmos bins, um a um.
   const refBins = (c) => {
     if (!temPrev) return null;
-    const usados = soMaduras ? bins.filter((b) => pirFechada_(b.fim, c.hz, dataMax)) : bins;
+    const usados = soMaduras ? bins.filter((b) => pirFechada_(b.fim, c.hz, diaOk)) : bins;
     const out = [];
     bins.forEach((b, i) => {
       if (usados.indexOf(b) < 0) return;
@@ -5273,7 +5285,7 @@ function TabPiramideCoorte({ retencaoFaixa, chFilter, meta, retFaixaLive }) {
   };
   const celula = (b, c, sep, idx) => {
     const v = pirValor_(c, b, base);
-    const aberta = !pirFechada_(b.fim, c.hz, dataMax);
+    const aberta = !pirFechada_(b.fim, c.hz, diaOk);
     const bAnt = homologo(b, idx);
     const ref = bAnt ? pirValor_(c, bAnt, base) : null;
     const mt = metaDe(c);
@@ -5301,8 +5313,11 @@ function TabPiramideCoorte({ retencaoFaixa, chFilter, meta, retFaixaLive }) {
         const i = Math.min(5, Math.max(0, Math.round(t * 5)));
         // Célula de meta mantém o preenchimento da escala; só a FONTE vira amarela (a cor diz "bateu",
         // o fundo diz "onde está na coluna") — as duas informações sem disputar o mesmo canal.
-        st = { background: 'var(' + PIR_RAMP[i] + ')' };
-        if (!bateuAqui) st.color = 'var(' + PIR_INK[i] + ')';
+        // ⚠️ A TINTA É SEMPRE FIXADA. Havia um `if (!bateuAqui)` aqui, resquício de quando "bateu a meta"
+        // era fonte AMARELA e precisava sobreviver ao inline style. Com a meta virando anel, a célula que
+        // batia ficava sem cor definida e herdava a tinta CLARA da tabela — texto branco sobre o passo
+        // branco da rampa, ilegível. Pego pelo Luis na tela.
+        st = { background: 'var(' + PIR_RAMP[i] + ')', color: 'var(' + PIR_INK[i] + ')' };
       }
       dica = 'Fechado' + (mt != null ? ' · meta ' + fmtMultiple(mt) + (bateuAqui ? ' (bateu)' : '') : '');
     }
@@ -5359,7 +5374,7 @@ function TabPiramideCoorte({ retencaoFaixa, chFilter, meta, retFaixaLive }) {
       <div className="support">
         <div className="support-title">
           Safra por {gran === 'week' ? 'semana' : 'dia'} · {chLbl} · {faixaLbl} · mult {base === 'ftd' ? 'sobre FTD' : 'sobre D0'}
-          {dataMax ? ' · dado até ' + fmtBR_(dataMax) : ''}
+          {diaOk ? ' · último dia FECHADO ' + fmtBR_(diaOk) + (dataMax ? ' (dado entra até ' + fmtBR_(dataMax) + ', mas esse dia ainda não fechou)' : '') : ''}
           {comMeta > 0 ? ' · bateu a meta em ' + bateu + ' de ' + comMeta + ' células fechadas com meta' : ''}
         </div>
         <div className="pir-legend">
@@ -5448,7 +5463,9 @@ function TabPiramideCoorte({ retencaoFaixa, chFilter, meta, retFaixaLive }) {
           </table>
         </div>
         <div className="ch-note">
-          <strong>Por que a tabela é uma escada.</strong> Uma célula só fecha quando <strong>safra + horizonte ≤ {dataMax ? fmtBR_(dataMax) : 'último dia com dado'}</strong>.
+          <strong>Por que a tabela é uma escada.</strong> Uma célula só fecha quando <strong>safra + horizonte ≤ {diaOk ? fmtBR_(diaOk) : 'último dia fechado'}</strong>.
+          {' '}⚠️ Esse corte é o último dia <strong>completo</strong>, não o último dia com dado: o dia mais recente da
+          base é o de hoje, ainda carregando, então uma safra de ontem não tem D1 — a galera ainda está depositando.
           A safra de ontem não tem D7 — e o número que apareceria ali não é um D7 baixo, é um D7 pela metade.
           As células abertas mostram o <strong>acumulado corrente</strong> hachurado: dá pra acompanhar, mas ele só pode subir.
           {' '}<strong>Escala por coluna</strong>, calculada <strong>só sobre as células fechadas</strong> — comparar cor
