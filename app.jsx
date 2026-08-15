@@ -5289,7 +5289,11 @@ function TabPiramideCoorte({ retencaoFaixa, chFilter, meta, retFaixaLive }) {
     const bAnt = homologo(b, idx);
     const ref = bAnt ? pirValor_(c, bAnt, base) : null;
     const mt = metaDe(c);
-    const bateuAqui = !aberta && mt != null && v != null && v >= mt;
+    // ⚠️ Vale TAMBÉM em célula aberta, pela mesma razão da bolinha verde: o acumulado só sobe, então
+    // quem já passou a meta com o horizonte incompleto passou de vez. O contrário (ainda não passou)
+    // é que não conclui nada — e por isso a linha de "bateu em N de M" no topo segue contando só as
+    // células FECHADAS, que é onde existe taxa de acerto.
+    const bateuAqui = mt != null && v != null && v >= mt;
     // Com o toggle ligado a célula imatura não vira "número menor": vira VAZIO. Mostrar um parcial
     // apagadinho e tirá-lo da conta ao mesmo tempo daria duas versões da mesma coluna na mesma tela.
     if (aberta && soMaduras) {
@@ -5381,7 +5385,7 @@ function TabPiramideCoorte({ retencaoFaixa, chFilter, meta, retFaixaLive }) {
           {/* rótulo em "pior → melhor" (não "menor → maior"): nestas colunas maior É melhor, e a rampa
               branco→verde foi escolhida justamente pra ser lida como qualidade, não como magnitude. */}
           <span>Escala <i className="pir-ramp">{PIR_RAMP.map((v) => <i key={v} style={{ background: 'var(' + v + ')' }} />)}</i> pior → melhor</span>
-          <span><i className="pir-sw pir-sw-meta">2,47x</i> bateu a meta</span>
+          <span><i className="pir-sw pir-sw-meta">2,47x</i> número acima da meta da coluna</span>
           <span><i className="pir-dot pir-dot-up" /> melhorou vs o mesmo período do mês anterior</span>
           <span><i className="pir-dot pir-dot-down" /> piorou</span>
           <span><i className="pir-sw pir-sw-open" /> ainda não fechou</span>

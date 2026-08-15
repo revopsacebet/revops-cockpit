@@ -447,13 +447,18 @@
   .pir-dot-up   { background: #00e05a; }
   .pir-dot-down { background: #ff4d4d; }
   .pir-v.pir-flat { color: var(--text-muted); font-weight: 500; }
-  /* meta batida: ANEL escuro + bold, mantendo o preenchimento da escala — dá pra ver ao mesmo tempo que
-     bateu e onde está dentro da coluna.
-     ⚠️ Era fonte AMARELA com halo, que funcionava quando a rampa era escura. Com a rampa branco→verde
-     todos os passos são claros e amarelo sobre eles não fecha contraste em passo nenhum — nem com halo,
-     que sobre fundo claro vira uma sujeira cinza em volta da letra. Anel + peso não dependem de matiz,
-     valem em todos os 6 passos e sobrevivem à próxima troca de rampa. */
-  .pir-v.pir-meta { font-weight: 800; box-shadow: inset 0 0 0 2px rgba(11,11,11,.62); }
+  /* META BATIDA = número em AMARELO VIVO (pedido do Luis 14/08). O problema é que amarelo não fecha
+     contraste sobre nenhum passo claro da rampa branco→verde — nem com halo, que sobre fundo claro vira
+     uma sujeira cinza em volta da letra. Solução: um SCRIM escuro por cima do passo (o `inset` gigante
+     preenche a célula inteira com preto a 74%), então o amarelo passa a viver sobre fundo escuro em
+     TODOS os passos (contraste ~10:1) e o matiz da escala ainda aparece por baixo — dá pra ver ao mesmo
+     tempo que bateu a meta e onde a célula está dentro da coluna.
+     `!important` porque a tinta do passo vem por style inline (a especificidade não bastaria). */
+  .pir-v.pir-meta {
+    color: #ffc400 !important; font-weight: 800;
+    box-shadow: inset 0 0 0 999px rgba(11,11,11,.74);
+    text-shadow: 0 1px 2px rgba(0,0,0,.55);
+  }
   /* não fechado: a HACHURA é o canal primário, não o matiz — vermelho-vazado vs verde-preenchido é um
      par de risco pra daltonismo, então a distinção não pode depender só da cor. */
   .pir-v.pir-open { color: var(--pir-open); font-weight: 500; background: rgba(248,113,113,.05);
@@ -472,10 +477,11 @@
   .pir-sw { width: 13px; height: 13px; border-radius: 3px; flex: none; border: 1px solid var(--border); }
   .pir-sw-open { background: rgba(248,113,113,.05); border-color: var(--pir-open);
                  background-image: repeating-linear-gradient(45deg, transparent 0 2px, rgba(248,113,113,.45) 2px 3.5px); }
+  /* mesma receita da célula: scrim escuro sobre um passo da rampa + número amarelo vivo */
   .pir-sw-meta { background: var(--pir5); border: 0; width: auto; height: auto; padding: 1px 5px;
-                 border-radius: 3px; color: #0b0b0b; font-weight: 800; font-size: 10px;
+                 border-radius: 3px; color: #ffc400; font-weight: 800; font-size: 10px;
                  font-variant-numeric: tabular-nums; font-style: normal;
-                 box-shadow: inset 0 0 0 2px rgba(11,11,11,.62); }
+                 box-shadow: inset 0 0 0 999px rgba(11,11,11,.74); }
   .pir-tgl { display: inline-flex; align-items: center; gap: 7px; font-size: 11px;
              color: var(--text-muted); cursor: pointer; user-select: none; }
   .pir-tgl input { width: 14px; height: 14px; accent-color: var(--pir4); cursor: pointer; margin: 0; }
@@ -9747,7 +9753,11 @@ function TabPiramideCoorte({
     const bAnt = homologo(b, idx);
     const ref = bAnt ? pirValor_(c, bAnt, base) : null;
     const mt = metaDe(c);
-    const bateuAqui = !aberta && mt != null && v != null && v >= mt;
+    // ⚠️ Vale TAMBÉM em célula aberta, pela mesma razão da bolinha verde: o acumulado só sobe, então
+    // quem já passou a meta com o horizonte incompleto passou de vez. O contrário (ainda não passou)
+    // é que não conclui nada — e por isso a linha de "bateu em N de M" no topo segue contando só as
+    // células FECHADAS, que é onde existe taxa de acerto.
+    const bateuAqui = mt != null && v != null && v >= mt;
     // Com o toggle ligado a célula imatura não vira "número menor": vira VAZIO. Mostrar um parcial
     // apagadinho e tirá-lo da conta ao mesmo tempo daria duas versões da mesma coluna na mesma tela.
     if (aberta && soMaduras) {
@@ -9895,7 +9905,7 @@ function TabPiramideCoorte({
     }
   }))), " pior \u2192 melhor"), /*#__PURE__*/React.createElement("span", null, /*#__PURE__*/React.createElement("i", {
     className: "pir-sw pir-sw-meta"
-  }, "2,47x"), " bateu a meta"), /*#__PURE__*/React.createElement("span", null, /*#__PURE__*/React.createElement("i", {
+  }, "2,47x"), " n\xFAmero acima da meta da coluna"), /*#__PURE__*/React.createElement("span", null, /*#__PURE__*/React.createElement("i", {
     className: "pir-dot pir-dot-up"
   }), " melhorou vs o mesmo per\xEDodo do m\xEAs anterior"), /*#__PURE__*/React.createElement("span", null, /*#__PURE__*/React.createElement("i", {
     className: "pir-dot pir-dot-down"
