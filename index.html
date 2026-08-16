@@ -428,8 +428,12 @@
   .pir-meta-tag { display: block; font-weight: 400; text-transform: none; letter-spacing: 0;
                   color: var(--accent-yellow); font-size: 9px; opacity: .85; }
   /* Meta CASCATEADA (canal sem curva no estudo): tracejado embaixo + o † no texto. Uma meta derivada de
-     premissa não pode ficar visualmente idêntica a uma declarada — é assim que premissa vira "fato". */
-  .pir-meta-tag.pir-meta-deriv { border-bottom: 1px dashed currentColor; display: inline-block; }
+     premissa não pode ficar visualmente idêntica a uma declarada — é assim que premissa vira "fato".
+     ⚠️ NÃO declarar `display` aqui. A regra base é `display:block` e é ela que joga a meta pra LINHA DE
+     BAIXO do cabeçalho; um `inline-block` aqui colava a meta no rótulo da coluna e estourava a largura
+     do header (quebrou na tela do Luis em 16/08). Por isso o tracejado é text-decoration, que sublinha
+     só o texto, e não border-bottom, que precisaria encolher a caixa pra não riscar a coluna inteira. */
+  .pir-meta-tag.pir-meta-deriv { text-decoration: underline dashed; text-underline-offset: 2px; }
   /* a célula é um bloco preenchido: a cor tem que encostar nas vizinhas pra escada ser legível de longe */
   /* flex (era block) pra caber a bolinha de comparação à ESQUERDA sem tirar o número da direita:
      o `margin-right:auto` da bolinha empurra o valor pro canto, então colunas com e sem bolinha
