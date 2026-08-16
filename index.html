@@ -3030,7 +3030,21 @@ function weekBinISO_(iso, anchor) {
 // inclusive as de ontem, que ainda não têm W1 — e isso puxa o número pra baixo sem avisar (medido em
 // 14/08: D4 2,50x com as imaturas vs 2,60x sem). Sem `matRef` o retorno é byte a byte o de antes, então
 // os outros call sites (gráfico, por canal/faixa/grupo/campanha, mês anterior) não mudam.
-const AGG_MAT_HZ = ['d0', 'd1', 'd3', 'd4', 'w1', 'w2', 'm0']; // as mesmas chaves do retMultCols_
+// ⚠️ M0 FICA DE FORA DO CORTE (2026-08-16, pedido do Luis: "eu preciso que o M0 apareça"). Não é
+// exceção de conveniência — o corte não faz sentido nesta coluna:
+//   1) O corte existe pra desfazer MISTURA de maturidade: numa janela, umas safras já têm W1 e outras
+//      não, e somar tudo puxa o número pra baixo sem avisar. Em M0 dentro do MÊS CORRENTE não há
+//      mistura: NENHUMA safra fechou (o mês não acabou), todas estão no mesmo estado. O corte não
+//      corrigia viés nenhum — só esvaziava a coluna.
+//   2) E esvaziava sempre: numa janela MTD (a mais usada) o bucket de M0 é vazio por definição, então
+//      "Total · safras maduras" mostrava "—" em Mult M0/FTD e M0 Ret % o mês inteiro.
+//   3) A leitura madura de M0 JÁ EXISTE ao lado, e melhor feita: a coluna **M0 Esp.** projeta o
+//      fechamento (realizado × G(runway) ÷ G(idade)). Cortar por maturação duplicava isso e pior.
+// Fica valendo: o Total de M0 é o acumulado do mês ATÉ AQUI (mesma leitura do card MTD), com o M0 Esp.
+// do lado como projeção de fechamento. ⚠️ Em janela que ATRAVESSA meses (ex. 27/07–16/08) esse total
+// soma um julho fechado com um agosto em curso — é o comportamento de sempre, e é pra isso que a
+// coluna M0 Esp. está lá.
+const AGG_MAT_HZ = ['d0', 'd1', 'd3', 'd4', 'w1', 'w2']; // chaves do retMultCols_ que TÊM corte
 function aggRetFaixaBench_(retencaoFaixa, chFilter, faixa, mode, gran, gCurve, dataMax, dim, grupoSel, weekAnchor, matRef) {
   const rows = benchApostouRows_(retencaoFaixa);
   const selCh = chSelector_(chFilter);
@@ -3317,7 +3331,9 @@ function RetFaixaTable({
   const cells = (r, heat, mat) => {
     const src = hz => mat && mat[hz] ? mat[hz] : r;
     const nOf = hz => mat && mat._n && mat._n[hz] != null ? mat._n[hz] + '/' + mat._total + ' safras maduras' : null;
-    const tipMat = hz => nOf(hz) ? 'Só safras que já fecharam este horizonte (' + nOf(hz) + '). As imaturas ficam de fora do cálculo.' : undefined;
+    // M0 é a única coluna do Total que NÃO leva o corte — e a célula tem que dizer isso, senão a linha
+    // "Total · safras maduras" promete uma régua que ela não aplica ali. Ver AGG_MAT_HZ.
+    const tipMat = hz => mat && hz === 'm0' ? 'M0 NÃO entra no corte de maturação: dentro do mês corrente nenhuma safra fechou o M0, então o corte esvaziaria a coluna sem corrigir viés algum (todas estão no mesmo estado). Este é o acumulado do mês ATÉ AQUI — a leitura de fechamento é a coluna M0 Esp., ao lado.' : nOf(hz) ? 'Só safras que já fecharam este horizonte (' + nOf(hz) + '). As imaturas ficam de fora do cálculo.' : undefined;
     return [/*#__PURE__*/React.createElement("td", {
       key: "q"
     }, fmtQty(r.qtd)), /*#__PURE__*/React.createElement("td", {
