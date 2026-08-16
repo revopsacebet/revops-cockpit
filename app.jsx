@@ -3372,6 +3372,19 @@ function applyScenarioBp_(M, farol, scenData, chFilter) {
         'Orçado da CASA = "FTD amount tt" ÷ "#FTD tt" (colunas AX ÷ AW).' + fonte
         + ' Derivado do par em vez de lido pronto: assim o ticket nunca discorda do FTD Amount e do #FTD que estão do lado.');
     }
+    // --- ROAS Dep D0 no Total da Casa: SEM orçado, de propósito (Luis, 16/08: "só tem meta pra
+    // crescimento mesmo") ---
+    // O plano não declara ROAS Dep D0 da casa em lugar nenhum: a planilha só tem a linha de growth, e
+    // `ROAS DEPOSIT M0 tt` é M0, não D0. Até aqui o card herdava o número de GROWTH pelo ramo morto do
+    // houseUplift — ou seja, exibia a meta de um escopo com o rótulo de outro, que é pior do que não
+    // exibir. E a comparação nem é legítima: no Total da Casa o realizado é ROAS BLENDED (o numerador
+    // inclui depósito de orgânico/social, que não teve investimento) contra uma meta de ROAS DIRETO.
+    // Zerar aqui é o único jeito de o card não afirmar o que ninguém prometeu. Card sem `bp` é estado
+    // suportado (Registros já vive assim): some a linha do orçado, o realizado e o trend continuam.
+    if (newFarol.roasDepD0) {
+      newFarol = { ...newFarol, roasDepD0: { ...newFarol.roasDepD0, bp: null, scenBp: false,
+        bpTitle: 'Sem orçado no escopo Total da Casa: o plano só declara ROAS Dep D0 de GROWTH. Além de não existir, a comparação não fecharia — aqui o realizado é ROAS blended (inclui depósito de orgânico/social, sem investimento) e a meta de growth é ROAS direto. Troque para Canais Growth para ver o orçado.' } };
+    }
     const m0 = house.m0tt || 0, hInv = house.invest || 0, hFtdAmt = house.ftdAmountTt || 0;
     if (m0 > 0 && !scenData.houseUplift) {
       newM = { ...newM, depM0Total: setBp(newM.depM0Total, m0) };
@@ -4744,6 +4757,80 @@ const MDD_BP_FTD_MULT = {
 };
 const MDD_BP_FTD = {};
 Object.keys(MDD_BP).forEach(k => { MDD_BP_FTD[k] = Object.assign({}, MDD_BP[k], MDD_BP_FTD_MULT[k]); });
+// ============================================================
+// CURVAS-META COMPLETAS POR DIA (0..30) — é o que destrava a coluna ORÇADO MTD.
+// As constantes acima são PONTOS SOLTOS da curva (D1, D4, D7, D14, D30). Pra cobrar de uma safra de 3
+// dias a meta do DIA 3 (e não a do dia 7) preciso da curva inteira. Extraídas do MESMO arquivo do estudo,
+// com brace-matching no `const DATA`; os pontos de D1/D4/D7/D14/D30 batem EXATO com o `MDD_BP` e o
+// `MDD_BP_FTD_MULT` nos 3 escopos — é esse cross-check que prova que é a mesma curva, não outra régua.
+// ⚠️ CADA BASE PUXA A SUA, e são réguas diferentes DE PROPÓSITO (decisão do Luis 14/08):
+//     base FTD -> `comp.canais.<esc>.cumFTD` = COMPROMISSO do mês (a régua do deck)
+//     base D0  -> `metaCurva.<esc>.cum`      = NÍVEL BP (referência de longo prazo)
+//   A coluna ORÇADO MTD TEM que sair da MESMA curva do ORÇADO MÊS daquela linha — senão o % compara a
+//   fração de uma régua contra o total de outra e ninguém percebe olhando a tela.
+// ⚠️ 31 posições BASTAM e não há risco de clamp: o índice é sempre `min(horizonte, idade)` e o maior
+//   horizonte da tabela é 30. Se entrar linha com horizonte > 30, estender AQUI antes (foi assim que o
+//   ORÇADO MTD do M0 saiu idêntico ao do D7 num build do deck: curva curta, clamp silencioso).
+const MDD_CURVA = {
+  ftd: {   // comp.canais.<esc>.cumFTD — COMPROMISSO, base M0/FTD (cumFTD[0] = alvo de D0/FTD)
+    Geral: [
+      1.52601, 1.89009, 2.13077, 2.33021, 2.49713, 2.65203, 2.79243, 2.93230,
+      3.05651, 3.16947, 3.27350, 3.37161, 3.46620, 3.56149, 3.65898, 3.74607,
+      3.82663, 3.90781, 3.98332, 4.06381, 4.14638, 4.23039, 4.31098, 4.39336,
+      4.46126, 4.52988, 4.59815, 4.66685, 4.74103, 4.81117, 4.87420,
+    ],
+    Google: [
+      2.00765, 2.64012, 3.06815, 3.40718, 3.69634, 3.93265, 4.16938, 4.39600,
+      4.59520, 4.75688, 4.90387, 5.03984, 5.19826, 5.33757, 5.49433, 5.63400,
+      5.75582, 5.88000, 5.97624, 6.09962, 6.21100, 6.33114, 6.44777, 6.55734,
+      6.66683, 6.77375, 6.88957, 6.98742, 7.08288, 7.17866, 7.26390,
+    ],
+    Meta: [
+      1.54185, 1.89562, 2.10777, 2.28171, 2.43441, 2.57643, 2.71096, 2.84065,
+      2.94919, 3.05345, 3.15415, 3.24914, 3.34169, 3.43599, 3.53601, 3.62014,
+      3.70051, 3.77977, 3.85651, 3.93731, 4.01697, 4.09988, 4.16975, 4.24590,
+      4.31539, 4.38852, 4.45447, 4.52544, 4.60400, 4.68604, 4.75428,
+    ],
+  },
+  d0: {    // metaCurva.<esc>.cum — NÍVEL BP, base sobre D0 (cum[0] = 1 por definição)
+    Geral: [
+      1.00000, 1.29760, 1.50170, 1.68040, 1.82970, 1.97430, 2.10220, 2.23070,
+      2.34330, 2.44930, 2.54690, 2.64120, 2.73250, 2.82250, 2.91550, 2.99730,
+      3.07310, 3.14910, 3.22180, 3.29750, 3.37410, 3.45440, 3.53080, 3.60790,
+      3.67170, 3.73790, 3.80320, 3.86820, 3.93690, 4.00290, 4.06460,
+    ],
+    Google: [
+      1.00000, 1.36720, 1.60650, 1.82040, 1.99890, 2.15940, 2.30720, 2.45690,
+      2.59110, 2.70990, 2.81820, 2.91620, 3.03110, 3.12640, 3.23510, 3.32690,
+      3.40960, 3.49330, 3.56610, 3.64710, 3.73030, 3.81840, 3.90420, 3.98890,
+      4.07030, 4.15200, 4.23510, 4.30530, 4.37960, 4.45480, 4.52190,
+    ],
+    Meta: [
+      1.00000, 1.26030, 1.42130, 1.55710, 1.67960, 1.80310, 1.91340, 2.01970,
+      2.10920, 2.19600, 2.27920, 2.35900, 2.43820, 2.51620, 2.60490, 2.67770,
+      2.74630, 2.81250, 2.87740, 2.94710, 3.01250, 3.07630, 3.13570, 3.19770,
+      3.26030, 3.32070, 3.37690, 3.43900, 3.50120, 3.56580, 3.62860,
+    ],
+  },
+};
+const mddCurvaAt_ = (c, i) => c[Math.min(Math.max(Math.round(i) || 0, 0), c.length - 1)];
+// Meta de RETENÇÃO D1/D0 = `comp.canais.<esc>.jog[1]` / `.share[1]` — o COMPROMISSO do mês.
+// ⚠️ MUDANÇA 2026-08-16 (decisão do Luis): estas 2 linhas passam a mostrar o compromisso NAS DUAS BASES.
+// Antes herdavam o `MDD_BP` (nível BP: 11,1% e 29,8%) inclusive na base FTD, onde os multiplicadores ao
+// lado JÁ eram o compromisso — duas réguas na mesma coluna da mesma tabela, sem nada avisando. Agora
+// batem com o slide 2 do deck (10,3% e 23,9%).
+// ⚠️ As 2 linhas SEMANAIS (rsS1/jogS1) NÃO entraram nessa decisão e seguem no nível BP. Se um dia forem,
+// os nós são `comp.canais.<esc>.rsSem[1]` (46,0% no Geral) e `.jogSem[1]` (24,5%, ainda × MDD_JOGSEM_K).
+const MDD_COMP_RET = {
+  Geral:  { jogD1: 0.10310, rsD1: 0.23859 },
+  Google: { jogD1: 0.14177, rsD1: 0.31503 },
+  Meta:   { jogD1: 0.08783, rsD1: 0.22945 },
+};
+// Alvo de M0 do MÊS (mês-calendário, exposição variável por safra) — `comp.canais.<esc>.m0` = `comp.alvoM0`.
+// ⚠️ NÃO é `cumFTD[30]` (4,874 no Geral): aquilo é janela FIXA de 30 dias. Trocar um pelo outro dá ~25%.
+// Só existe na base FTD (o estudo declara `comp.base = "M0/FTD"`); na base D0 a linha fica sem ORÇADO MÊS,
+// e é melhor assim do que inventar uma conversão que o estudo não fez.
+const MDD_COMP_M0 = { Geral: 3.6000, Google: 5.3671, Meta: 3.4924 };
 // As 3 TAXAS DE PASSAGEM (FTD→STD, STD→TTD, TTD→QTD) saíram da tabela em 06/08/2026 a pedido do Luis
 // ("não vamos mais olhar"), junto com a derivação † que dava meta pra elas. As constantes pStd/pTtd/
 // pQtd continuam no MDD_BP acima e o backend segue mandando cntStd/cntTtd/cntQtd4 — pra religar,
@@ -4753,25 +4840,62 @@ const MDD_DERIV = { jogS1: 1 };   // chaves de bp que levam o marcador † de "m
 // Fator estimado→exato da retenção SEMANAL de jogadores (ver comentário na linha jogS1 de MDD_ROWS).
 // Medido no BQ sobre as safras de julho/26: exato 0,12233 ÷ estimado do estudo 0,21131.
 const MDD_JOGSEM_K = 0.12233 / 0.21131;
-[MDD_BP, MDD_BP_FTD].forEach(T => Object.keys(T).forEach(k => { T[k] = Object.assign({}, T[k], { jogS1: T[k].jogS1 * MDD_JOGSEM_K }); }));
+// Aplica, nas DUAS tabelas: (a) o fator da semanal de jogadores; (b) o COMPROMISSO nas 2 linhas de
+// retenção D1/D0 (ver MDD_COMP_RET); (c) o alvo de M0 do mês, só na base FTD.
+[MDD_BP, MDD_BP_FTD].forEach(T => Object.keys(T).forEach(k => {
+  T[k] = Object.assign({}, T[k], { jogS1: T[k].jogS1 * MDD_JOGSEM_K }, MDD_COMP_RET[k] || {});
+  if (T === MDD_BP_FTD && MDD_COMP_M0[k] != null) T[k].m0 = MDD_COMP_M0[k];
+}));
 // mat = dias que a safra precisa ter completado p/ a métrica ser legível.
+// ============================================================
+// DOIS BLOCOS, DE PROPÓSITO — e eles respondem PERGUNTAS DIFERENTES (2026-08-16).
+//
+// `grp: 'esc'` = A ESCADA DO SLIDE 2 DO DECK. Entra TODA safra da janela (`todas: true`), com o
+//   numerador naturalmente truncado pela observação, e o ORÇADO MTD é a curva avaliada na IDADE REAL de
+//   cada safra, ponderada pelo mesmo peso do denominador. Responde **"estamos no ritmo?"**.
+// `grp: 'full'` = HORIZONTE CHEIO, só safras que já MATURARAM (o comportamento histórico desta aba).
+//   Responde **"quando a safra fecha, ela chega no nível?"**.
+//
+// ⚠️ POR QUE OS DOIS: sem o bloco 'esc' a tela mostrava "D30 3,01x contra 4,87x" e parecia desastre,
+// quando o que existe é uma coorte de ~6 dias de idade — a mesma armadilha que a coluna ORÇADO MTD
+// resolveu no deck. E sem o bloco 'full' some a leitura de coorte fechada, que é a única que diz se a
+// safra CHEGA no alvo. As duas convivem, cada uma no seu grupo, e a nota embaixo diz qual é qual.
+// ⚠️ No bloco 'full' o ORÇADO MTD sai IGUAL ao ORÇADO MÊS, e isso não é bug: toda safra ali já tem
+// idade ≥ horizonte, então `min(hz, idade) = hz`. É a mesma fórmula — não criar um caminho separado.
+//
+// `hz` = horizonte em DIAS pra indexar a curva-meta. `todas` = ignora o filtro de maturação.
+// `taxa` = razão que NÃO se prorateia (retenção): o ORÇADO MTD é a meta cheia, igual ao do mês.
+// `ftdOnly` = linha só existe na base sobre FTD.
 const MDD_ROWS = [
-  { key: 'jogD1', label: 'Retenção de jogadores D1/D0',        mat: 1,  fmt: 'pct',      of: a => a.qtd  ? a.cd1 / a.qtd : null,         bp: 'jogD1' },
-  { key: 'rsD1',  label: 'Retenção de depósito R$ D1/D0',      mat: 1,  fmt: 'pct',      of: a => a.d0   ? a.vd1 / a.d0 : null,          bp: 'rsD1' },
+  // ⚠️ As 2 linhas de retenção D1/D0 seguem exigindo `mat: 1` — e isso É a régua do deck: uma safra que
+  // ainda não teve o dia seguinte sai dos DOIS lados da razão, não entra com zero. Retenção é binária
+  // (ou a safra teve o D1 ou não teve); não tem meia-meta, então `taxa: true` e sem prorateio.
+  { key: 'jogD1', grp: 'esc', taxa: true, label: 'Retenção de jogadores D1/D0',        mat: 1,  fmt: 'pct',      of: a => a.qtd  ? a.cd1 / a.qtd : null,         bp: 'jogD1' },
+  { key: 'rsD1',  grp: 'esc', taxa: true, label: 'Retenção de depósito R$ D1/D0',      mat: 1,  fmt: 'pct',      of: a => a.d0   ? a.vd1 / a.d0 : null,          bp: 'rsD1' },
+  // D0: só na base FTD. Na base D0 seria 1,00x por definição (o D0 é a própria âncora) — linha morta.
+  { key: 'd0f',   grp: 'esc', todas: true, hz: 0, ftdOnly: true, label: 'Multiplicador D0', mat: 0, fmt: 'multiple', mult: true, of: (a, den) => (a.d0 && den) ? a.d0 / den : null, bp: 'd0' },
   // ⚠️ Os multiplicadores exigem d0 > 0 E o incremento da janela > 0. Uma safra real SEMPRE tem algum
   // depósito depois do D0 — um multiplicador exatamente 1,00x não é "não cresceu", é BASE AUSENTE
   // (payload sem o campo). Sem esta guarda a tela mostrava "1,00x · +0,00x" com cara de dado bom.
   // `mult: true` = a linha muda de BASE com o toggle (sobre D0 ↔ sobre FTD). O NUMERADOR é sempre
   // D0 + depósitos da janela; só o denominador troca. `den` chega do componente já resolvido.
-  { key: 'm1',    label: 'Multiplicador D1',                   mat: 1,  fmt: 'multiple', mult: true, of: (a, den) => (a.d0 && den && a.vd1) ? (a.d0 + a.vd1) / den : null, bp: 'm1' },
+  { key: 'm1',    grp: 'esc', todas: true, hz: 1, label: 'Multiplicador D1',            mat: 1,  fmt: 'multiple', mult: true, of: (a, den) => (a.d0 && den && a.vd1) ? (a.d0 + a.vd1) / den : null, bp: 'm1' },
   // D4 (era D3 até 2026-08-14, troca pedida pelo Luis). vd4 = Σ depósitos dos dias 1–4 da safra — já vem
   // no MESMO payload (`valD4` do queryRetencaoFaixa_), não precisou de backend. Meta = cum[4]/cumFTD[4].
-  { key: 'm4',    label: 'Multiplicador D4',                   mat: 4,  fmt: 'multiple', mult: true, of: (a, den) => (a.d0 && den && a.vd4) ? (a.d0 + a.vd4) / den : null, bp: 'm4' },
-  { key: 'm7',    label: 'Multiplicador D7',                   mat: 7,  fmt: 'multiple', mult: true, of: (a, den) => (a.d0 && den && a.vw1) ? (a.d0 + a.vw1) / den : null, bp: 'm7' },
-  { key: 'm14',   label: 'Multiplicador D14',                  mat: 14, fmt: 'multiple', mult: true, of: (a, den) => (a.d0 && den && a.vw2) ? (a.d0 + a.vw2) / den : null, bp: 'm14' },
+  { key: 'm4',    grp: 'esc', todas: true, hz: 4, label: 'Multiplicador D4',            mat: 4,  fmt: 'multiple', mult: true, of: (a, den) => (a.d0 && den && a.vd4) ? (a.d0 + a.vd4) / den : null, bp: 'm4' },
+  { key: 'm7',    grp: 'esc', todas: true, hz: 7, label: 'Multiplicador D7',            mat: 7,  fmt: 'multiple', mult: true, of: (a, den) => (a.d0 && den && a.vw1) ? (a.d0 + a.vw1) / den : null, bp: 'm7' },
+  // M0 = a MESMA base do D30 (`vd30`), mas SEM o filtro de maturação: é "tudo que a safra depositou até
+  // hoje". Numa janela MTD as duas coisas coincidem (nenhuma safra do mês tem 30 dias), e é exatamente o
+  // que a linha "Multiplicador M0/FTD" do slide mede. Por isso o horizonte é 30 e não 90: acima de 30 o
+  // numerador para de crescer (o payload só traz até o D30) e a meta tem que parar junto, senão a linha
+  // seria cobrada por um dinheiro que o dado nem enxerga.
+  // ⚠️ O ORÇADO MÊS aqui é 3,60x (`comp.m0`, mês-calendário), NÃO cumFTD[30] = 4,87x (janela fixa de 30d).
+  { key: 'm0',    grp: 'esc', todas: true, hz: 30, label: 'Multiplicador M0',           mat: 0,  fmt: 'multiple', mult: true, of: (a, den) => (a.d0 && den && a.vd30) ? (a.d0 + a.vd30) / den : null, bp: 'm0' },
+  // ---- BLOCO 2: horizonte cheio, só safras maduras ----
+  { key: 'm14',   grp: 'full', hz: 14, label: 'Multiplicador D14',                  mat: 14, fmt: 'multiple', mult: true, of: (a, den) => (a.d0 && den && a.vw2) ? (a.d0 + a.vw2) / den : null, bp: 'm14' },
   // D30 = depósitos dos dias 1..30 da safra (val_d30 do backend), mesma régua dos demais: sobre o D0.
-  { key: 'm30',   label: 'Multiplicador D30',                  mat: 30, fmt: 'multiple', mult: true, of: (a, den) => (a.d0 && den && a.vd30) ? (a.d0 + a.vd30) / den : null, bp: 'm30' },
-  { key: 'rsS1',  label: 'Retenção de depósito R$ S1/S0 (semanal)', mat: 13, fmt: 'pct', of: a => a.vs0  ? a.vs1 / a.vs0 : null,         bp: 'rsS1', needs: "sem" },
+  { key: 'm30',   grp: 'full', hz: 30, label: 'Multiplicador D30',                  mat: 30, fmt: 'multiple', mult: true, of: (a, den) => (a.d0 && den && a.vd30) ? (a.d0 + a.vd30) / den : null, bp: 'm30' },
+  { key: 'rsS1',  grp: 'full', taxa: true, label: 'Retenção de depósito R$ S1/S0 (semanal)', mat: 13, fmt: 'pct', of: a => a.vs0  ? a.vs1 / a.vs0 : null,         bp: 'rsS1', needs: "sem" },
   // Meta RECALIBRADA (marcada com †, decisão do Luis 06/08). A curva semanal de JOGADORES do estudo é
   // ESTIMADA — jogadores únicos na semana inferidos das taxas diárias assumindo independência entre
   // dias —, e isso INFLA: quem depositou terça e quinta é contado duas vezes. Medido: para as safras de
@@ -4781,8 +4905,12 @@ const MDD_ROWS = [
   // dois terços do buraco é definição. O fator é medido no Geral e aplicado aos 3 escopos (o viés é de
   // definição, não de canal). A linha de R$ não precisa disso: soma de reais não duplica (26,5% medido
   // vs 26,9% do estudo).
-  { key: 'jogS1', label: 'Retenção de jogadores S1/S0 (semanal)',   mat: 13, fmt: 'pct', of: a => a.qtd  ? a.cs1 / a.qtd : null,         bp: 'jogS1', needs: "sem" },
+  { key: 'jogS1', grp: 'full', taxa: true, label: 'Retenção de jogadores S1/S0 (semanal)',   mat: 13, fmt: 'pct', of: a => a.qtd  ? a.cs1 / a.qtd : null,         bp: 'jogS1', needs: "sem" },
 ];
+const MDD_GRP_LB = {
+  esc:  'Ritmo do período — todas as safras da janela, meta na idade real de cada uma (= slide 2 do deck)',
+  full: 'Horizonte cheio — só safras que já maturaram; aqui o orçado MTD é o do mês, por construção',
+};
 // Resolve o escopo do slicer de canal p/ uma chave de MDD_BP. ⚠️ NÃO dá pra usar chLabel_ direto: ele
 // devolve 'Total Casa'/'Canais Growth' e a curva do estudo se chama 'Geral' — o mismatch fazia a coluna
 // Meta BP sair "—" justamente no escopo padrão (bug pego na tela em 2026-08-05).
@@ -4791,9 +4919,16 @@ const MDD_ROWS = [
 // Faixa/grupo NÃO entram: o estudo não calibrou curva por faixa nem por grupo de risco.
 function mddBpScope_(chFilter, base) {
   const T = (base === 'ftd') ? MDD_BP_FTD : MDD_BP;
+  const nome = mddScopeName_(chFilter);
+  return nome ? (T[nome] || null) : null;
+}
+// O NOME do escopo (não a tabela) — a coluna ORÇADO MTD precisa indexar `MDD_CURVA[base][nome]`, e
+// derivar o nome de volta a partir do objeto de constantes seria frágil. Mesma regra do mddBpScope_:
+// sem canal (Total Casa ou Growth) = Geral; 1 canal = a curva dele, se existir; 2+ = sem meta.
+function mddScopeName_(chFilter) {
   const sel = chList_(chFilter);
-  if (sel.length === 0) return T.Geral;
-  if (sel.length === 1) return T[sel[0]] || null;
+  if (sel.length === 0) return 'Geral';
+  if (sel.length === 1) return MDD_CURVA.ftd[sel[0]] ? sel[0] : null;
   return null;
 }
 // Percentil linear-interpolado sobre os valores diários ordenados (mesma régua do estudo: safras
@@ -4893,13 +5028,18 @@ function TabMetricasDia({ retencaoFaixa, chFilter, meta, retFaixaLive }) {
   const byDayTail = React.useMemo(() => mddByDay_(benchApostouRows_(tail.rows || []), selCh, selFx, selGr),
     [tail.rows, chKey, JSON.stringify(faixaSel), JSON.stringify(grupoSel)]);
   const bpScope = mddBpScope_(chFilter, multBase);
-  const out = MDD_ROWS.map(row => {
+  const scopeName = mddScopeName_(chFilter);
+  const curva = (scopeName && MDD_CURVA[multBase]) ? MDD_CURVA[multBase][scopeName] : null;
+  const out = MDD_ROWS.filter(row => !(row.ftdOnly && multBase !== 'ftd')).map(row => {
     // Só safras que já fecharam a janela da métrica (maturação).
     // ⚠️ 2026-08-14: o corte parte do último dia FECHADO, não do dataMax cru. `meta.dataMaxDate` é o MAX
     // da partição do player_metrics = o último dia com ALGUM dado, que na prática é HOJE ainda
     // carregando. Com o dataMax cru, a safra de ONTEM entrava no D1 com a galera ainda depositando e
     // afundava a média com numerador incompleto — o mesmo defeito que a Pirâmide de Coorte expôs.
-    const cut = diaOk ? isoAddDays_(diaOk, -row.mat) : null;
+    // ⚠️ `todas` (bloco 'esc') ignora a maturação, MAS NÃO A OBSERVAÇÃO: o corte vira o próprio `diaOk`,
+    // então a safra de HOJE (partição pela metade) continua de fora. Sem isso o realizado do último dia
+    // entraria com meio dia de depósito contra a meta de um dia inteiro.
+    const cut = diaOk ? isoAddDays_(diaOk, -(row.todas ? 0 : row.mat)) : null;
     const naJanela = byDay.filter(d => !cut || d.date <= cut);
     // FALLBACK DE COORTE: se NENHUMA safra da janela maturou, cai nas safras maduras mais recentes do
     // dado (a cauda anterior à janela). O SPAN é MÉDIA MÓVEL DA PRÓPRIA JANELA DA MÉTRICA (regra do
@@ -4938,11 +5078,43 @@ function TabMetricasDia({ retencaoFaixa, chFilter, meta, retFaixaLive }) {
     const imatura = !missing && days.length === 0 && byDay.length > 0;
     // isoDiffDays_(a, b) = b − a. Idade da safra MAIS VELHA da janela = dataMax − primeiro dia.
     const faltamDias = (imatura && diaOk) ? Math.max(1, row.mat - isoDiffDays_(byDay[0].date, diaOk)) : null;
+    const bpVal = (row.bp && bpScope) ? bpScope[row.bp] : null;
+    // ---------- ORÇADO MTD: a curva-meta na IDADE REAL de cada safra ----------
+    // É a coluna que faz a tabela responder "estamos no ritmo?" em vez de "já chegamos?".
+    // Σ(peso_s × curva[min(hz, idade_s)]) ÷ Σ peso_s.
+    // ⚠️ O PESO TEM QUE SER O DENOMINADOR DA MÉTRICA (FTD$ na base FTD, D0 na base D0). O realizado é
+    // uma razão de SOMAS, então a meta do agregado é a média das metas ponderada pelo mesmo denominador
+    // — ponderar por outra coisa (qtd de FTD, ou peso uniforme) embute o mix de aquisição na régua.
+    // ⚠️ `taxa` (retenção) NÃO se prorateia: ou a safra teve o dia seguinte ou não teve, não tem
+    // meia-meta. Essas linhas já filtram por maturação, então o orçado MTD é a meta cheia.
+    // ⚠️ No bloco 'full' isto devolve exatamente `bpVal` (toda safra ali tem idade ≥ hz) — de propósito.
+    let orcMtd = bpVal;
+    if (!row.taxa && curva && row.hz != null && days.length && diaOk) {
+      let n = 0, d = 0;
+      days.forEach(x => {
+        const peso = (multBase === 'ftd') ? x.ftd : x.d0;
+        if (!(peso > 0)) return;
+        n += peso * mddCurvaAt_(curva, Math.min(row.hz, isoDiffDays_(x.date, diaOk)));
+        d += peso;
+      });
+      orcMtd = d > 0 ? n / d : bpVal;
+    }
+    // Atingimento e farol — mesmas bandas do deck (≥95 verde · 85–94 amarelo · <85 vermelho).
+    // Não há linha de CUSTO nesta tabela (o CAC ficou fora), então o atingimento nunca inverte.
+    const at = (real != null && orcMtd) ? real / orcMtd : null;
     return {
-      ...row, n: days.length, real, imatura, faltamDias, coorte,
-      bpVal: (row.bp && bpScope) ? bpScope[row.bp] : null,
+      ...row, n: days.length, real, imatura, faltamDias, coorte, bpVal, orcMtd, at,
+      cor: at == null ? null : (at >= 0.95 ? 'var(--positive)' : at >= 0.85 ? 'var(--warning)' : 'var(--negative)'),
+      // idade média da janela ponderada pelo denominador — vira a nota "hoje N,N dias em média"
+      idadeMed: (days.length && diaOk) ? (() => {
+        let n = 0, d = 0;
+        days.forEach(x => { const p = (multBase === 'ftd') ? x.ftd : x.d0; if (p > 0) { n += p * isoDiffDays_(x.date, diaOk); d += p; } });
+        return d > 0 ? n / d : null;
+      })() : null,
     };
   });
+  // Idade média da escada (bloco 'esc') p/ a nota — tirada da linha do M0, que usa todas as safras.
+  const idadeMedEsc = (out.find(r => r.key === 'm0') || {}).idadeMed;
   const val = (v, fmt) => v == null ? '—' : (fmt === 'pct' ? fmtPct(v, 1) : fmtMultiple(v));
   const chLbl = chLabel_(chFilter);
   const faixaLbl = faixaSel.length === 0 ? 'todas as faixas' : (faixaSel.length <= 2 ? faixaSel.map(fxLabel_).join(' + ') : faixaSel.length + ' faixas');
@@ -4952,7 +5124,7 @@ function TabMetricasDia({ retencaoFaixa, chFilter, meta, retFaixaLive }) {
       <div className="tab-header">
         <div>
           <h1>Métricas do dia a dia</h1>
-          <div className="subtitle">A escada que sustenta a curva de depósito do BP — realizado do período e o nível que a curva-meta exige</div>
+          <div className="subtitle">A escada que sustenta a curva de depósito do BP — realizado do período contra o orçado da POSIÇÃO ATUAL (curva-meta na idade real de cada safra) e contra o orçado do mês fechado</div>
         </div>
       </div>
       {!retFaixaLive && (
@@ -4994,13 +5166,29 @@ function TabMetricasDia({ retencaoFaixa, chFilter, meta, retFaixaLive }) {
           <thead>
             <tr>
               <th>Métrica do dia a dia</th>
-              <th title="Agregado do período: soma as bases e divide (não é média das % diárias). Só safras já maduras p/ a janela da métrica.">Realizado</th>
-              <th title="Nível exigido pela curva calibrada na Lottu (constante do estudo, não deriva do nosso dado). Só Geral/Google/Meta.">Planejado</th>
+              <th title="Agregado do período: soma as bases e divide (não é média das % diárias).">Realizado</th>
+              <th style={{ color: 'var(--accent)' }} title="A curva-meta avaliada na IDADE REAL de cada safra da janela, ponderada pelo denominador da métrica (FTD$ ou D0). É a régua do 'estamos no ritmo?' — e é contra ELA que o % compara. Nas linhas de horizonte cheio sai igual ao Orçado mês, porque lá toda safra já maturou.">Orçado MTD</th>
+              <th style={{ color: 'var(--accent)' }} title="Realizado ÷ Orçado MTD. Verde ≥95% · amarelo 85–94% · vermelho <85% — as mesmas bandas do deck.">%</th>
+              <th style={{ color: 'var(--accent-orange)' }} title="Onde a curva chega no FECHAMENTO — o nível exigido pelo estudo. Só Geral/Google/Meta; em qualquer outro canal, ou com 2+ canais, fica “—”.">Orçado mês</th>
+              <th style={{ width: 18 }}></th>
             </tr>
           </thead>
           <tbody>
-            {out.map(r => (
-              <tr key={r.key}>
+            {out.map((r, i) => (
+              <React.Fragment key={r.key}>
+              {/* Cabeçalho de GRUPO — derivado da troca de `grp`, não de um índice fixo. Sem ele as duas
+                  réguas (ritmo × horizonte cheio) ficam empilhadas parecendo a mesma tabela, e o leitor
+                  compara um D7 de coorte jovem com um D30 de coorte fechada como se fossem irmãos. */}
+              {(i === 0 || out[i - 1].grp !== r.grp) && (
+                <tr>
+                  <td colSpan={6} style={{
+                    fontSize: '10.5px', letterSpacing: '.04em', textTransform: 'uppercase',
+                    color: 'var(--text-dim)', fontWeight: 600, paddingTop: i === 0 ? 0 : 18, paddingBottom: 2,
+                    borderBottom: '1px solid var(--border)',
+                  }}>{MDD_GRP_LB[r.grp] || ''}</td>
+                </tr>
+              )}
+              <tr>
                 <td className="ch-name">{r.label}</td>
                 {/* A marca amarela "coorte dd/mm–dd/mm" saiu a pedido do Luis (06/08). A informação
                     continua no title da célula: sem ela ninguém sabe que a linha lê um período
@@ -5008,7 +5196,9 @@ function TabMetricasDia({ retencaoFaixa, chFilter, meta, retFaixaLive }) {
                 <td style={{ fontWeight: 600 }}
                     title={r.coorte
                       ? `Leitura de COORTE: nenhuma safra da janela selecionada fechou os ${r.mat} dia(s) de maturação desta métrica. Este número é a MÉDIA MÓVEL de ${r.n} dias de safra (o próprio horizonte da métrica), de ${fmtBR_(r.coorte.de)} a ${fmtBR_(r.coorte.ate)} — fora da janela do topo.`
-                      : (r.n > 0 ? `${r.n} safra(s) da janela entraram na conta (as que já fecharam os ${r.mat} dia(s) de maturação desta métrica).` : undefined)}>
+                      : (r.n > 0 ? (r.todas
+                          ? `Todas as ${r.n} safra(s) da janela entraram, inclusive as que ainda não fecharam ${r.mat} dia(s) — o numerador delas está truncado pela observação de propósito, e é a coluna Orçado MTD que desconta a idade. É a régua do slide 2.`
+                          : `${r.n} safra(s) da janela entraram na conta (as que já fecharam os ${r.mat} dia(s) de maturação desta métrica).`) : undefined)}>
                   {val(r.real, r.fmt)}
                   {r.imatura && (
                     <span style={{ fontWeight: 400, fontSize: '11px', color: 'var(--text-muted)', marginLeft: 6 }}
@@ -5017,7 +5207,19 @@ function TabMetricasDia({ retencaoFaixa, chFilter, meta, retFaixaLive }) {
                     </span>
                   )}
                 </td>
-                <td style={{ fontWeight: 700, color: r.bpVal != null ? 'var(--accent-yellow)' : 'var(--text-muted)' }}>
+                {/* ORÇADO MTD — azul, colado no % (é com ele que o % compara). Do lado do laranja o
+                    leitor lê o % como atingimento do MÊS, que é justamente o erro que esta coluna existe
+                    pra desfazer. Mesma decisão de layout do slide 2. */}
+                <td style={{ fontWeight: 700, color: r.orcMtd != null ? 'var(--accent)' : 'var(--text-muted)' }}
+                    title={r.taxa
+                      ? 'Taxa não se prorateia: ou a safra teve o dia seguinte ou não teve. O orçado MTD é a meta cheia, igual à do mês.'
+                      : (r.idadeMed != null ? `Curva-meta na idade real das ${r.n} safra(s) desta linha — ${r.idadeMed.toFixed(1).replace('.', ',')} dias em média, ponderada pelo denominador.` : undefined)}>
+                  {val(r.orcMtd, r.fmt)}
+                </td>
+                <td style={{ fontWeight: 700, color: r.cor || 'var(--text-muted)' }}>
+                  {r.at == null ? '—' : Math.round(r.at * 100) + '%'}
+                </td>
+                <td style={{ fontWeight: 700, color: r.bpVal != null ? 'var(--accent-orange)' : 'var(--text-muted)' }}>
                   {r.bp == null ? <span style={{ fontWeight: 400, fontStyle: 'italic' }}>indicativo</span> : (
                     <React.Fragment>
                       {val(r.bpVal, r.fmt)}
@@ -5028,15 +5230,30 @@ function TabMetricasDia({ retencaoFaixa, chFilter, meta, retFaixaLive }) {
                     </React.Fragment>
                   )}
                 </td>
+                <td>{r.cor && <span style={{ display: 'inline-block', width: 9, height: 9, borderRadius: '50%', background: r.cor }} />}</td>
               </tr>
+              </React.Fragment>
             ))}
           </tbody>
         </table></div>
         <div className="ch-note">
           <strong>Realizado</strong> = agregado do período (soma as bases, depois divide — não é média das % diárias).
-          {' '}<strong>Meta BP</strong> é o nível exigido pela
-          curva calibrada na Lottu; é constante do estudo, <strong>não deriva do nosso dado</strong>, e só existe p/ Geral,
+          {' '}<strong style={{ color: 'var(--accent)' }}>Orçado MTD</strong> = a curva-meta avaliada na <strong>idade
+          real de cada safra</strong> da janela, ponderada pelo denominador da métrica
+          {idadeMedEsc != null ? <React.Fragment> (hoje <strong>{idadeMedEsc.toFixed(1).replace('.', ',')} dias</strong> em média)</React.Fragment> : null}
+          {' '}— é contra ela que o <strong>%</strong> compara, e é o que separa “estamos no ritmo?” de “já chegamos?”.
+          Sem essa coluna, um D30 de 3,0x contra 4,9x parece desastre quando o que existe é uma coorte de poucos dias.
+          {' '}<strong style={{ color: 'var(--accent-orange)' }}>Orçado mês</strong> é onde a curva chega no fechamento;
+          é constante do estudo, <strong>não deriva do nosso dado</strong>, e só existe p/ Geral,
           Google e Meta — em qualquer outro canal, ou com 2+ canais selecionados, fica “—”.
+          {' '}<strong>⚠️ Os dois blocos da tabela leem safras diferentes.</strong> No de cima (<em>ritmo do período</em>,
+          o mesmo do slide 2 do deck) entra <strong>toda</strong> safra da janela, com o numerador truncado pela
+          observação — é a coluna Orçado MTD que desconta a idade. No de baixo (<em>horizonte cheio</em>) só entram
+          safras que já maturaram, e por isso ali o Orçado MTD sai igual ao Orçado mês: não é bug, é a mesma fórmula
+          com idade ≥ horizonte.
+          {' '}<strong>⚠️ Contra o deck pode haver diferença de casas decimais</strong>: o slide corta a observação no
+          último dia FECHADO e esta tela observa até a última partição (hoje, ainda carregando), o que empurra o
+          realizado ligeiramente pra cima. As safras (o eixo da janela) são as mesmas nos dois.
           {' '}<strong>⚠️ A Meta BP não muda com Faixa nem com Grupo</strong>: o estudo calibrou a curva no nível do canal,
           não por faixa de FTD nem por grupo de risco. Ao filtrar, o Realizado segue o recorte, mas a meta continua
           sendo a do canal inteiro — use como referência de direção, não como alvo daquele segmento.
@@ -5048,9 +5265,17 @@ function TabMetricasDia({ retencaoFaixa, chFilter, meta, retFaixaLive }) {
           {' '}<strong>Retenção de jogadores S1/S0 traz meta ajustada de régua (†)</strong>: a curva semanal de
           jogadores do estudo é estimada e infla ~1,7× vs a contagem exata — a meta entra corrigida pelo fator medido
           (0,579), senão o atingimento seria definição, não performance.
-          {' '}<strong>Maturação:</strong> cada linha só usa safras que já fecharam a janela dela — D30 exige 30 dias,
-          D14 exige 14, S1/S0 exige 13. Ou seja, <strong>cada linha lê um nº diferente de safras</strong>: passe o mouse
-          no valor pra ver quantas entraram e de que período.
+          {' '}<strong>Maturação (bloco de baixo):</strong> cada linha só usa safras que já fecharam a janela dela —
+          D30 exige 30 dias, D14 exige 14, S1/S0 exige 13. Ou seja, <strong>cada linha lê um nº diferente de
+          safras</strong>: passe o mouse no valor pra ver quantas entraram e de que período. As 2 linhas de retenção
+          D1/D0 do bloco de cima também exigem maturação (1 dia), e isso é a régua certa: retenção é binária — ou a
+          safra teve o dia seguinte ou não teve, então ela sai dos <strong>dois</strong> lados da razão em vez de
+          entrar com zero.
+          {' '}<strong>Metas de retenção D1/D0 = COMPROMISSO do mês</strong> (10,3% e 23,9% no Geral), nas duas bases,
+          igual ao deck. Até 16/08/2026 estas 2 linhas mostravam o <em>nível BP</em> (11,1% e 29,8%) mesmo na base
+          sobre FTD, onde os multiplicadores ao lado já eram o compromisso — duas réguas na mesma coluna.
+          {' '}<strong>As 2 linhas semanais S1/S0 seguem no nível BP</strong> (62,6% e 28,1%×0,579): não entraram
+          nessa mudança, então são mais duras que as diárias de propósito.
           {' '}<strong>Fallback de coorte (média móvel do próprio horizonte):</strong> se NENHUMA safra da janela
           escolhida fechou a maturação da linha, ela não fica vazia — passa a ler safras maduras de fora da janela,
           num span igual à janela da métrica: <strong>D7 lê 7 dias de safra, D14 lê 14, D30 lê 30</strong> (busca até
@@ -5060,7 +5285,9 @@ function TabMetricasDia({ retencaoFaixa, chFilter, meta, retFaixaLive }) {
           impressão de que a cauda tinha desabado quando era ruído de semana. <strong>É leitura de coorte, não da
           janela</strong>: passe o mouse no valor pra ver o período exato; o recorte de canal/faixa/grupo é o mesmo dos
           dois lados.
-          {' '}Multiplicadores aqui são <strong>sobre o depósito do D0</strong> (D0 = 1,00x), não sobre o FTD$ — é a base do estudo.
+          {' '}A base dos multiplicadores é a do toggle: <strong>sobre D0</strong> (D0 = 1,00x, a régua original do
+          estudo) ou <strong>sobre FTD$</strong> (a do deck). A linha <strong>Multiplicador D0</strong> só aparece na
+          base FTD — sobre D0 ela seria 1,00x por definição.
           {' '}<strong>S0/S1 são semanas de calendário</strong> (seg–dom): S0 = depósito na semana do FTD, S1 = na semana
           seguinte — mesma lógica do M0/M+1, um nível acima. Não é janela de 7 dias corridos.
           {' '}A linha de <strong>jogadores S1/S0 fica sem Meta BP de propósito</strong>: a curva semanal de jogadores do
