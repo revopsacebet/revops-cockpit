@@ -5159,14 +5159,80 @@ const PIR_META = {
     Geral:  { d0: 1.5260, d1: 1.8901, d3: 2.3302, d4: 2.4971, w1: 2.9323, w2: 3.6590, d30: 4.8742, m0: 3.6000 },
     Google: { d0: 2.0076, d1: 2.6401, d3: 3.4072, d4: 3.6963, w1: 4.3960, w2: 5.4943, d30: 7.2639, m0: 5.3671 },
     Meta:   { d0: 1.5418, d1: 1.8956, d3: 2.2817, d4: 2.4344, w1: 2.8407, w2: 3.5360, d30: 4.7543, m0: 3.4924 },
+    // --- CASCATEADAS: não são do estudo, são derivadas dele. Ver o bloco logo abaixo da tabela.
+    'TikTok':                    { d0: 1.5011, d1: 1.9110, d3: 2.3887, d4: 2.5712, w1: 3.1761, w2: 4.1165, d30: 5.4796, m0: 3.7033 },
+    'Programática':              { d0: 1.3708, d1: 1.5804, d3: 1.7621, d4: 1.8879, w1: 2.1662, w2: 2.6643, d30: 3.4223, m0: 2.6031 },
+    'Social Media':              { d0: 1.4709, d1: 1.9178, d3: 2.2675, d4: 2.4416, w1: 2.9558, w2: 3.7975, d30: 5.1357, m0: 3.4196 },
+    'Orgânico (sem atribuição)': { d0: 1.2214, d1: 1.4057, d3: 1.5912, d4: 1.6813, w1: 1.8929, w2: 2.3017, d30: 3.0198, m0: 2.2789 },
   },
   // base D0: o D0 é a própria âncora (1,00x) → sem meta, e a coluna nem vai pra tela.
   d0: {
     Geral:  { d1: 1.2386, d3: 1.5270, d4: 1.6364, w1: 1.9216, w2: 2.3977, d30: 3.1941, m0: 2.3591 },
     Google: { d1: 1.3150, d3: 1.6971, d4: 1.8411, w1: 2.1896, w2: 2.7367, d30: 3.6181, m0: 2.6733 },
     Meta:   { d1: 1.2294, d3: 1.4798, d4: 1.5789, w1: 1.8424, w2: 2.2934, d30: 3.0835, m0: 2.2651 },
+    'TikTok':                    { d1: 1.2731, d3: 1.5913, d4: 1.7129, w1: 2.1158, w2: 2.7423, d30: 3.6504, m0: 2.4671 },
+    'Programática':              { d1: 1.1529, d3: 1.2855, d4: 1.3772, w1: 1.5802, w2: 1.9436, d30: 2.4966, m0: 1.8990 },
+    'Social Media':              { d1: 1.3038, d3: 1.5416, d4: 1.6599, w1: 2.0095, w2: 2.5818, d30: 3.4915, m0: 2.3248 },
+    'Orgânico (sem atribuição)': { d1: 1.1509, d3: 1.3028, d4: 1.3765, w1: 1.5498, w2: 1.8845, d30: 2.4724, m0: 1.8658 },
   },
 };
+// ============================================================
+// CASCATA DAS METAS — canais que o estudo NÃO calibrou (pedido do Luis 2026-08-16)
+// ============================================================
+// O estudo só declara Geral/Google/Meta (as palavras "tiktok"/"kwai"/"program" não aparecem no blob).
+// Até aqui, escolher TikTok/Programática/Orgânico no slicer deixava a régua da aba inteira em branco.
+//
+// A REGRA NÃO FOI INVENTADA — ela estava no próprio estudo, e foi reproduzida a 4 casas nos 3 escopos:
+//     comp = real + θ · (BP − real)          θ = comp.theta = 0,523002275336366
+//   Geral  2,4162 + θ·(4,6796−2,4162) = 3,6000  (declarado 3,6000)
+//   Google 4,2356 + θ·(6,3990−4,2356) = 5,3671  (declarado 5,3671)
+//   Meta   2,8155 + θ·(4,1097−2,8155) = 3,4924  (declarado 3,4924)
+// Vale igual na curva de dias: comp.cumFTD[d] = real[d] + θ·(BP[d] − real[d]).
+//
+// O que FALTA por canal é o nível BP (o estudo calibrou contra a Lottu só nos 3 escopos). A PREMISSA da
+// cascata é essa e só essa: **o canal tem que entregar o mesmo ESFORÇO RELATIVO por horizonte que o
+// estudo cobrou dos canais que ele calibrou**. Em fórmula:
+//     meta_canal[hz] = realizado_canal[hz] × k[hz],   k = média(comp/real) de Google e Meta
+//     k:  d0 1,0244 · d1 1,0636 · d3 1,1030 · d4 1,1200 · w1 1,1705 · w2 1,2521 · d30 1,3559 · M0 1,2538
+// k cresce com o horizonte de propósito — o compromisso é ganhar 2% na entrada (D0) e 36% no D30: o
+// esforço está em RETENÇÃO, não em ticket de entrada. Mesma leitura do Geral (1,08 → 1,66).
+//
+// ⚠️ POR QUE k É A MÉDIA DE GOOGLE+META E NÃO O k DA CASA (Geral, M0 1,4899): o k do Geral é um k de
+// AGREGADO — a casa carrega o Orgânico (31% do FTD$, o mais fraco) e o BP dela é bem mais agressivo
+// contra a própria base. Testado às cegas (reproduzir Google e Meta a partir do realizado medido):
+// k da casa erra 12,8% no Meta · k dos calibrados erra 2,0%. O k de canal é o que transfere.
+//
+// BASE = realizado medido no BQ, safras de **jun+jul/2026**, com a MESMA cascata de canal do
+// queryRetencaoFaixa_ (a que alimenta esta aba — meta e realizado falam do mesmo universo).
+// ⚠️ A JANELA IMPORTA e foi escolhida por evidência, não por gosto: abr..jul reproduz melhor o estudo
+// (1,6% vs 6,4%), mas só porque a base do PRÓPRIO estudo é velha — e importar isso importa o defeito.
+// A meta de Google (5,37x) está ancorada num Google que não existe mais: m0Hist 6,20 → 5,00 → 3,81, e
+// jul/26 medido dá 3,40. Com jun+jul o resultado bate com o PLANO, que é fonte independente:
+//
+// ✅ CROSS-CHECK — a aba `DB Plan_Growth Mkt` declara M0/FTD por canal em ago/26 (= depM0 ÷ ftdAmount):
+// Google 3,90 · Meta 3,70 · TikTok 3,80 · Programática 2,60, e growth 3,7532 (que é exatamente o 3,75 já
+// usado no PIR_M0_GROWTH — o que valida a leitura da aba). Contra o derivado aqui: **TikTok −2,5% ·
+// Programática +0,1%**. Dois métodos independentes, mesmo número.
+// ⚠️ Google é a exceção que vale saber: plano 3,90 vs estudo 5,37 (+38%). NÃO mexi no Google — trocar a
+// régua dele muda número que o Luis já lê, é decisão dele e não refactor silencioso.
+//
+// ⚠️ ORGÂNICO e SOCIAL MEDIA saem da regra, NÃO do plano: lá só existe a linha agregada "Multi
+// non-growth" (2,7048), que mistura os dois — e eles são opostos (Social realiza 2,73 · Orgânico 1,82).
+// Ancorar Social no 2,7048 dava meta ABAIXO do realizado dele no D0. Agregado não vira meta de canal.
+//
+// ⚠️ KWAI FICA SEM META, de propósito: 4 FTDs em jun+jul, 78 em mai..jul, R$ 1.230 de FTD$ no total — e
+// nenhuma linha no plano de agosto. Derivar régua disso seria inventar. Volta a ter meta quando tiver
+// volume; até lá a linha aparece vazia, que é a informação honesta.
+//
+// Conferido na geração (e virou assert no piramidetest): as 4 curvas são monotônicas
+// (d0<d1<d3<d4<w1<w2<d30) e TODAS acima do realizado da própria base — meta abaixo do realizado é erro
+// de sinal, não é "canal fácil".
+const PIR_META_DERIV = ['TikTok', 'Programática', 'Social Media', 'Orgânico (sem atribuição)'];
+// A régua desta seleção é derivada? (só quando é UM canal — é o único caso que tem curva própria)
+function pirDerivada_(chFilter) {
+  const sel = chList_(chFilter);
+  return sel.length === 1 && PIR_META_DERIV.indexOf(sel[0]) >= 0;
+}
 // ============================================================
 // GROWTH ≠ TOTAL DA CASA (pedido do Luis 14/08)
 // ============================================================
@@ -5287,6 +5353,9 @@ function TabPiramideCoorte({ retencaoFaixa, chFilter, meta, retFaixaLive }) {
   // Mês de referência da meta = mês do INÍCIO da janela (o mesmo critério das metas de retenção do Farol).
   const mkJanela = String((meta && meta.from) || (bins[0] && bins[0].ini) || '').slice(0, 7) || null;
   const bpScope = pirBpScope_(chFilter, base, mkJanela);
+  // Meta CASCATEADA (canal que o estudo não calibrou) leva † na tela. Sem isso, uma meta derivada de
+  // premissa fica visualmente idêntica a uma meta declarada — e é aí que premissa vira "fato".
+  const metaDeriv = pirDerivada_(chFilter);
   const chLbl = chLabel_(chFilter);
   const faixaLbl = faixaSel.length === 0 ? 'todas as faixas' : (faixaSel.length <= 2 ? faixaSel.map(fxLabel_).join(' + ') : faixaSel.length + ' faixas');
   const metaDe = (c) => (c.bp && bpScope) ? bpScope[c.bp] : null;
@@ -5438,6 +5507,18 @@ function TabPiramideCoorte({ retencaoFaixa, chFilter, meta, retFaixaLive }) {
           <span><i className="pir-sw pir-sw-open" /> ainda não fechou</span>
           {prev.error && <span style={{ color: 'var(--negative)' }}>⚠ falhou buscar o mês anterior — sem bolinhas ({prev.error})</span>}
           {soMaduras && <span style={{ color: 'var(--accent-yellow)' }}>⚠ só safras maduras: as imaturas estão FORA do cálculo</span>}
+          {metaDeriv && (
+            <span style={{ color: 'var(--accent-yellow)' }}
+                  title="O estudo só calibrou Geral, Google e Meta. Para os demais a meta é cascateada: mesma regra do estudo (real + θ·(BP − real)), aplicada ao realizado de jun+jul/26 do próprio canal com o fator de esforço por horizonte medido em Google e Meta.">
+              † meta cascateada — derivada por premissa, não declarada no estudo
+            </span>
+          )}
+          {!bpScope && chList_(chFilter).length === 1 && (
+            <span style={{ color: 'var(--text-muted)' }}
+                  title="Sem curva declarada e sem volume que sustente derivar uma (Kwai: 4 FTDs em jun+jul, R$ 1.230 de FTD$ acumulado, e nenhuma linha no plano de agosto). Inventar régua a partir disso daria uma meta com cara de fato.">
+              sem meta para este canal — volume não sustenta derivar uma
+            </span>
+          )}
         </div>
         <div className="table-scroll tall">
           <table className="ch-table pir-table">
@@ -5449,7 +5530,14 @@ function TabPiramideCoorte({ retencaoFaixa, chFilter, meta, retFaixaLive }) {
                   return (
                     <th key={c.key} className={sepCls[i] || undefined}>
                       {c.lb}
-                      {mt != null && <span className="pir-meta-tag">meta {fmtMultiple(mt)}</span>}
+                      {mt != null && (
+                        <span className={'pir-meta-tag' + (metaDeriv ? ' pir-meta-deriv' : '')}
+                              title={metaDeriv
+                                ? 'Meta CASCATEADA: o estudo não calibrou este canal. Derivada da regra do próprio estudo (comp = real + θ·(BP − real)) aplicada ao realizado de jun+jul/26 deste canal, com o fator de esforço por horizonte medido em Google e Meta. Cross-check contra o plano (DB Plan_Growth Mkt, ago/26): TikTok −2,5%, Programática +0,1%.'
+                                : 'Meta declarada no estudo (compromisso do mês) para este escopo.'}>
+                          meta {fmtMultiple(mt)}{metaDeriv ? ' †' : ''}
+                        </span>
+                      )}
                     </th>
                   );
                 })}
