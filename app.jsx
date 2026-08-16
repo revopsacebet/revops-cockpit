@@ -3346,6 +3346,32 @@ function applyScenarioBp_(M, farol, scenData, chFilter) {
     // Plan_RevOps (ago fc: 3,0M/mês) enquanto Investimento/ROAS FTD/CAC seguem no Plan_Growth (3,72M/mês),
     // dois planos de mídia na mesma tela. As razões do uplift batem com o Plan_RevOps tt de qualquer forma
     // (ago fc: ROAS Dep M0 1,69 vs 1,70 · Mult M0 3,58 vs 3,57); só o nível fica no pace do Plan_Growth.
+    // --- Aquisição no TOTAL DA CASA: FTD Amount, #FTD e Tkt Médio saem da DB Plan_RevOps ---
+    // Regra do Luis (16/08): "considera a aba DB_PLAN_REVOPS e faz o cálculo da coluna AX pela AW,
+    // sempre que o total da casa estiver selecionado".
+    //   AW = `<cenário> #FTD tt`      (offset +11 → rolling idx 48)
+    //   AX = `<cenário> FTD amount tt` (offset +12 → rolling idx 49)
+    // ⚠️ AX é CÓPIA EXATA de AV (+10), conferido dia a dia nos 3 cenários em ago/26 — e +10 é o que o
+    // backend já lê como `ftdAmountTt`. Ou seja `house.ftdAmountTt` JÁ É a coluna AX: não precisou de
+    // campo novo, e ler +12 separado só criaria uma segunda fonte pro mesmo número.
+    // ⚠️ POR QUE ESTA ABA E NÃO A `*_Revenue`: (1) é DIÁRIA, então soma na janela e o card compara MTD
+    // com MTD — a `*_Revenue` só tem o mês cheio; (2) ela é internamente CONSISTENTE. Em ago/26 a
+    // `Projection_Revenue` traz `TKT Méd FTD tt` = 48, mas o próprio par dela (1.424.874 ÷ 33.613) dá
+    // 42,39 — e a DB Plan_RevOps dá 42,39 nos dois lados. Ticket derivado de AX÷AW nunca discorda dos
+    // outros dois cards; ler o 48 pronto colocaria 3 cards que não fecham entre si na mesma tela.
+    // Antes disto os 3 cards mostravam o número de GROWTH no escopo Total da Casa (mesmo ramo morto do
+    // houseUplift que já tinha travado ROAS FTD e CAC).
+    const hAmt = house.ftdAmountTt || 0, hQty = house.ftdTt || 0;
+    if (hAmt > 0 || hQty > 0) {
+      const tt = (o, k, v, title) => (o && o[k] && pos(v) != null)
+        ? { ...o, [k]: { ...o[k], bp: v, scenBp: true, bpTitle: title } } : o;
+      const fonte = ' Fonte: aba DB Plan_RevOps do cenário ativo, somada na janela desta tela (é plano DIÁRIO, então o orçado acompanha o período).';
+      newM = tt(newM, 'ftdAmount', hAmt, 'Orçado da CASA (coluna "FTD amount tt").' + fonte);
+      newM = tt(newM, 'ftdQty',    hQty, 'Orçado da CASA (coluna "#FTD tt").' + fonte);
+      newFarol = tt(newFarol, 'ticketFtd', (hQty > 0 ? hAmt / hQty : null),
+        'Orçado da CASA = "FTD amount tt" ÷ "#FTD tt" (colunas AX ÷ AW).' + fonte
+        + ' Derivado do par em vez de lido pronto: assim o ticket nunca discorda do FTD Amount e do #FTD que estão do lado.');
+    }
     const m0 = house.m0tt || 0, hInv = house.invest || 0, hFtdAmt = house.ftdAmountTt || 0;
     if (m0 > 0 && !scenData.houseUplift) {
       newM = { ...newM, depM0Total: setBp(newM.depM0Total, m0) };
