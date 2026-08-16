@@ -3375,6 +3375,28 @@ function applyScenarioBp_(M, farol, scenData, chFilter) {
       retM3plus: setRet(newM.retM3plus, ret.m3plus),
     };
   }
+  // --- ROAS FTD e CAC no TOTAL DA CASA: BP sai da planilha, não do plano de aquisição (backend v76+) ---
+  // ⚠️ ISTO CORRIGE UM BUG REAL, não é só troca de fonte (Luis, 16/08: "não mudam quando filtramos"):
+  // o bloco `if (inv > 0)` lá em cima ancora estes dois cards no agregado do `DB Plan_Growth Mkt`, que
+  // SÓ TEM MÍDIA PAGA — então `allAgg` (Total) e `growthAgg` (Growth) são o mesmo número e o slicer não
+  // mexia em nada. Havia um caminho de `houseUplift` previsto aqui pra corrigir isso, mas **esse campo
+  // nunca existiu no backend** (grep em Code.js: zero ocorrências), então o `else` do fallback era o
+  // único caminho vivo. Agora o Total da Casa lê a razão pronta da aba do cenário:
+  //     `ROAS FTD tt`  (ago/26 Forecast: 0,475)   ·   `CAC tt`  (ago/26 Forecast: 89,25)
+  // GROWTH NÃO MUDA — segue no cálculo de hoje (invest ÷ ftd do plano de aquisição), que é o que
+  // responde a canal. Regra do Luis: "linha 20 pra total da casa e cálculo feito hoje só pra growth".
+  // ⚠️ `CAC tt` está VAZIA no Orçado e no Conservador (só a Projection preenche) → nesses cenários o
+  // valor chega null e o card mantém o BP antigo. Cenário sem número no plano ≠ cockpit inventando um.
+  if (ret && isTotal) {
+    // `scenBp` igual ao setBp: este número TAMBÉM vem da aba do cenário ativo, então o rótulo do card
+    // tem que seguir o cenário (Orçado/Conservador/Forecast) em vez de dizer "BP" fixo.
+    const setTt = (o, k, v, title) => (o && o[k] && pos(v) != null)
+      ? { ...o, [k]: { ...o[k], bp: v, scenBp: true, bpTitle: title } } : o;
+    newM = setTt(newM, 'roasFtd', ret.roasFtdTt,
+      'BP do escopo Total da Casa lido direto da aba de cenário da planilha (linha "ROAS FTD tt"). O plano de aquisição só cobre mídia paga, então ele não serve de orçado pra casa inteira.');
+    newFarol = setTt(newFarol, 'cac', ret.cacTt,
+      'BP do escopo Total da Casa lido direto da aba de cenário da planilha (linha "CAC tt"). No escopo Growth o CAC segue calculado do plano de aquisição (investimento ÷ FTD).');
+  }
   return { M: newM, farol: newFarol };
 }
 
