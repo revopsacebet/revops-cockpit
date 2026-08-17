@@ -5385,7 +5385,18 @@ const PIR_COLS = [
   // escada crescente que não existe: é normal o D30 ser maior que o M0.
   // Alvo de CALENDÁRIO, declarado à parte no plano/estudo em vez de sair de cum[30], justamente porque
   // o horizonte dele varia com o dia da safra.
-  { key: 'm0',  lb: 'M0',  hz: 'm0',  blk: 'mult', acc: (a) => a.d0 + a.vm0,       bp: 'm0' },
+  // ⚠️ A META DE M0 É MENOR QUE A DE D14, e isso NÃO é erro — vale na curva declarada de todos os escopos
+  // (Geral 3,60 vs 3,66 · Meta 3,49 vs 3,54 · Google 5,37 vs 5,49), então não é artefato do mix nem da
+  // cascata. M0 vai do dia do FTD até o FIM DO MÊS: a safra do dia 1º vive 30 dias, a do dia 30 vive um.
+  // O M0 agregado é a média dessas janelas, ~15 dias de horizonte médio — mais curto que D30 e, como a
+  // curva é CÔNCAVA (média de acumulados < acumulado da média), pousa um degrau ABAIXO do D14.
+  // Perguntado pelo Luis em 16/08; virou tooltip da coluna pra não ser perguntado de novo.
+  { key: 'm0',  lb: 'M0',  hz: 'm0',  blk: 'mult', acc: (a) => a.d0 + a.vm0,       bp: 'm0',
+    tip: 'M0 = do dia do FTD até o FIM DO MÊS, não uma janela fixa de dias. A safra do dia 1º vive 30 dias; '
+       + 'a do dia 30 vive um. O agregado é a média dessas janelas — horizonte médio de ~15 dias. '
+       + '⚠️ Por isso a META de M0 fica ABAIXO da de D14 (e bem abaixo da de D30): não é erro, é horizonte. '
+       + 'Como a curva é côncava, a média dos acumulados cai um degrau abaixo do acumulado de 14 dias. '
+       + 'Vale na curva declarada de todos os escopos (Geral 3,60 vs 3,66 · Meta 3,49 vs 3,54 · Google 5,37 vs 5,49).' },
   { key: 'd30', lb: 'D30', hz: 'd30', blk: 'mult', acc: (a) => a.d0 + a.vd30,      bp: 'd30' },
   // ---- RETENÇÃO SOBRE D0 ----
   // Identidade do anexo: RET % = (MULT Dk − MULT D0) ÷ MULT D0. Expandindo, o FTD$ e o próprio D0 se
@@ -6071,7 +6082,7 @@ function TabPiramideCoorte({ retencaoFaixa, chFilter, meta, retFaixaLive }) {
                 {cols.map((c, i) => {
                   const mt = metaDe(c);
                   return (
-                    <th key={c.key} className={sepCls[i] || undefined}>
+                    <th key={c.key} className={sepCls[i] || undefined} title={c.tip || undefined}>
                       {c.lb}
                       {mt != null && (
                         <span className={'pir-meta-tag' + (metaDeriv ? ' pir-meta-deriv' : '')}
@@ -6085,7 +6096,7 @@ function TabPiramideCoorte({ retencaoFaixa, chFilter, meta, retFaixaLive }) {
                                 : metaDeriv
                                 ? 'Meta CASCATEADA: o estudo não calibrou este canal. Derivada da regra do próprio estudo (comp = real + θ·(BP − real)) aplicada ao realizado de jun+jul/26 deste canal, com o fator de esforço por horizonte medido em Google e Meta. Cross-check contra o plano (DB Plan_Growth Mkt, ago/26): TikTok −2,5%, Programática +0,1%.'
                                 : 'Meta declarada no estudo (compromisso do mês) para este escopo.'}>
-                          meta {fmtMultiple(mt)}{metaDeriv ? ' †' : ''}
+                          meta {fmtMultiple(mt)}{metaDeriv ? <i className="pir-deriv-mk"> †</i> : ''}
                         </span>
                       )}
                     </th>
@@ -6188,6 +6199,11 @@ function TabPiramideCoorte({ retencaoFaixa, chFilter, meta, retFaixaLive }) {
           têm curva própria; outro canal, ou 2+ canais, fica sem meta.
           {' '}<strong>M0</strong> tem alvo próprio (não é <code>cum[30]</code>): o horizonte dele varia com o dia da
           safra, então o estudo declara o número à parte.
+          {' '}⚠️ <strong>E é normal a meta de M0 ficar ABAIXO da de D14</strong> — M0 vai do dia do FTD até o
+          <em> fim do mês</em>, então a safra do dia 1º vive 30 dias e a do dia 30 vive um; o agregado é a média
+          dessas janelas, ~15 dias de horizonte médio. Como a curva é côncava, essa média cai um degrau abaixo do
+          acumulado de 14 dias. Vale na curva declarada de <strong>todos</strong> os escopos (Geral 3,60 vs 3,66 ·
+          Meta 3,49 vs 3,54 · Google 5,37 vs 5,49), então não é efeito do mix nem da cascata.
           {' '}<strong>A bolinha compara com o mesmo período do mês anterior</strong> ({prevFrom ? fmtBR_(prevFrom) + ' a ' + fmtBR_(prevTo) : '—'}):
           verde = melhorou, vermelha = piorou. Na visão por dia o par é o <strong>mesmo dia do mês</strong>;
           na semanal é a <strong>mesma posição na janela</strong> (semana-calendário não tem homólogo exato).
