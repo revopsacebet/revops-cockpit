@@ -3348,6 +3348,30 @@ function applyScenarioBp_(M, farol, scenData, chFilter) {
   // --- Receita / Volume de depósito (DB Plan_RevOps, house-level) — SÓ Total da Casa (a aba não tem canal) ---
   const house = scenData.house;
   const isTotal = !(sel && sel.length) && !(chFilter && chFilter.scope === 'growth');
+  // --- ROAS Dep D0: orçado pela curva de COMPROMISSO D0/FTD do estudo Ponte BP × Retenção (mesma régua
+  // da coluna "Mult D0/FTD" da aba Métricas do Dia a Dia), em vez do plano de mídia. Fórmula (Luis, 17/08):
+  //   orçado ROAS Dep D0 = compromisso D0/FTD (MDD_BP_FTD_MULT.<esc>.d0) × FTD Amount REALIZADO ÷
+  //   Investimento REALIZADO deste período — os componentes são o ATO, não o plano.
+  // Só existe p/ Geral (Total da Casa)/Google/Meta — os únicos 3 escopos com curva calibrada (mesma
+  // régua da MDD). Fora disso (Growth agregado, TikTok/Kwai/Programática/Streamer) o card segue com o
+  // orçado do plano de mídia setado acima (`roasDepD0: setBp(..., inv ? depD0/inv : null)`).
+  // ⚠️ Isto substitui o "SEM orçado" que existia até 16/08 pro Total da Casa (ver histórico abaixo): a
+  // curva Geral foi calibrada sobre o Total da Casa (blended — o numerador inclui orgânico/social), então
+  // multiplicá-la pelo FTD Amount REALIZADO (também blended neste escopo) dá um orçado na MESMA base do
+  // realizado — resolve o "blended vs direto" que antes travava a comparação contra a meta de growth.
+  const compScope = isTotal ? 'Geral'
+    : (sel.length === 1 && sel[0] === 'Google_ads') ? 'Google'
+    : (sel.length === 1 && sel[0] === 'Meta_ads') ? 'Meta'
+    : null;
+  if (compScope && newFarol.roasDepD0 && newM.ftdAmount && newM.invest
+      && newM.ftdAmount.act != null && newM.invest.act) {
+    const compD0Ftd = MDD_BP_FTD_MULT[compScope].d0;
+    const compBp = compD0Ftd * newM.ftdAmount.act / newM.invest.act;
+    newFarol = { ...newFarol, roasDepD0: { ...newFarol.roasDepD0, bp: compBp, scenBp: true,
+      bpTitle: `Orçado = compromisso D0/FTD do estudo (${fmtMultiple(compD0Ftd)}, escopo ${compScope}) × FTD Amount `
+        + `realizado ÷ Investimento realizado deste período — não é o plano de mídia. Mesma régua da coluna `
+        + `"Mult D0/FTD" da aba Métricas do Dia a Dia.` } };
+  }
   if (house && isTotal) {
     const td = house.totalDeposit || 0, ggr = house.ggr || 0, turn = house.turnover || 0;
     if (td > 0 || ggr > 0 || turn > 0) {
@@ -3391,19 +3415,12 @@ function applyScenarioBp_(M, farol, scenData, chFilter) {
         'Orçado da CASA = "FTD amount tt" ÷ "#FTD tt" (colunas AX ÷ AW).' + fonte
         + ' Derivado do par em vez de lido pronto: assim o ticket nunca discorda do FTD Amount e do #FTD que estão do lado.');
     }
-    // --- ROAS Dep D0 no Total da Casa: SEM orçado, de propósito (Luis, 16/08: "só tem meta pra
-    // crescimento mesmo") ---
-    // O plano não declara ROAS Dep D0 da casa em lugar nenhum: a planilha só tem a linha de growth, e
-    // `ROAS DEPOSIT M0 tt` é M0, não D0. Até aqui o card herdava o número de GROWTH pelo ramo morto do
-    // houseUplift — ou seja, exibia a meta de um escopo com o rótulo de outro, que é pior do que não
-    // exibir. E a comparação nem é legítima: no Total da Casa o realizado é ROAS BLENDED (o numerador
-    // inclui depósito de orgânico/social, que não teve investimento) contra uma meta de ROAS DIRETO.
-    // Zerar aqui é o único jeito de o card não afirmar o que ninguém prometeu. Card sem `bp` é estado
-    // suportado (Registros já vive assim): some a linha do orçado, o realizado e o trend continuam.
-    if (newFarol.roasDepD0) {
-      newFarol = { ...newFarol, roasDepD0: { ...newFarol.roasDepD0, bp: null, scenBp: false,
-        bpTitle: 'Sem orçado no escopo Total da Casa: o plano só declara ROAS Dep D0 de GROWTH. Além de não existir, a comparação não fecharia — aqui o realizado é ROAS blended (inclui depósito de orgânico/social, sem investimento) e a meta de growth é ROAS direto. Troque para Canais Growth para ver o orçado.' } };
-    }
+    // --- ROAS Dep D0 no Total da Casa: até 16/08 ficava SEM orçado de propósito, porque o plano não
+    // declara ROAS Dep D0 da casa em lugar nenhum (só a linha de growth) e a meta de growth é ROAS DIRETO
+    // contra um realizado BLENDED aqui — comparação que não fechava. Em 17/08 o Luis definiu a fórmula do
+    // compromisso D0/FTD (bloco `compScope`/`compD0Ftd` acima, antes do `if (house && isTotal)`), que
+    // resolve os dois problemas: existe pra Total da Casa e nasce calibrada na mesma base blended do
+    // realizado. Não há mais zeragem aqui — o card já chega neste ponto com o `bp` do compromisso.
     const m0 = house.m0tt || 0, hInv = house.invest || 0, hFtdAmt = house.ftdAmountTt || 0;
     if (m0 > 0 && !scenData.houseUplift) {
       newM = { ...newM, depM0Total: setBp(newM.depM0Total, m0) };
