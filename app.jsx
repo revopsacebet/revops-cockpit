@@ -5665,6 +5665,60 @@ function pirCmp_(v, ref, aberta) {
 }
 const PIR_RAMP = ['--pir1', '--pir2', '--pir3', '--pir4', '--pir5', '--pir6'];
 const PIR_INK  = ['--pirI1', '--pirI2', '--pirI3', '--pirI4', '--pirI5', '--pirI6'];
+// ============================================================
+// SEM AS N MAIORES CAMPANHAS (pedido do Luis 16/08: "qual seria o multiplicador sem essas 3 maiores —
+// eles ainda teriam melhorado?")
+// ============================================================
+// A pergunta é se a melhora do mês sobrevive quando se tira o que uma ou duas campanhas grandes
+// carregaram sozinhas. Três decisões que mudam o número, então estão explícitas na tela:
+//
+// 1) ⚠️ CADA JANELA PERDE AS SUAS (pedido explícito). O mês anterior NÃO perde as campanhas nomeadas
+//    deste mês — ele perde as 3 maiores DELE. É o único pareamento honesto: campanha grande em agosto
+//    pode nem existir em julho, e aí o "sem as 3 maiores" tiraria 30% de um lado e 0% do outro,
+//    fabricando exatamente a melhora que o toggle existe pra testar. Consequência aceita: os dois lados
+//    podem excluir conjuntos DIFERENTES de campanha — o que se compara é "a casa sem o topo dela",
+//    não "a casa sem estas 3 campanhas".
+// 2) MAIOR = maior na BASE do toggle (FTD$ ou depósito do D0) — o mesmo denominador da célula. Trocar a
+//    base pode trocar o conjunto excluído; por isso os nomes vão pra tela, nos dois meses.
+// 3) O RANKING RESPEITA O FILTRO de canal/faixa: sem filtro é literalmente "as 3 maiores da casa"; com
+//    Google selecionado é "as 3 maiores do Google". Rankear sempre pela casa faria o toggle não mexer
+//    em nada quando o topo da casa é de outro canal — um toggle que às vezes não faz nada é pior que
+//    um toggle que responde à pergunta análoga no recorte que está na tela.
+//
+// ⚠️ A META NÃO MUDA (decisão do Luis): a régua é o compromisso do mês, não uma função do mix. E o
+// peso da meta ponderada de multi-canal segue vindo do mix COMPLETO, senão tirar campanha mexeria na
+// régua e a comparação viraria alvo móvel.
+// FTD sem utm_ftd_campaign ('' no BQ) NÃO entra no ranking: é um balde de gente sem campanha (orgânico
+// e afins), quase sempre o maior de todos — se entrasse, o toggle removeria o orgânico e mais 2.
+const PIR_EX_N = 3;
+function pirTopCamp_(rows, selCh, selFx, base, n) {
+  const by = {};
+  let tot = 0;
+  (rows || []).forEach((r) => {
+    if (!selCh(r.canal) || !selFx(r.faixa)) return;
+    const v = (base === 'd0') ? (r.d0 || 0) : (r.ftd || 0);
+    if (!(v > 0)) return;
+    tot += v;                       // denominador = a seleção INTEIRA (inclui quem não tem campanha)
+    if (!r.campanha) return;        // '' = sem utm_ftd_campaign → não é campanha, não disputa o topo
+    by[r.campanha] = (by[r.campanha] || 0) + v;
+  });
+  const ord = Object.keys(by).sort((a, b) => by[b] - by[a]).slice(0, n);
+  return {
+    set: ord.reduce((s, k) => { s[k] = 1; return s; }, {}),
+    list: ord.map((k) => ({ campanha: k, base: by[k], share: tot > 0 ? by[k] / tot : null })),
+    share: tot > 0 ? ord.reduce((s, k) => s + by[k], 0) / tot : null,
+  };
+}
+// Linhas da janela sem as campanhas do topo. Somar linhas de campanha reproduz a linha sem campanha:
+// cada FTD tem UM utm_ftd_campaign, então a quebra é uma partição — as somas e contagens são aditivas.
+function pirSemTop_(rows, top) {
+  return (rows || []).filter((r) => !(r.campanha && top.set[r.campanha]));
+}
+// Nome de campanha é id cru (120210…): encurta no meio pra caber na legenda sem virar "120…".
+function pirCampLbl_(c) {
+  const s = String(c || '');
+  return s.length <= 28 ? s : s.slice(0, 14) + '…' + s.slice(-10);
+}
 
 function TabPiramideCoorte({ retencaoFaixa, chFilter, meta, retFaixaLive }) {
   const [gran, setGran] = usePersistedState('rvops:pirGran', 'day');
@@ -5676,16 +5730,16 @@ function TabPiramideCoorte({ retencaoFaixa, chFilter, meta, retFaixaLive }) {
   // OFF (padrão): tudo entra, e o Total bate com a aba Multiplicadores e Retenção.
   // ON: safra que não fechou o horizonte sai da célula E do Total daquela coluna.
   const [soMaduras, setSoMaduras] = usePersistedState('rvops:pirSoMaduras', false);
+  // "Sem as 3 maiores campanhas" — cada janela perde as SUAS (ver o bloco de comentário do pirTopCamp_).
+  const [exTop3, setExTop3] = usePersistedState('rvops:pirExTop3', false);
   // TUDO que decide maturação nesta aba usa `diaOk` (último dia COMPLETO), nunca o dataMax cru.
   const dataMax = meta && meta.dataMaxDate;
   const diaOk = ultimoDiaFechado_(dataMax);
-  const rows = benchApostouRows_(retencaoFaixa || []);
+  const rowsFull = benchApostouRows_(retencaoFaixa || []);
   const selCh = chSelector_(chFilter);
   const selFx = (fx) => faixaSel.length === 0 || faixaSel.includes(fx);
   // Mesma chave de canal da Métricas do dia a dia — ver o comentário lá sobre `channels` × `canals`.
   const chKey = chList_(chFilter).join('|') + '#' + ((chFilter && chFilter.scope) || '');
-  const bins = React.useMemo(() => pirBins_(rows, selCh, selFx, gran),
-    [retencaoFaixa, chKey, JSON.stringify(faixaSel), gran]);
   // --- janela HOMÓLOGA (mesmo intervalo de dias, um mês atrás) — fetch próprio, igual ao das outras abas.
   // Falha silenciosa de propósito: sem ela a tabela inteira segue funcionando, só sem as bolinhas.
   const prevFrom = (meta && meta.from) ? pirMesAntes_(meta.from) : null;
@@ -5701,8 +5755,57 @@ function TabPiramideCoorte({ retencaoFaixa, chFilter, meta, retFaixaLive }) {
       .catch((e) => { if (vivo) setPrev({ rows: null, loading: false, error: String(e.message || e) }); });
     return () => { vivo = false; };
   }, [prevFrom, prevTo]);
-  const binsPrev = React.useMemo(() => pirBins_(benchApostouRows_(prev.rows || []), selCh, selFx, gran),
-    [prev.rows, chKey, JSON.stringify(faixaSel), gran]);
+  // --- SEM AS N MAIORES CAMPANHAS: precisa do payload quebrado por campanha (&byCampaign=1), e nas DUAS
+  // janelas. Opt-in — a quebra multiplica as linhas do payload e a esmagadora maioria das visitas não usa.
+  const curFrom = (meta && meta.from) || null;
+  const curTo   = (meta && meta.to)   || null;
+  const [campCur, setCampCur]   = React.useState({ rows: null, loading: false, error: null });
+  const [campPrev, setCampPrev] = React.useState({ rows: null, loading: false, error: null });
+  React.useEffect(() => {
+    if (!exTop3 || !ENDPOINT_URL || !curFrom || !curTo) return;
+    let vivo = true;
+    setCampCur((s) => ({ ...s, loading: true, error: null }));
+    fetch(`${ENDPOINT_URL}?${authParam_()}&from=${curFrom}&to=${curTo}&only=retfaixa&byCampaign=1`)
+      .then((r) => r.ok ? r.json() : Promise.reject(new Error('HTTP ' + r.status)))
+      .then((j) => { if (!vivo) return; if (j.error) throw new Error(j.error); setCampCur({ rows: j.retencaoFaixa || [], loading: false, error: null }); })
+      .catch((e) => { if (vivo) setCampCur({ rows: null, loading: false, error: String(e.message || e) }); });
+    return () => { vivo = false; };
+  }, [exTop3, curFrom, curTo]);
+  React.useEffect(() => {
+    if (!exTop3 || !ENDPOINT_URL || !prevFrom || !prevTo) return;
+    let vivo = true;
+    setCampPrev((s) => ({ ...s, loading: true, error: null }));
+    fetch(`${ENDPOINT_URL}?${authParam_()}&from=${prevFrom}&to=${prevTo}&only=retfaixa&byCampaign=1`)
+      .then((r) => r.ok ? r.json() : Promise.reject(new Error('HTTP ' + r.status)))
+      .then((j) => { if (!vivo) return; if (j.error) throw new Error(j.error); setCampPrev({ rows: j.retencaoFaixa || [], loading: false, error: null }); })
+      .catch((e) => { if (vivo) setCampPrev({ rows: null, loading: false, error: String(e.message || e) }); });
+    return () => { vivo = false; };
+  }, [exTop3, prevFrom, prevTo]);
+  const fxKey = JSON.stringify(faixaSel);
+  // Top N de CADA janela, no recorte da tela (canal+faixa) e na base do toggle.
+  const topCur = React.useMemo(() => pirTopCamp_(benchApostouRows_(campCur.rows || []), selCh, selFx, base, PIR_EX_N),
+    [campCur.rows, chKey, fxKey, base]);
+  const topPrev = React.useMemo(() => pirTopCamp_(benchApostouRows_(campPrev.rows || []), selCh, selFx, base, PIR_EX_N),
+    [campPrev.rows, chKey, fxKey, base]);
+  // ⚠️ O toggle só passa a valer QUANDO O DADO CHEGA. Enquanto carrega (ou se o fetch falhar) a tabela
+  // segue mostrando TODAS as campanhas — e diz isso na tela. Um "sem as 3 maiores" que na verdade está
+  // com as 3 é o tipo de erro que ninguém percebe olhando.
+  // ⚠️ `.length`: payload de campanha VAZIO não pode ligar o corte. `[]` é truthy, e sem esta guarda um
+  // retorno vazio esvaziaria a pirâmide inteira com cara de "não teve safra na janela".
+  const exOn = !!(exTop3 && campCur.rows && campCur.rows.length);
+  const rows = exOn ? pirSemTop_(benchApostouRows_(campCur.rows), topCur) : rowsFull;
+  const bins = React.useMemo(() => pirBins_(rows, selCh, selFx, gran),
+    [retencaoFaixa, chKey, fxKey, gran, exOn, campCur.rows, base]);
+  // ⚠️ SIMETRIA OBRIGATÓRIA na comparação com o mês anterior: se este mês perdeu o topo dele, o mês
+  // anterior TEM que perder o topo dele. Faltando o dado de campanha do mês anterior, a comparação
+  // simplesmente não acontece (bolinhas somem) — comparar "sem as 3 maiores" contra "com tudo" mediria
+  // a exclusão e chamaria de melhora, que é justamente a ilusão que este toggle existe pra desfazer.
+  const exPrevOn = !!(exOn && campPrev.rows && campPrev.rows.length);
+  const prevRows = exTop3
+    ? (exPrevOn ? pirSemTop_(benchApostouRows_(campPrev.rows), topPrev) : null)
+    : benchApostouRows_(prev.rows || []);
+  const binsPrev = React.useMemo(() => pirBins_(prevRows || [], selCh, selFx, gran),
+    [prev.rows, chKey, fxKey, gran, exTop3, exOn, campPrev.rows, base]);
   const homologo = pirHomologo_(binsPrev, gran);
   const temPrev = binsPrev.length > 0;
   // Base D0 → a coluna D0 seria 1,00x em toda linha (é a própria âncora). Sai da tela, como na aba
@@ -5713,7 +5816,10 @@ function TabPiramideCoorte({ retencaoFaixa, chFilter, meta, retFaixaLive }) {
   const mkJanela = String((meta && meta.from) || (bins[0] && bins[0].ini) || '').slice(0, 7) || null;
   // Pesos p/ a meta ponderada de multi-seleção: mix REALIZADO na janela, na base do toggle, respeitando
   // o filtro de faixa (mas não o de canal — o próprio pirBpMix_ só olha os canais selecionados).
-  const pesosMix = React.useMemo(() => pirPesos_(rows, selFx, base),
+  // ⚠️ Peso do mix COMPLETO (rowsFull), não das linhas que sobraram: "as metas não mudam" (Luis, 16/08).
+  // Ponderar pelo mix já sem as 3 maiores faria a régua andar junto com o número medido — alvo móvel, e
+  // aí "bateu a meta" deixaria de significar qualquer coisa entre um toggle e outro.
+  const pesosMix = React.useMemo(() => pirPesos_(rowsFull, selFx, base),
     [retencaoFaixa, JSON.stringify(faixaSel), base]);
   const bpScope = pirBpScope_(chFilter, base, mkJanela, pesosMix);
   // Meta CASCATEADA (canal que o estudo não calibrou) ou PONDERADA (seleção de vários canais) leva † na
@@ -5855,10 +5961,20 @@ function TabPiramideCoorte({ retencaoFaixa, chFilter, meta, retFaixaLive }) {
           <input type="checkbox" checked={!!soMaduras} onChange={(e) => setSoMaduras(e.target.checked)} />
           Só safras maduras <span style={{ opacity: .6 }}>(tira as imaturas do cálculo)</span>
         </label>
+        <label className="pir-tgl" style={{ marginLeft: '12px' }}
+               title={'Tira do CÁLCULO as ' + PIR_EX_N + ' maiores campanhas (utm_ftd_campaign) — as maiores em '
+                    + (base === 'ftd' ? 'FTD$' : 'depósito do D0') + ', dentro do recorte de canal/faixa que está na tela. '
+                    + 'Responde "o multiplicador melhorou por conta do jogo todo ou por causa de 3 campanhas?". '
+                    + '⚠️ O mês anterior perde as 3 MAIORES DELE, não estas — campanha grande de um mês pode nem existir no outro, '
+                    + 'e cortar só de um lado fabricaria a melhora. As METAS não mudam.'}>
+          <input type="checkbox" checked={!!exTop3} onChange={(e) => setExTop3(e.target.checked)} />
+          Sem as {PIR_EX_N} maiores campanhas <span style={{ opacity: .6 }}>(cada mês perde as suas)</span>
+        </label>
       </div>
       <div className="support">
         <div className="support-title">
           Safra por {gran === 'week' ? 'semana' : 'dia'} · {chLbl} · {faixaLbl} · mult {base === 'ftd' ? 'sobre FTD' : 'sobre D0'}
+          {exTop3 ? (exOn ? ' · SEM as ' + PIR_EX_N + ' maiores campanhas' : (campCur.error ? ' · ⚠ COM todas as campanhas (o corte falhou)' : ' · carregando campanhas…')) : ''}
           {diaOk ? ' · último dia FECHADO ' + fmtBR_(diaOk) + (dataMax ? ' (dado entra até ' + fmtBR_(dataMax) + ', mas esse dia ainda não fechou)' : '') : ''}
           {comMeta > 0 ? ' · bateu a meta em ' + bateu + ' de ' + comMeta + ' células fechadas com meta' : ''}
         </div>
@@ -5872,6 +5988,29 @@ function TabPiramideCoorte({ retencaoFaixa, chFilter, meta, retFaixaLive }) {
           <span><i className="pir-sw pir-sw-open" /> ainda não fechou</span>
           {prev.error && <span style={{ color: 'var(--negative)' }}>⚠ falhou buscar o mês anterior — sem bolinhas ({prev.error})</span>}
           {soMaduras && <span style={{ color: 'var(--accent-yellow)' }}>⚠ só safras maduras: as imaturas estão FORA do cálculo</span>}
+          {/* Quais campanhas saíram — NOMEADAS e nos DOIS meses. Sem isso o toggle vira uma caixinha que
+              muda todos os números sem dizer o que tirou, e ninguém consegue conferir se o corte fez sentido. */}
+          {exTop3 && exOn && (
+            <span style={{ color: 'var(--accent-yellow)' }}
+                  title={'Maiores em ' + (base === 'ftd' ? 'FTD$' : 'depósito do D0') + ' dentro do recorte da tela. '
+                       + 'A % é a fatia dessa base que saiu do cálculo (o denominador inclui quem não tem campanha).'}>
+              ✂ fora deste mês: {topCur.list.length ? topCur.list.map((c) => pirCampLbl_(c.campanha)).join(' · ') : '—'}
+              {topCur.share != null ? ' (' + fmtPct(topCur.share, 1) + ' do ' + (base === 'ftd' ? 'FTD$' : 'dep D0') + ')' : ''}
+              {exPrevOn ? ' | mês anterior: ' + (topPrev.list.length ? topPrev.list.map((c) => pirCampLbl_(c.campanha)).join(' · ') : '—')
+                             + (topPrev.share != null ? ' (' + fmtPct(topPrev.share, 1) + ')' : '') : ''}
+            </span>
+          )}
+          {exTop3 && exOn && !exPrevOn && (
+            <span style={{ color: 'var(--negative)' }}>
+              ⚠ sem o mês anterior por campanha{campPrev.error ? ' (' + campPrev.error + ')' : ' — carregando'}: as bolinhas somem de propósito.
+              Comparar “sem as {PIR_EX_N} maiores” contra “com tudo” mediria o corte, não a melhora.
+            </span>
+          )}
+          {exTop3 && !exOn && (
+            <span style={{ color: 'var(--negative)' }}>
+              ⚠ {campCur.error ? 'falhou buscar a quebra por campanha (' + campCur.error + ')' : 'carregando a quebra por campanha'} — os números abaixo ainda estão COM todas as campanhas.
+            </span>
+          )}
           {metaDeriv && !metaMix && (
             <span style={{ color: 'var(--accent-yellow)' }}
                   title="O estudo só calibrou Geral, Google e Meta. Para os demais a meta é cascateada: mesma regra do estudo (real + θ·(BP − real)), aplicada ao realizado de jun+jul/26 do próprio canal com o fator de esforço por horizonte medido em Google e Meta.">
@@ -6002,6 +6141,15 @@ function TabPiramideCoorte({ retencaoFaixa, chFilter, meta, retFaixaLive }) {
           As duas leituras aparecem sempre — a segunda linha do rodapé é a que o toggle não escolheu —, porque a
           diferença entre elas é <strong>maturação, não performance</strong>, e ela cresce com o horizonte
           (o D1 quase não sente; o D30 sente muito).
+          {' '}<strong>“Sem as {PIR_EX_N} maiores campanhas”</strong> responde se a melhora é do jogo todo ou de duas ou três
+          campanhas carregando o mês. Maior = maior na <strong>base do toggle</strong> ({base === 'ftd' ? 'FTD$' : 'depósito do D0'}),
+          dentro do recorte de canal/faixa que está na tela — sem filtro, são literalmente as maiores da casa.
+          {' '}⚠️ <strong>Cada mês perde as SUAS.</strong> O mês anterior não perde as campanhas nomeadas deste mês: perde as
+          3 maiores dele. Campanha grande de agosto pode não existir em julho, e cortar 30% de um lado contra 0% do outro
+          fabricaria exatamente a melhora que este toggle existe pra testar. Em troca, os dois lados podem excluir
+          conjuntos diferentes — o que se compara é <em>a casa sem o topo dela</em>, não “a casa sem estas 3 campanhas”.
+          {' '}FTD sem <code>utm_ftd_campaign</code> não disputa o topo (é um balde, não uma campanha), e
+          {' '}<strong>as metas não mudam</strong> — inclusive o peso da meta ponderada de multi-canal, que segue vindo do mix completo.
           {' '}<strong>Meta = régua de CALENDÁRIO</strong> (o compromisso do mês, <code>comp.canais</code> do estudo),
           nas duas bases — trocar entre <em>sobre FTD</em> e <em>sobre D0</em> muda o denominador e mais nada.
           ⚠️ Ela é mais baixa que a meta da aba <strong>Métricas do dia a dia</strong> na base sobre D0, que usa o
