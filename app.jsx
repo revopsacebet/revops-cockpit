@@ -4566,7 +4566,7 @@ function cfBpConservadorPnl_(ggrBp, investBp, proRataPct) {
 }
 
 // Tabela de métricas "normais" (valor positivo + flag lowerBetter) — usada no Sumário e na aba 1.
-function pptKpiTable_(slide, rows, y0) {
+function pptKpiTable_(slide, rows, y0, rowH) {
   const header = [
     { text: 'Métrica', options: { bold: true, color: PPT_C.text, fill: { color: PPT_C.surface } } },
     { text: 'Realizado', options: { bold: true, color: PPT_C.text, fill: { color: PPT_C.surface }, align: 'right' } },
@@ -4584,7 +4584,7 @@ function pptKpiTable_(slide, rows, y0) {
       { text: pct != null ? fmtPct(pct, 0) : '—', options: { color: pptAttainColor_(pct), bold: true, align: 'right' } },
     ];
   });
-  slide.addTable([header, ...body], { x: 0.5, y: y0, w: 12.3, colW: [5.3, 2.6, 2.6, 1.8], fontFace: PPT_SANS, fontSize: 12, border: { color: PPT_C.border, pt: 0.75 }, rowH: 0.4, valign: 'middle' });
+  slide.addTable([header, ...body], { x: 0.5, y: y0, w: 12.3, colW: [5.3, 2.6, 2.6, 1.8], fontFace: PPT_SANS, fontSize: 12, border: { color: PPT_C.border, pt: 0.75 }, rowH: rowH || 0.4, valign: 'middle' });
 }
 
 // Tabela de PnL — linhas SINALIZADAS (custo negativo). Cor vem do DELTA ALGÉBRICO (não da razão): numa
@@ -4632,6 +4632,15 @@ async function gerarPptFechamento_(ctx) {
   const kicker = (s, text) => s.addText(text.toUpperCase(), { x: 0.5, y: 0.32, w: 12.3, h: 0.3, fontFace: PPT_MONO, fontSize: 11, color: PPT_C.muted, charSpacing: 2 });
   const title = (s, text) => s.addText(text, { x: 0.5, y: 0.62, w: 12.3, h: 0.8, fontFace: PPT_SANS, fontSize: 24, bold: true, color: PPT_C.text });
   const footNote = (s, text) => s.addText(text, { x: 0.5, y: 6.95, w: 12.3, h: 0.4, fontFace: PPT_SANS, fontSize: 9, color: PPT_C.dim });
+  // Caixa de Comentários — mesma posição fixa em TODO slide (y 5.55→6.7, sempre acima do rodapé de
+  // fonte em 6.95). É onde a equipe escreve/edita direto no PowerPoint: 3 marcadores em branco, não
+  // parágrafo corrido, mesma convenção das caixas de Comentários dos outros decks (Receita & PnL etc.).
+  const COMMENTS_Y = 5.55, COMMENTS_H = 1.15;
+  const commentsBox = (s) => {
+    s.addShape('roundRect', { x: 0.5, y: COMMENTS_Y, w: 12.3, h: COMMENTS_H, rectRadius: 0.04, fill: { color: PPT_C.surface }, line: { color: PPT_C.border, width: 1 } });
+    s.addText('COMENTÁRIOS', { x: 0.75, y: COMMENTS_Y + 0.12, w: 11.8, h: 0.25, fontFace: PPT_MONO, fontSize: 10, color: PPT_C.muted, charSpacing: 1.5 });
+    s.addText('•  \n•  \n•  ', { x: 0.75, y: COMMENTS_Y + 0.4, w: 11.8, h: COMMENTS_H - 0.5, fontFace: PPT_SANS, fontSize: 12, color: PPT_C.text, lineSpacing: 20 });
+  };
 
   // ---------- SLIDE 1 — Sumário Executivo ----------
   const s1 = pptx.addSlide(); bgSlide(s1);
@@ -4663,6 +4672,7 @@ async function gerarPptFechamento_(ctx) {
     ], { x: x + 0.25, y: 3.75, w: cardW - 0.5, h: 0.35, fontFace: PPT_SANS });
     s1.addText(m.bp != null ? `BP Conservador: ${cfBRL(m.bp)}` : 'BP Conservador indisponível na janela', { x: x + 0.25, y: 4.25, w: cardW - 0.5, h: 0.5, fontFace: PPT_SANS, fontSize: 10, color: PPT_C.dim });
   });
+  commentsBox(s1);
   footNote(s1, `${stamp} Gerado direto do RevOps Cockpit (aba Daily Cashflow) — modelo base, revisar antes de enviar.`);
 
   // ---------- SLIDE 2 — Aba 1: Breakdown de Receita vs BP Conservador ----------
@@ -4690,7 +4700,8 @@ async function gerarPptFechamento_(ctx) {
     { label: 'GGR', m: MM.ggr },
     { label: 'ROAS GGR M0', m: f.roasGgrM0 },
   ];
-  pptKpiTable_(s2, rowsA1, 1.75);
+  pptKpiTable_(s2, rowsA1, 1.75, 0.3);
+  commentsBox(s2);
   footNote(s2, `BP Conservador de Investimento/ROAS FTD/CAC/Multiplicador/Dep M0 vem do plano de aquisição (DB Plan_Growth Mkt); GGR/Turnover/Rollover/Hold, do plano de receita (DB Plan_RevOps) — mesmo dado do Farol, re-anchorado no cenário Conservador. ROAS GGR M0 usa a meta fixa por escopo (não vem do plano). ${stamp}`);
 
   // ---------- SLIDE 3 — Aba 2: PnL vs BP Conservador ----------
@@ -4708,6 +4719,7 @@ async function gerarPptFechamento_(ctx) {
   ];
   const rowsA2 = PNL_ROWS.map(([k, label, pol]) => ({ label, pol, act: totPnl ? totPnl[k] : null, bp: bpPnl ? bpPnl[k] : null }));
   pptPnlTable_(s3, rowsA2, 1.75);
+  commentsBox(s3);
   footNote(s3, bpPnl
     ? `BP Conservador = premissas desta aba (Repasse ${fmtPct(CF_ASSUM.pctRepasse, 0)} · Impostos ${fmtPct(CF_ASSUM.pctImpostos, 1)} · Custo Variável ${fmtPct(CF_ASSUM.pctCustoVar, 1)}) aplicadas ao GGR do plano Conservador na janela; fixos (Custos Fixos/Despesas/Resultado Financeiro/Depreciação) pró-rata, iguais ao realizado; Investimento = plano Conservador de mídia. ${stamp}`
     : `BP Conservador indisponível: o plano Conservador não cobre GGR na janela ${janela}. ${stamp}`);
@@ -4747,6 +4759,7 @@ async function gerarPptFechamento_(ctx) {
   s4.addText(cfBRL(fcl), { x: 0.5, y: 3.85, w: 8, h: 0.6, fontFace: PPT_SANS, fontSize: 26, bold: true, color: (fcl != null && fcl < 0) ? PPT_C.neg : PPT_C.pos });
   s4.addText(fclProj != null ? `Estimado fechamento do mês: ${cfBRL(fclProj)}` : 'Estimado fechamento: só disponível p/ janela de mês inteiro a partir do dia 1', { x: 0.5, y: 4.55, w: 9, h: 0.35, fontFace: PPT_SANS, fontSize: 12, color: PPT_C.muted });
 
+  commentsBox(s4);
   footNote(s4, `Regime Caixa: a fatura de mídia (exceto Meta) do mês corrente é paga no mês seguinte; a Meta tem prazo maior e é paga 2 meses depois — ver "Premissas e método" da aba. ${stamp}`);
 
   await pptx.writeFile({ fileName: `Apostou - Fechamento Mensal - ${range.from}_${range.to}.pptx` });
