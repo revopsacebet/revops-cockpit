@@ -6459,7 +6459,9 @@ function TabPiramideCoorte({ retencaoFaixa, chFilter, meta, retFaixaLive }) {
             </tfoot>
           </table>
         </div>
-        <div className="ch-note">
+        <details className="ch-note">
+          <summary style={{ cursor: 'pointer', color: 'var(--text-muted)' }}>Como ler esta tabela</summary>
+          <div style={{ marginTop: 6 }}>
           <strong>Por que a tabela é uma escada.</strong> Uma célula só fecha quando <strong>safra + horizonte ≤ {diaOk ? fmtBR_(diaOk) : 'último dia fechado'}</strong>.
           {' '}⚠️ Esse corte é o último dia <strong>completo</strong>, não o último dia com dado: o dia mais recente da
           base é o de hoje, ainda carregando, então uma safra de ontem não tem D1 — a galera ainda está depositando.
@@ -6518,7 +6520,8 @@ function TabPiramideCoorte({ retencaoFaixa, chFilter, meta, retFaixaLive }) {
           que é o depósito do dia 1 em diante dividido pelo do D0 — quanto o dinheiro do primeiro dia trouxe
           depois dele. Elas <strong>não mudam com o toggle de base</strong> (a razão cancela o denominador),
           e ficam sem meta: só a de D1 teria par no estudo.
-        </div>
+          </div>
+        </details>
       </div>
     </React.Fragment>
   );
