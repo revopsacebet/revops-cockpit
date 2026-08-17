@@ -3167,9 +3167,28 @@ function buildFarolGroups_(MM, f, range, useYtd, sparkByKey) {
   const rolloverCard = MM.rollover ? { ...MM.rollover, bp: (MM.rollover.bp != null ? MM.rollover.bp : ROLLOVER_BP), trend: undefined, m1: useYtd ? null : MM.rollover.m1 } : null;
   // Hold % = House Edge (NGR/Turnover). BP do cenário (RevOps) se veio; senão FIXO 3,5%. Maior=melhor.
   const holdCard = MM.hold ? { ...MM.hold, label: 'Hold % (House Edge)', bp: (MM.hold.bp != null ? MM.hold.bp : 0.035) } : null;
-  // Turnover BP: do cenário (RevOps) se veio; senão Depósito Total BP × Rollover BP (turnover = rollover × depósito).
+  // Turnover BP: do cenário (RevOps) se veio; senão PREMISSA = rollover orçado × depósito orçado do escopo.
+  // ⚠️ Usa o `rolloverCard.bp` JÁ RESOLVIDO (cenário → fallback fixo), não a constante crua: assim os três
+  // cards vizinhos fecham entre si por construção — turnoverBP ÷ depBP == o rollover que está na tela.
+  // É o que faz a régua existir por canal (pedido do Luis, 16/08): a `DB Plan_RevOps` é house-level, então
+  // sem isto o card do canal comparava o realizado dele contra o orçado da CASA INTEIRA (Meta 11,8M vs
+  // 34,1M) e o farol acendia vermelho por recorte, não por performance.
   const depTotalBp = (MM.depTotal && MM.depTotal.bp != null) ? MM.depTotal.bp : null;
-  const turnoverCard = MM.turnover ? { ...MM.turnover, bp: (MM.turnover.bp != null ? MM.turnover.bp : (depTotalBp != null ? depTotalBp * ROLLOVER_BP : null)) } : null;
+  const rollBpEff = (rolloverCard && rolloverCard.bp != null) ? rolloverCard.bp : ROLLOVER_BP;
+  const turnBpPrem = (depTotalBp != null) ? depTotalBp * rollBpEff : null;
+  const turnoverCard = MM.turnover ? (MM.turnover.bp != null ? { ...MM.turnover } : { ...MM.turnover,
+    bp: turnBpPrem,
+    pctBp: (turnBpPrem && MM.turnover.act != null) ? MM.turnover.act / turnBpPrem : null,
+    // ⚠️ PREMISSA tem que se declarar. Sem esta nota o número fica visualmente idêntico a um orçado do
+    // plano — e o % dele não é comparável com o dos outros cards (ver a 2ª ressalva no texto).
+    bpTitle: turnBpPrem == null ? undefined
+      : ('PREMISSA, não número do plano — o plano não declara turnover por canal. Orçado = rollover orçado ('
+        + fmtMultiple(rollBpEff) + ') × orçado de depósito deste escopo (' + fmtBRL(depTotalBp) + '), a mesma base do card '
+        + 'Depósitos Totais ao lado, de modo que Depósito, Turnover e Rollover fecham entre si.'
+        + ' ⚠️ Leia o % com cuidado fora do Total da Casa: ali o orçado de depósito é da COORTE do mês (só quem entrou '
+        + 'agora) enquanto o realizado inclui o jogador veterano do canal — são populações diferentes, e o atingimento '
+        + 'sai inflado (medido em ago 1–15: Meta 167%, Google 246%, TikTok 28%). É a MESMA distorção que o card de '
+        + 'Depósitos Totais já tem neste escopo; o turnover só a herda multiplicada pelo rollover.') }) : null;
   // ROAS FTD e ROAS Dep M0 — posição do M-1 = razão dos M-1 dos componentes (FTD Amount÷Invest, DEP M0÷Invest),
   // já que ambos os componentes trazem M-1. Fallback pro m1 do próprio card se algum componente não tiver M-1.
   const div_ = (a, b) => (a != null && b) ? a / b : null;
@@ -3443,8 +3462,15 @@ function applyScenarioBp_(M, farol, scenData, chFilter) {
 // Turnover/Rollover/Hold/FreeSpins-Dep/Bonif-Dep. SÓ no cenário Forecast: Orçado e Conservador continuam nas
 // constantes fixas (decisão do Luis 2026-08-05). Existe porque a DB Plan_RevOps discorda da Projection_Revenue
 // no Turnover (ago/26: 70,49M vs 69,11M — a RevOps ainda multiplica por rollover 5,10 em vez de 5,00).
-function applyFcRatios_(M, farol, fc) {
+function applyFcRatios_(M, farol, fc, chFilter) {
   if (!fc) return { M: M, farol: farol };
+  // ⚠️ 2026-08-16 — ESTE BLOCO IGNORAVA O FILTRO DE CANAL, e era por aqui que o Orçado do TURNOVER não
+  // mexia ao trocar de canal (sintoma que o Luis pegou na tela, no cenário Forecast). O `applyScenarioBp_`
+  // já protegia o bloco de volume com `isTotal`; aqui não havia guarda nenhuma, então o turnover da CASA
+  // sentava no card mesmo com um canal selecionado — realizado do canal contra orçado da casa inteira.
+  // A distinção que vale: TURNOVER é VOLUME (não transfere pro canal); rollover, hold, freespins/dep e
+  // bonificação/dep são TAXAS — metas de mesa, que transferem pro canal e por isso seguem aplicadas.
+  const isTotal = !(chList_(chFilter) || []).length && !(chFilter && chFilter.scope === 'growth');
   // v > 0 de propósito: a partir de set/26 a linha FreeSpins/Dep está VAZIA na planilha e chega como 0.
   // Meta 0% deixaria o card vermelho por artefato — nesse caso mantém a constante em vez de mentir.
   // fcBp marca que a meta veio do Forecast — o rótulo do card segue isso (senão diria "Orçado" com número do FC).
@@ -3456,7 +3482,7 @@ function applyFcRatios_(M, farol, fc) {
   // card compara MTD com MTD. `turnoverMes` é o mês cheio da planilha e vive só no tooltip — antes ele era
   // a meta e o card marcava 34% em pleno dia 11. Sem prorrateio (backend antigo) `turnoverFrac` vem
   // undefined e o texto não promete uma fatia que não existe.
-  MM = set(MM, 'turnover', fc.turnover, fc.turnoverMes > 0
+  if (isTotal) MM = set(MM, 'turnover', fc.turnover, fc.turnoverMes > 0
     ? ('Orçado do mês inteiro: ' + fmtBRL(fc.turnoverMes) + (fc.turnoverFrac > 0
         ? ' · prorrateado para ' + fmtPct(fc.turnoverFrac, 0) + ' do mês (a janela desta tela)'
         : '') + '. Fonte: aba Projection_Revenue.')
@@ -3508,7 +3534,7 @@ function TabFarol({ M, farol, range, ytd, ftdByRegister, chFilter, planScenarios
   const scenOn = hasScen && !!(planScenarios && planScenarios[activeScen]);
   const ov0 = scenOn ? applyScenarioBp_(src.MM, src.f, planScenarios[activeScen], chFilter) : { M: src.MM, farol: src.f };
   // Forecast: as metas de razão vêm da Projection_Revenue, não da DB Plan_RevOps (as duas divergem no Turnover).
-  const ov = (activeScen === 'rolling') ? applyFcRatios_(ov0.M, ov0.farol, planFcRatios) : ov0;
+  const ov = (activeScen === 'rolling') ? applyFcRatios_(ov0.M, ov0.farol, planFcRatios, chFilter) : ov0;
   // Série das 4 semanas fechadas por KPI (ACT — independe de cenário/BP), reescopada no chFilter. Nulls onde não há dado.
   const sparkByKey = React.useMemo(() => buildFarolSpark_(farolSpark, chFilter), [farolSpark, chFilter]);
   const scenMeta = CENARIOS.find(c => c.id === activeScen) || CENARIOS[0];
@@ -6584,6 +6610,34 @@ function applyBpLive_(out, filter, bp) {
   out.depM0Growth = setM(out.depM0Growth, sel.depM0);
   out.depM0Total  = setM(out.depM0Total, sel.depM0);
   out.depTotal    = setM(out.depTotal, sel.depM0);   // Depósitos Totais = M0 também no escopo canal/growth (mês 1)
+  // ============================================================
+  // TURNOVER POR CANAL — PREMISSA (pedido do Luis, 16/08: "considera o rollover orçado × depósito de cada canal")
+  // ============================================================
+  // O plano não tem turnover por canal (a `DB Plan_RevOps` é house-level), então até aqui o card ficava
+  // com o Orçado da CASA enquanto o realizado já vinha do canal — Meta mostrava 11,8M contra 34,1M e o
+  // farol acendia vermelho por recorte, não por performance. O realizado sempre esteve certo; o que não
+  // mexia era a régua.
+  //   turnover_BP(canal) = rollover_BP × depósito_BP(canal)
+  // ⚠️ O depósito usado é o MESMO que está no card ao lado (`out.depTotal.bp`, que neste escopo é o Dep M0
+  // do plano). Isso é de propósito: os três cards — Depósito, Turnover e Rollover — passam a fechar entre
+  // si por construção (turnoverBP ÷ depBP == rolloverBP exatamente). Usar outra base de depósito faria o
+  // Rollover da tela discordar da divisão dos dois cards vizinhos.
+  // ⚠️⚠️ E É PREMISSA, NÃO PLANO — duas coisas que o número herda e que estão no tooltip:
+  //   (1) o rollover é o da CASA aplicado a todo canal (o plano não diferencia);
+  //   (2) o Orçado de depósito neste escopo é da COORTE M0 (só quem entrou no mês), enquanto o realizado
+  //       é de TODO jogador atribuído ao canal, veterano incluído. Medido em ago 1–15: Meta 167%, Google
+  //       246%, TikTok 28%. O % alto NÃO é o canal batendo meta, é população diferente nos dois lados —
+  //       e é exatamente a mesma distorção que o card de Depósitos Totais já tem neste escopo (o turnover
+  //       só a herda multiplicada pelo rollover).
+  // ⚠️ Aqui o BP só é ZERADO. A premissa em si é montada no `buildFarolGroups_`, e não por preciosismo:
+  // este ponto roda ANTES do `applyScenarioBp_`/`applyFcRatios_`, então o `rollover.bp` que existe agora
+  // pode não ser o que vai pra tela quando o cenário re-ancorar. Calculando lá, o turnover usa o MESMO
+  // rollover que o card ao lado exibe, e a identidade turnoverBP ÷ depBP == rolloverBP vale sempre.
+  out.turnover = { ...out.turnover, bp: null, pctBp: null };
+  // Hold % = GGR ÷ Turnover. O GGR não tem orçado por canal (zerado logo abaixo) e o turnover agora é
+  // premissa; derivar meta de hold daí seria premissa sobre premissa. Fica com a meta FIXA de house edge
+  // que o card já resolve sozinho (3,5%) — é uma meta de mesa, não de mix, então ela transfere pro canal.
+  // Rollover idem: a meta segue a da casa, e é justamente a premissa que o Luis pediu.
   // Sem BP per-canal: zera o farol pra não mostrar BP de Total da Casa no escopo errado.
   out.ggr       = { ...out.ggr, bp: null, pctBp: null };
   out.ggrPerDep = { ...out.ggrPerDep, bp: null, pctBp: null };
