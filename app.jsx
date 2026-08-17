@@ -6338,6 +6338,15 @@ function deriveLiveM_(M, filter, comp, retCh, depCh, bp, ggrRetCh, turnRetCh) {
     sel.forEach(ch => { const c = comp[ch] && comp[ch][bk]; if (c && c[key] != null) { s += c[key]; any = true; } });
     return any ? s : undefined; };
   const regAct = optSum('mtd', 'reg'), regM1 = optSum('lm', 'reg');
+  // ⚠️ `undefined` do optSum tem DUAS causas e elas exigem tratamentos opostos:
+  //   (a) backend antigo, sem a coluna `reg` em canal nenhum → degradar, preservando o card da casa;
+  //   (b) o backend TEM a coluna, mas o canal filtrado não tem linha nela → o card TEM que ficar vazio.
+  // Sem separar as duas, (b) caía no degrade e o Farol mostrava o REGISTRO DA CASA INTEIRA com um canal
+  // selecionado — 35.944 no Orgânico, que é o total de todas as plataformas. Silencioso e crível, o pior
+  // tipo de número errado. Esta sonda olha o payload inteiro: se ALGUM canal traz `reg`, a coluna existe.
+  const temRegNoPayload = Object.keys(comp).some((ch) => {
+    const c = comp[ch]; return !!(c && ((c.mtd && c.mtd.reg != null) || (c.lm && c.lm.reg != null)));
+  });
   const mk = (m, act, m1) => ({ ...m, act: (act == null ? null : act), m1: (m1 === undefined ? null : m1) });
   // idem, mas degrada: sem o card no payload OU sem a base por canal (undefined), devolve o que veio.
   const gmk = (m, act) => (!m || act === undefined) ? m : mk(m, act, null);
@@ -6349,9 +6358,10 @@ function deriveLiveM_(M, filter, comp, retCh, depCh, bp, ggrRetCh, turnRetCh) {
     ftdQty:      mk(M.ftdQty, sum('mtd','ftdQty') || null, sum('lm','ftdQty') || null),
     roasFtd:     mk(M.roasFtd, div(ftdAmt, spend), div(lFtdAmt, lSpend)),
     invest:      mk(M.invest, spend || null, lSpend || null),
-    // Registros: backend antigo (sem `reg` por canal) → preserva o card como veio, igual retGgr*/retTurn*.
-    registros:   (!M.registros || regAct === undefined) ? M.registros
-                 : mk(M.registros, regAct || null, regM1 || null),
+    // Registros: só preserva o card da casa quando o payload INTEIRO não tem `reg` (backend antigo).
+    // Com a coluna presente, canal sem linha vira "—", não o número da casa.
+    registros:   (!M.registros || (regAct === undefined && !temRegNoPayload)) ? M.registros
+                 : mk(M.registros, regAct == null ? null : (regAct || null), regM1 || null),
     ggr:         mk(M.ggr, ngr || null, lNgr || null),
     ggrPerDep:   mk(M.ggrPerDep, div(ngr, dep), div(lNgr, lDep)),
     depTotal:    mk(M.depTotal, dep || null, lDep || null),
