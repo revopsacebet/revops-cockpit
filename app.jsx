@@ -4493,7 +4493,267 @@ function cfCalcDay_(r, investPrev, regime, ggrPrev) {
   return o;
 }
 
-function TabDailyCashflow({ range, meta }) {
+// ============================================================
+// PPT DE FECHAMENTO MENSAL — toggle desta aba. Gera um .pptx BASE (modelo) 100% client-side a partir
+// do que JÁ está carregado na tela: M/farol (re-anchorados no cenário Conservador via applyScenarioBp_,
+// a mesma função que o Farol usa) + as linhas de PnL desta aba (regime PnL p/ bater com o Farol e
+// regime Caixa p/ os riscos do mês seguinte, independente de qual toggle o usuário está olhando no
+// momento — o modelo do PPT é sempre o mesmo). SEM fetch novo: é o mesmo dado, só outro formato.
+// 4 slides: Sumário Executivo · Breakdown de Receita vs Conservador · PnL vs Conservador · Cashflow/riscos.
+// pptxgenjs (browser bundle) carregado SOB DEMANDA, mesmo padrão do ensureXLSX_ acima.
+// ============================================================
+let _pptxPromise = null;
+function ensurePPTX_() {
+  if (typeof PptxGenJS !== 'undefined') return Promise.resolve();
+  if (_pptxPromise) return _pptxPromise;
+  _pptxPromise = new Promise((resolve, reject) => {
+    const s = document.createElement('script');
+    s.src = 'https://unpkg.com/pptxgenjs@4.0.1/dist/pptxgen.bundle.js';
+    s.onload = () => resolve();
+    s.onerror = () => { _pptxPromise = null; reject(new Error('Falha ao carregar a biblioteca de PowerPoint (pptxgenjs).')); };
+    document.head.appendChild(s);
+  });
+  return _pptxPromise;
+}
+
+const PPT_C = { bg: '0B0B0B', surface: '141414', border: '2A2A2A', text: 'F5F5F5', muted: '8B949E', dim: '6B7280', pos: '4ADE80', warn: 'FBBF24', neg: 'F87171' };
+const PPT_SANS = 'Segoe UI', PPT_MONO = 'Consolas';
+
+// Atingimento NORMALIZADO: sempre devolve a razão na direção "≥1 = bom", mesmo em métrica lowerBetter
+// (CAC, Investimento) — assim a cor/leitura é uniforme em toda a tabela, sem inverter regra por linha.
+function pptAttain_(act, bp, lowerBetter) {
+  if (act == null || bp == null || bp === 0) return null;
+  return lowerBetter ? bp / act : act / bp;
+}
+// Mesmo corte do farol de atingimento usado no resto do produto (Farol/decks): ≥95% verde, ≥85% amarelo, abaixo vermelho.
+function pptAttainColor_(pct) {
+  if (pct == null) return PPT_C.muted;
+  if (pct >= 0.95) return PPT_C.pos;
+  if (pct >= 0.85) return PPT_C.warn;
+  return PPT_C.neg;
+}
+function pptMoMColor_(pctChange, lowerBetter) {
+  if (pctChange == null) return PPT_C.muted;
+  const good = lowerBetter ? pctChange <= 0 : pctChange >= 0;
+  return good ? PPT_C.pos : PPT_C.neg;
+}
+function pptFmt_(v, fmt) {
+  if (fmt === 'pct') return fmtPct(v, 1);
+  if (fmt === 'multiple') return fmtMultiple(v);
+  return cfBRL(v);
+}
+
+// Linha do PnL "BP Conservador", montada com a MESMA metodologia da coluna "Estimado Fechamento" desta
+// aba: premissa × GGR do plano (em vez do GGR realizado), fixos pró-rata iguais ao modelo realizado.
+// `investBp` = Investimento Total do plano Conservador na janela (mesmo número do card do Farol/aba1).
+function cfBpConservadorPnl_(ggrBp, investBp, proRataPct) {
+  if (ggrBp == null) return null;
+  const A = CF_ASSUM;
+  const frac = proRataPct == null ? 1 : proRataPct;
+  const px = (v) => -(v * frac);
+  const o = {
+    ggrBruto: 0, freespin: 0, ggr: ggrBp, bonif: 0,
+    repasse: -ggrBp * A.pctRepasse, imposto: -ggrBp * A.pctImpostos, credito: 0,
+    custoVar: -ggrBp * A.pctCustoVar,
+    custosFixos: px(A.mensal.custosFixos),
+    trafego: investBp != null ? -investBp : 0, metaPago: 0,
+    influencer: px(A.mensal.influencer), creator: px(A.mensal.creator),
+    despesas: px(A.mensal.despesas), resFin: px(A.mensal.resultadoFin),
+    depre: px(A.mensal.depreciacao), irpj: 0,
+  };
+  cfRollup_(o);
+  return o;
+}
+
+// Tabela de métricas "normais" (valor positivo + flag lowerBetter) — usada no Sumário e na aba 1.
+function pptKpiTable_(slide, rows, y0) {
+  const header = [
+    { text: 'Métrica', options: { bold: true, color: PPT_C.text, fill: { color: PPT_C.surface } } },
+    { text: 'Realizado', options: { bold: true, color: PPT_C.text, fill: { color: PPT_C.surface }, align: 'right' } },
+    { text: 'BP Conservador', options: { bold: true, color: PPT_C.text, fill: { color: PPT_C.surface }, align: 'right' } },
+    { text: 'Atingimento', options: { bold: true, color: PPT_C.text, fill: { color: PPT_C.surface }, align: 'right' } },
+  ];
+  const body = rows.map(r => {
+    const m = r.m || {};
+    const fmt = m.fmt || r.fmt || 'brl';
+    const pct = pptAttain_(m.act, m.bp, r.lowerBetter);
+    return [
+      { text: r.label, options: { color: PPT_C.text } },
+      { text: pptFmt_(m.act, fmt), options: { color: PPT_C.text, align: 'right' } },
+      { text: m.bp != null ? pptFmt_(m.bp, fmt) : '—', options: { color: PPT_C.muted, align: 'right' } },
+      { text: pct != null ? fmtPct(pct, 0) : '—', options: { color: pptAttainColor_(pct), bold: true, align: 'right' } },
+    ];
+  });
+  slide.addTable([header, ...body], { x: 0.5, y: y0, w: 12.3, colW: [5.3, 2.6, 2.6, 1.8], fontFace: PPT_SANS, fontSize: 12, border: { color: PPT_C.border, pt: 0.75 }, rowH: 0.4, valign: 'middle' });
+}
+
+// Tabela de PnL — linhas SINALIZADAS (custo negativo). Cor vem do DELTA ALGÉBRICO (não da razão): numa
+// linha de custo, "realizado mais negativo que o BP" é sempre pior, mesmo a razão act/bp dando >1. Linha
+// de Investimento fica em CINZA (sem polaridade boa/ruim) — mesma convenção do deck Receita & PnL.
+function pptPnlTable_(slide, rows, y0) {
+  const header = [
+    { text: 'Linha', options: { bold: true, color: PPT_C.text, fill: { color: PPT_C.surface } } },
+    { text: 'Realizado', options: { bold: true, color: PPT_C.text, fill: { color: PPT_C.surface }, align: 'right' } },
+    { text: 'BP Conservador', options: { bold: true, color: PPT_C.text, fill: { color: PPT_C.surface }, align: 'right' } },
+    { text: 'Δ', options: { bold: true, color: PPT_C.text, fill: { color: PPT_C.surface }, align: 'right' } },
+    { text: 'Δ %', options: { bold: true, color: PPT_C.text, fill: { color: PPT_C.surface }, align: 'right' } },
+  ];
+  const body = rows.map(r => {
+    const delta = (r.act != null && r.bp != null) ? r.act - r.bp : null;
+    const deltaPct = (delta != null && r.bp) ? delta / Math.abs(r.bp) : null;
+    const color = r.pol === 'inv' ? PPT_C.muted : (delta == null ? PPT_C.muted : (delta >= 0 ? PPT_C.pos : PPT_C.neg));
+    return [
+      { text: r.label, options: { color: PPT_C.text } },
+      { text: cfBRL(r.act), options: { color: PPT_C.text, align: 'right' } },
+      { text: r.bp != null ? cfBRL(r.bp) : '—', options: { color: PPT_C.muted, align: 'right' } },
+      { text: delta != null ? cfBRL(delta) : '—', options: { color, bold: true, align: 'right' } },
+      { text: deltaPct != null ? fmtPct(deltaPct, 0) : '—', options: { color, bold: true, align: 'right' } },
+    ];
+  });
+  slide.addTable([header, ...body], { x: 0.5, y: y0, w: 12.3, colW: [4.7, 2.5, 2.5, 1.6, 1.0], fontFace: PPT_SANS, fontSize: 12, border: { color: PPT_C.border, pt: 0.75 }, rowH: 0.4, valign: 'middle' });
+}
+
+async function gerarPptFechamento_(ctx) {
+  await ensurePPTX_();
+  const { range, meta, M, farol, planScenarios, chFilter, totPnl, totCaixa, projCaixa, monthsTouched, proRataPct } = ctx;
+  const scenData = planScenarios && planScenarios.conserv;
+  const ov = scenData ? applyScenarioBp_(M || {}, farol || {}, scenData, chFilter) : { M: M || {}, farol: farol || {} };
+  const MM = ov.M, f = ov.farol;
+  const scenHouse = scenData && scenData.house;
+  const escopo = chLabel_(chFilter, 'Total Casa');
+  const janela = `${fmtBR_(range.from)} → ${fmtBR_(range.to)}`;
+  const stamp = meta && meta.dataMaxDate ? `Dado carregado no BQ até ${fmtBR_(meta.dataMaxDate)}.` : '';
+
+  const pptx = new PptxGenJS();
+  pptx.defineLayout({ name: 'CF16x9', width: 13.33, height: 7.5 });
+  pptx.layout = 'CF16x9';
+
+  const bgSlide = (s) => { s.background = { color: PPT_C.bg }; };
+  const kicker = (s, text) => s.addText(text.toUpperCase(), { x: 0.5, y: 0.32, w: 12.3, h: 0.3, fontFace: PPT_MONO, fontSize: 11, color: PPT_C.muted, charSpacing: 2 });
+  const title = (s, text) => s.addText(text, { x: 0.5, y: 0.62, w: 12.3, h: 0.8, fontFace: PPT_SANS, fontSize: 24, bold: true, color: PPT_C.text });
+  const footNote = (s, text) => s.addText(text, { x: 0.5, y: 6.95, w: 12.3, h: 0.4, fontFace: PPT_SANS, fontSize: 9, color: PPT_C.dim });
+
+  // ---------- SLIDE 1 — Sumário Executivo ----------
+  const s1 = pptx.addSlide(); bgSlide(s1);
+  kicker(s1, 'Apostou · Fechamento Mensal');
+  title(s1, `Sumário Executivo — ${janela}`);
+  s1.addText(`Escopo: ${escopo} · comparação vs BP Conservador e vs mês anterior`, { x: 0.5, y: 1.25, w: 12.3, h: 0.35, fontFace: PPT_SANS, fontSize: 13, color: PPT_C.muted });
+
+  const kpis = [
+    { label: 'GGR', m: MM.ggr },
+    { label: 'Investimento', m: MM.invest, lowerBetter: true },
+    { label: 'Depósito Total', m: MM.depTotal },
+  ];
+  const cardW = 3.9, gap = 0.25, startX = 0.5;
+  kpis.forEach((k, i) => {
+    const x = startX + i * (cardW + gap);
+    const m = k.m || {};
+    const pctBp = pptAttain_(m.act, m.bp, k.lowerBetter);
+    const pctM1 = (m.act != null && m.m1) ? (m.act / m.m1 - 1) : null;
+    s1.addShape('roundRect', { x, y: 1.9, w: cardW, h: 2.9, rectRadius: 0.08, fill: { color: PPT_C.surface }, line: { color: PPT_C.border, width: 1 } });
+    s1.addText(k.label.toUpperCase(), { x: x + 0.25, y: 2.1, w: cardW - 0.5, h: 0.3, fontFace: PPT_MONO, fontSize: 11, color: PPT_C.muted, charSpacing: 1.5 });
+    s1.addText(cfBRL(m.act), { x: x + 0.25, y: 2.45, w: cardW - 0.5, h: 0.7, fontFace: PPT_SANS, fontSize: 30, bold: true, color: PPT_C.text });
+    s1.addText([
+      { text: 'vs BP Conservador   ', options: { color: PPT_C.muted, fontSize: 12 } },
+      { text: pctBp != null ? fmtPct(pctBp, 0) : '—', options: { color: pptAttainColor_(pctBp), fontSize: 12, bold: true } },
+    ], { x: x + 0.25, y: 3.35, w: cardW - 0.5, h: 0.35, fontFace: PPT_SANS });
+    s1.addText([
+      { text: 'vs mês anterior   ', options: { color: PPT_C.muted, fontSize: 12 } },
+      { text: pctM1 != null ? fmtPct(pctM1, 0) : '—', options: { color: pptMoMColor_(pctM1, k.lowerBetter), fontSize: 12, bold: true } },
+    ], { x: x + 0.25, y: 3.75, w: cardW - 0.5, h: 0.35, fontFace: PPT_SANS });
+    s1.addText(m.bp != null ? `BP Conservador: ${cfBRL(m.bp)}` : 'BP Conservador indisponível na janela', { x: x + 0.25, y: 4.25, w: cardW - 0.5, h: 0.5, fontFace: PPT_SANS, fontSize: 10, color: PPT_C.dim });
+  });
+  footNote(s1, `${stamp} Gerado direto do RevOps Cockpit (aba Daily Cashflow) — modelo base, revisar antes de enviar.`);
+
+  // ---------- SLIDE 2 — Aba 1: Breakdown de Receita vs BP Conservador ----------
+  const s2 = pptx.addSlide(); bgSlide(s2);
+  kicker(s2, 'Aba 1 · Breakdown de Receita');
+  title(s2, 'Aquisição, Depósito e GGR vs BP Conservador');
+  s2.addText(`Escopo: ${escopo} · ${janela}`, { x: 0.5, y: 1.25, w: 12.3, h: 0.3, fontFace: PPT_SANS, fontSize: 12, color: PPT_C.muted });
+
+  const depTotal = MM.depTotal || {}, depM0 = MM.depM0Total || {};
+  const recorrentes = {
+    act: (depTotal.act != null && depM0.act != null) ? depTotal.act - depM0.act : null,
+    bp: (depTotal.bp != null && depM0.bp != null) ? depTotal.bp - depM0.bp : null,
+    fmt: 'brl',
+  };
+  const rowsA1 = [
+    { label: 'Investimento', m: MM.invest, lowerBetter: true },
+    { label: 'ROAS FTD', m: MM.roasFtd },
+    { label: 'CAC', m: f.cac, lowerBetter: true },
+    { label: 'Multiplicador Dep M0/FTD', m: f.multM0 },
+    { label: 'Dep M0', m: MM.depM0Total },
+    { label: 'Depósitos de Recorrentes', m: recorrentes },
+    { label: 'Turnover', m: MM.turnover },
+    { label: 'Rollover', m: MM.rollover },
+    { label: 'Hold %', m: MM.hold },
+    { label: 'GGR', m: MM.ggr },
+    { label: 'ROAS GGR M0', m: f.roasGgrM0 },
+  ];
+  pptKpiTable_(s2, rowsA1, 1.75);
+  footNote(s2, `BP Conservador de Investimento/ROAS FTD/CAC/Multiplicador/Dep M0 vem do plano de aquisição (DB Plan_Growth Mkt); GGR/Turnover/Rollover/Hold, do plano de receita (DB Plan_RevOps) — mesmo dado do Farol, re-anchorado no cenário Conservador. ROAS GGR M0 usa a meta fixa por escopo (não vem do plano). ${stamp}`);
+
+  // ---------- SLIDE 3 — Aba 2: PnL vs BP Conservador ----------
+  const s3 = pptx.addSlide(); bgSlide(s3);
+  kicker(s3, 'Aba 2 · PnL');
+  title(s3, 'PnL (competência) vs BP Conservador');
+  s3.addText(`Escopo: casa inteira · ${janela}`, { x: 0.5, y: 1.25, w: 12.3, h: 0.3, fontFace: PPT_SANS, fontSize: 12, color: PPT_C.muted });
+
+  const ggrBp = scenHouse ? scenHouse.ggr : null;
+  const bpPnl = cfBpConservadorPnl_(ggrBp, MM.invest && MM.invest.bp, proRataPct);
+  const PNL_ROWS = [
+    ['ggr', 'GGR Líquido', 'rev'], ['ngr', 'NGR', 'rev'], ['mc', 'Margem de Contribuição', 'rev'],
+    ['lbSemMkt', 'Lucro Bruto s/ Marketing', 'rev'], ['investTotal', 'Investimento Total', 'inv'],
+    ['lbComMkt', 'Lucro Bruto c/ Marketing', 'rev'], ['ebitda', 'EBITDA', 'rev'], ['resLiq', 'Resultado Líquido', 'rev'],
+  ];
+  const rowsA2 = PNL_ROWS.map(([k, label, pol]) => ({ label, pol, act: totPnl ? totPnl[k] : null, bp: bpPnl ? bpPnl[k] : null }));
+  pptPnlTable_(s3, rowsA2, 1.75);
+  footNote(s3, bpPnl
+    ? `BP Conservador = premissas desta aba (Repasse ${fmtPct(CF_ASSUM.pctRepasse, 0)} · Impostos ${fmtPct(CF_ASSUM.pctImpostos, 1)} · Custo Variável ${fmtPct(CF_ASSUM.pctCustoVar, 1)}) aplicadas ao GGR do plano Conservador na janela; fixos (Custos Fixos/Despesas/Resultado Financeiro/Depreciação) pró-rata, iguais ao realizado; Investimento = plano Conservador de mídia. ${stamp}`
+    : `BP Conservador indisponível: o plano Conservador não cobre GGR na janela ${janela}. ${stamp}`);
+
+  // ---------- SLIDE 4 — Aba 3: Cashflow e riscos de caixa pro próximo mês ----------
+  const s4 = pptx.addSlide(); bgSlide(s4);
+  kicker(s4, 'Aba 3 · Cashflow');
+  title(s4, 'Cashflow e riscos de caixa para o próximo mês');
+  s4.addText(`Regime Caixa · ${janela}`, { x: 0.5, y: 1.25, w: 12.3, h: 0.3, fontFace: PPT_SANS, fontSize: 12, color: PPT_C.muted });
+
+  const mesAtual = monthsTouched && monthsTouched.length ? monthsTouched[monthsTouched.length - 1] : null;
+  const MES_ABR = ['jan', 'fev', 'mar', 'abr', 'mai', 'jun', 'jul', 'ago', 'set', 'out', 'nov', 'dez'];
+  const shiftLbl = (ym, delta) => {
+    if (!ym) return '—';
+    let [y, m] = ym.split('-').map(Number); m += delta;
+    while (m > 12) { m -= 12; y++; } while (m < 1) { m += 12; y--; }
+    return MES_ABR[m - 1] + '/' + String(y).slice(2);
+  };
+  const riskRows = [
+    { label: 'Fatura de Tráfego (não-Meta) gasta este mês', valor: (totCaixa && totCaixa.trafegoDefer) || 0, quando: `paga em ${shiftLbl(mesAtual, 1)}` },
+    { label: 'Fatura da Meta gasta este mês', valor: (totCaixa && totCaixa.metaDefer) || 0, quando: `paga em ${shiftLbl(mesAtual, 2)}` },
+  ];
+  s4.addTable([
+    [{ text: 'Risco de caixa (compromissos já assumidos)', options: { bold: true, color: PPT_C.text, fill: { color: PPT_C.surface } } },
+     { text: 'Valor', options: { bold: true, color: PPT_C.text, fill: { color: PPT_C.surface }, align: 'right' } },
+     { text: 'Quando vence', options: { bold: true, color: PPT_C.text, fill: { color: PPT_C.surface } } }],
+    ...riskRows.map(r => ([
+      { text: r.label, options: { color: PPT_C.text } },
+      { text: cfBRL(-Math.abs(r.valor)), options: { color: PPT_C.neg, align: 'right' } },
+      { text: r.quando, options: { color: PPT_C.muted } },
+    ])),
+  ], { x: 0.5, y: 1.75, w: 12.3, colW: [6.5, 3.0, 2.8], fontFace: PPT_SANS, fontSize: 12, border: { color: PPT_C.border, pt: 0.75 }, rowH: 0.45, valign: 'middle' });
+
+  const fcl = totCaixa ? totCaixa.resLiq : null;
+  const fclProj = projCaixa ? projCaixa.v.resLiq : null;
+  s4.addText('FLUXO DE CAIXA LIVRE (MTD, REGIME CAIXA)', { x: 0.5, y: 3.5, w: 8, h: 0.3, fontFace: PPT_MONO, fontSize: 11, color: PPT_C.muted, charSpacing: 1.5 });
+  s4.addText(cfBRL(fcl), { x: 0.5, y: 3.85, w: 8, h: 0.6, fontFace: PPT_SANS, fontSize: 26, bold: true, color: (fcl != null && fcl < 0) ? PPT_C.neg : PPT_C.pos });
+  s4.addText(fclProj != null ? `Estimado fechamento do mês: ${cfBRL(fclProj)}` : 'Estimado fechamento: só disponível p/ janela de mês inteiro a partir do dia 1', { x: 0.5, y: 4.55, w: 9, h: 0.35, fontFace: PPT_SANS, fontSize: 12, color: PPT_C.muted });
+
+  footNote(s4, `Regime Caixa: a fatura de mídia (exceto Meta) do mês corrente é paga no mês seguinte; a Meta tem prazo maior e é paga 2 meses depois — ver "Premissas e método" da aba. ${stamp}`);
+
+  await pptx.writeFile({ fileName: `Apostou - Fechamento Mensal - ${range.from}_${range.to}.pptx` });
+}
+
+function TabDailyCashflow({ range, meta, M, farol, planScenarios, chFilter }) {
+  const [pptBusy, setPptBusy] = React.useState(false);
   const [rows, setRows] = React.useState(null);
   const [investPrev, setInvestPrev] = React.useState(null);   // { 'YYYY-MM': { outros: não-Meta de M-1, meta: Meta de M-2 } }
   const [ggrPrev, setGgrPrev] = React.useState(null);     // { 'YYYY-MM': GGR do mês anterior } — base dos % no caixa
@@ -4556,6 +4816,16 @@ function TabDailyCashflow({ range, meta }) {
   const dim0 = days.length ? cfDaysInMonth_(days[0].d) : null;
   const proRataPct = (monthsTouched.length === 1 && dim0) ? days.length / dim0 : null;
 
+  // Totais em regime FIXO, independente do toggle "Regime" que o usuário está olhando na tela — o PPT
+  // de Fechamento Mensal (abaixo) precisa sempre do PnL em competência (bate com o Farol/BP) e sempre
+  // do Caixa (riscos de fatura defasada), mesmo que a tela esteja mostrando o outro regime no momento.
+  const totPnl = {}; CF_LINES.forEach(l => { totPnl[l.k] = 0; });
+  src.map(r => cfCalcDay_(r, investPrev, 'pnl', ggrPrev)).forEach(v => { CF_LINES.forEach(l => { totPnl[l.k] += v[l.k] || 0; }); });
+  const daysCaixa = src.map(r => ({ d: r.d, v: cfCalcDay_(r, investPrev, 'caixa', ggrPrev) }));
+  const totCaixa = {}; CF_LINES.forEach(l => { totCaixa[l.k] = 0; });
+  daysCaixa.forEach(({ v }) => { CF_LINES.forEach(l => { totCaixa[l.k] += v[l.k] || 0; }); });
+  const projCaixa = cfProject_(daysCaixa, totCaixa, meta && meta.dataMaxDate, true, investPrev && investPrev[monthsTouched[0]]);
+
   const rowCls = (l) => `cf-row cf-${l.src}` + (l.strong ? ' cf-strong' : '') + (l.sub ? ' cf-sub' : '');
   const valCls = (v) => (v == null || isNaN(v)) ? '' : (v < 0 ? 'cf-neg' : (v > 0 ? 'cf-pos' : ''));
   const srcOf = (l) => (isCaixa && l.srcCaixa) ? l.srcCaixa : l.src;
@@ -4617,6 +4887,20 @@ function TabDailyCashflow({ range, meta }) {
             <button className="preset-btn" onClick={() => setCollapsed(allOn ? [] : CF_GROUP_KEYS.slice())}
               title={allOn ? 'Abrir todos os subtotais' : 'Deixar só as linhas grandes do PnL — clique no subtotal para abrir de novo'}>
               {allOn ? 'Expandir tudo' : 'Recolher tudo'}
+            </button>
+          </div>
+          <span style={{ fontSize: 12, color: 'var(--text-muted)', marginLeft: 6 }}>Fechamento</span>
+          <div className="slicer-presets">
+            <button className="preset-btn" disabled={pptBusy || !days.length}
+              title="Gera o modelo base do PPT de Fechamento Mensal (Sumário Executivo, Breakdown de Receita, PnL e Cashflow/Riscos — todos vs BP Conservador), com o dado já carregado nesta aba. Baixa direto, sem passar pelo servidor."
+              onClick={async () => {
+                setPptBusy(true);
+                try {
+                  await gerarPptFechamento_({ range, meta, M, farol, planScenarios, chFilter, totPnl, totCaixa, projCaixa, monthsTouched, proRataPct });
+                } catch (e) { alert('Falha ao gerar o PPT: ' + ((e && e.message) || e)); }
+                finally { setPptBusy(false); }
+              }}>
+              {pptBusy ? 'Gerando PPT…' : 'Gerar PPT de Fechamento'}
             </button>
           </div>
         </div>
