@@ -3228,7 +3228,15 @@ function buildFarolGroups_(MM, f, range, useYtd, sparkByKey) {
     // cards de FLUXO. Card ausente (backend < v73) é filtrado no fim da função, não vira buraco.
     { title: 'Aquisição', cards: [blS(ws(dress(MM.invest), 'invest')), blS(ws(dress(MM.registros), 'registros')), blS(ws(dress(MM.ftdQty), 'ftdQty')), blS(ws(dress(MM.ftdAmount), 'ftdAmount')), blS(ws(roasFtdCard, 'roasFtd')), blS(ws(dressPlain(f.roasDepD0), 'roasDepD0')), blS(ws(dressPlain(f.cac), 'cac')), blS(ws(dressPlain(f.ticketFtd), 'ticketFtd'))] },
     { title: 'Depósito M0', cards: [blS(dress(MM.depM0Total)), blS(roasDepM0Card), blS(multM0Card)] },
-    { title: 'Volume & GGR', cards: [blS(ws(dress(MM.depTotal), 'depTotal')), blS(ws(dress(turnoverCard), 'turnover')), blS(ws(dress(MM.ggr), 'ggr')), blS(ws(dressPlain(MM.ggrPerDep), 'ggrPerDep')), blS(ws(dressPlain(holdCard), 'hold')), blS(ws(rolloverCard, 'rollover')), blS(ws(dressPlain(f.freespinDep), 'freespinDep')), blS(ws(dressPlain(f.bonusDep), 'bonusDep')), blS(ws(dressPlain(f.freespinTurnover), 'freespinTurnover')), blS(ws(dressPlain(f.bonusTurnover), 'bonusTurnover')), blS(roasGgrM0Card)] },
+    { title: 'Volume & GGR', cards: [blS(ws(dress(MM.depTotal), 'depTotal')), blS(ws(dress(turnoverCard), 'turnover')), blS(ws(dress(MM.ggr), 'ggr')), blS(ws(dressPlain(MM.ggrPerDep), 'ggrPerDep')), blS(ws(dressPlain(holdCard), 'hold')), blS(ws(rolloverCard, 'rollover')), blS(roasGgrM0Card)] },
+    // Seção própria pra FreeSpins/Bonificação (pedido do Luis, 17/08) — antes vivia dentro de Volume & GGR,
+    // mas cresceu de 2 pra 4 cards (Dep + Turnover de cada) e virou um assunto à parte: quanto do incentivo
+    // concedido volta em jogo, sob as duas bases. Mesma ordem de sempre: Dep primeiro (a base com meta),
+    // Turnover depois (a nova, sem meta).
+    { title: 'FreeSpins & Bonificação', cards: [
+      blS(ws(dressPlain(f.freespinDep), 'freespinDep')), blS(ws(dressPlain(f.bonusDep), 'bonusDep')),
+      blS(ws(dressPlain(f.freespinTurnover), 'freespinTurnover')), blS(ws(dressPlain(f.bonusTurnover), 'bonusTurnover')),
+    ] },
     // Retenção: Depósito (view de coorte, meta fixa do plano) + GGR (ngr net, mesma fórmula/janela, SEM meta).
     // ⚠️ o Depósito M3+ usa o residual da FAROL; o GGR M3+ é ratio de coorte puro — ver tooltip/nota.
     { title: 'Retenção', cards: [
@@ -3738,6 +3746,7 @@ function buildFarolExportGroups_(MM, f, monthlyClose, channels, chFilter, range,
       G['Depósito M0']['ROAS Dep M0'],
     ] },
     { title: 'Volume & GGR', cards: (groups.find(g => g.title === 'Volume & GGR') || {}).cards || [] },
+    { title: 'FreeSpins & Bonificação', cards: (groups.find(g => g.title === 'FreeSpins & Bonificação') || {}).cards || [] },
     { title: 'Retenção', cards: [
       G['Retenção']['Depósito M0→M1'], coh('↳ Retido M+1 (R$)', mca.m1, mcb.m1),
       G['Retenção']['Depósito M1→M2'], coh('↳ Retido M+2 (R$)', mca.m2, mcb.m2),
