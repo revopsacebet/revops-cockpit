@@ -3146,6 +3146,8 @@ function buildFarolSpark_(spark, chFilter) {
     rollover:    arr((p, h) => h.dep ? h.turnover / h.dep : null),
     freespinDep: arr((p, h) => h.dep ? h.freespin / h.dep : null),
     bonusDep:    arr((p, h) => h.dep ? h.bonus / h.dep : null),
+    freespinTurnover: arr((p, h) => h.turnover ? h.freespin / h.turnover : null),
+    bonusTurnover:    arr((p, h) => h.turnover ? h.bonus / h.turnover : null),
   };
 }
 
@@ -3226,7 +3228,7 @@ function buildFarolGroups_(MM, f, range, useYtd, sparkByKey) {
     // cards de FLUXO. Card ausente (backend < v73) é filtrado no fim da função, não vira buraco.
     { title: 'Aquisição', cards: [blS(ws(dress(MM.invest), 'invest')), blS(ws(dress(MM.registros), 'registros')), blS(ws(dress(MM.ftdQty), 'ftdQty')), blS(ws(dress(MM.ftdAmount), 'ftdAmount')), blS(ws(roasFtdCard, 'roasFtd')), blS(ws(dressPlain(f.roasDepD0), 'roasDepD0')), blS(ws(dressPlain(f.cac), 'cac')), blS(ws(dressPlain(f.ticketFtd), 'ticketFtd'))] },
     { title: 'Depósito M0', cards: [blS(dress(MM.depM0Total)), blS(roasDepM0Card), blS(multM0Card)] },
-    { title: 'Volume & GGR', cards: [blS(ws(dress(MM.depTotal), 'depTotal')), blS(ws(dress(turnoverCard), 'turnover')), blS(ws(dress(MM.ggr), 'ggr')), blS(ws(dressPlain(MM.ggrPerDep), 'ggrPerDep')), blS(ws(dressPlain(holdCard), 'hold')), blS(ws(rolloverCard, 'rollover')), blS(ws(dressPlain(f.freespinDep), 'freespinDep')), blS(ws(dressPlain(f.bonusDep), 'bonusDep')), blS(roasGgrM0Card)] },
+    { title: 'Volume & GGR', cards: [blS(ws(dress(MM.depTotal), 'depTotal')), blS(ws(dress(turnoverCard), 'turnover')), blS(ws(dress(MM.ggr), 'ggr')), blS(ws(dressPlain(MM.ggrPerDep), 'ggrPerDep')), blS(ws(dressPlain(holdCard), 'hold')), blS(ws(rolloverCard, 'rollover')), blS(ws(dressPlain(f.freespinDep), 'freespinDep')), blS(ws(dressPlain(f.bonusDep), 'bonusDep')), blS(ws(dressPlain(f.freespinTurnover), 'freespinTurnover')), blS(ws(dressPlain(f.bonusTurnover), 'bonusTurnover')), blS(roasGgrM0Card)] },
     // Retenção: Depósito (view de coorte, meta fixa do plano) + GGR (ngr net, mesma fórmula/janela, SEM meta).
     // ⚠️ o Depósito M3+ usa o residual da FAROL; o GGR M3+ é ratio de coorte puro — ver tooltip/nota.
     { title: 'Retenção', cards: [
@@ -6805,6 +6807,7 @@ function buildFarolMetrics_(M, comp, channels, ggrChannels, bp, filter, ggrSafra
     lowerBetter: !!lowerBetter });
   const inv = M.invest || {}, fa = M.ftdAmount || {}, dt = M.depTotal || {}, dm0 = M.depM0Total || {};
   const gg = M.ggr || {};   // GGR (ngr limpo) já no escopo de canal — denominador da referência FreeSpins/Bonif sobre GGR
+  const tn = M.turnover || {};   // Turnover já no escopo de canal — denominador de FreeSpins/Bonif sobre Turnover
   // BP do ROAS Dep M0 = razão do MÊS INTEIRO do plano (bp.month), NÃO prorateada pela janela: o m0tt
   // diário do plano é front-loaded (runway da coorte), então somar poucos dias contra invest flat INFLA
   // a razão (jul 1-5 = 2,35 vs mês inteiro = 1,9). Total Casa = m0tt/invest; Growth/canal = Dep M0 Growth(colZ)/invest(colN).
@@ -6913,6 +6916,12 @@ function buildFarolMetrics_(M, comp, channels, ggrChannels, bp, filter, ggrSafra
       { ref: divPos(fs, gg.act), refM1: divPos(fsLm, gg.m1), refLabel: 'do GGR' }),
     bonusDep:    Object.assign(mk('Bonificação / Dep', 'pct', div(bn, dt.act), 0.028, div(bnLm, dt.m1), true),
       { ref: divPos(bn, gg.act), refM1: divPos(bnLm, gg.m1), refLabel: 'do GGR' }),
+    // FreeSpins/Bonif sobre TURNOVER (pedido do Luis, 17/08) — irmãos de FreeSpins/Dep e Bonificação/Dep,
+    // trocando o denominador DEPÓSITO por TURNOVER: mede o incentivo contra o volume apostado (o que o
+    // dinheiro girou), não contra o que entrou de caixa. SEM meta de propósito — não existe %-sobre-turnover
+    // declarada no plano nem pedida aqui; card fica no estado suportado sem `bp` (Registros já vive assim).
+    freespinTurnover: mk('FreeSpins / Turnover', 'pct', div(fs, tn.act), null, div(fsLm, tn.m1), true),
+    bonusTurnover:    mk('Bonificação / Turnover', 'pct', div(bn, tn.act), null, div(bnLm, tn.m1), true),
   };
 }
 
