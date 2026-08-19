@@ -2067,41 +2067,6 @@ function TabRetencaoFaixa({ retencaoFaixa, chFilter, channels, bp, meta }) {
     : aggRetFaixaBench_(srcE, chFilter, faixaSel, mode, gran, gCurve, dataMax, tableDim, grupoSel, undefined, matRef);
   // Mês anterior fechado: mesmo recorte (canal/faixa/modo) num único agregado (.totals). Sem curva (já maduro).
   const pmRow = pmFetch.rows ? aggRetFaixaBench_(pmFetch.rows, chFilter, faixaSel, mode, 'day', null, dataMax, null, grupoSel).totals : null;
-  // BP do escopo (Total/Growth/canal). Só faz sentido p/ "Todas as faixas" — o plano não tem meta
-  // por faixa de FTD. M0/FTD do plano = depM0÷ftdAmount · FTD médio do plano = ftdAmount÷ftd.
-  // Total da Casa usa os totais "tt" do house (M0 tt / FTD tt — inclui não-growth, bate com o ACT
-  // que soma todos os canais); growth/canal usam os agregados per-canal. M0/FTD = M0÷FTD$.
-  let bpScope = null;
-  if (bp) {
-    const list = chList_(chFilter);
-    if (list.length) {
-      const agg = {};
-      list.forEach(ch => { const b = bp.byChannel && bp.byChannel[ch]; if (b) ['depM0','ftdAmount','ftd'].forEach(k => { if (b[k] != null) agg[k] = (agg[k] || 0) + b[k]; }); });
-      bpScope = { m0: agg.depM0, ftdAmount: agg.ftdAmount, ftd: agg.ftd };
-    } else if (chFilter && chFilter.scope === 'growth') {
-      const g = bp.growthAgg || {};
-      bpScope = { m0: g.depM0, ftdAmount: g.ftdAmount, ftd: g.ftd };
-    } else {
-      const h = bp.house || {};
-      bpScope = { m0: h.m0tt, ftdAmount: h.ftdAmountTt, ftd: h.ftdTt };
-    }
-  }
-  // Sem figura de plano p/ same-day, coorte 30d, faixa filtrada OU base D0 (o plano só tem meta sobre FTD$) → farol off.
-  const showBp = faixaAll && bpScope && !sameday && !cohort && !d0Base;
-  const bpMultM0F  = (showBp && bpScope.ftdAmount > 0) ? bpScope.m0 / bpScope.ftdAmount : null;
-  const bpFtdMedio = (showBp && bpScope.ftd > 0) ? bpScope.ftdAmount / bpScope.ftd : null;
-  const pb = (act, bpv) => (bpv && act != null) ? act / bpv : null;
-  // Cards 1 e 3 seguem o toggle de base (FTD$ ou depósito D0); o do meio (FTD médio) não é multiplicador.
-  // Na base D0 não há meta de plano → bp null (showBp já desliga), e o card mostra só o realizado.
-  const heroM0 = d0Base ? t.multM0D0 : t.multM0F;
-  const heroD1 = d0Base ? t.multD1D0 : t.multD1F;
-  const heroes = [
-    { label: `${cohort ? '30d' : 'M0'} / ${baseLbl}`, act: heroM0, m1: null, bp: bpMultM0F, pctBp: pb(heroM0, bpMultM0F), fmt: 'multiple' },      // (D0+janela) ÷ base
-    { label: 'FTD médio do período', act: t.ftdMedio, m1: null, bp: bpFtdMedio, pctBp: pb(t.ftdMedio, bpFtdMedio), fmt: 'brl' },
-    // D1 / base = multiplicador médio PONDERADO por valor: (Σ D0 + Σ dep dia 1) ÷ Σ base. Sem BP (o plano
-    // não tem meta de D1), sem M-1 (igual ao card irmão M0/base).
-    { label: `D1 / ${baseLbl}`, act: heroD1, m1: null, bp: null, pctBp: null, fmt: 'multiple' },
-  ];
   const chLabel = chLabel_(chFilter);
   const coSuffix = cohort ? ` · coorte ${cohortDays}d (FTD até ${completeBefore ? completeBefore.slice(8, 10) + '/' + completeBefore.slice(5, 7) : '—'})` : '';
   const loadingRF = (cohort && coFetch.loading) || (sameday && sdFetch.loading) || (grNeed && grFetch.loading) || (campNeed && campDimFetch.loading);
@@ -2158,9 +2123,6 @@ function TabRetencaoFaixa({ retencaoFaixa, chFilter, channels, bp, meta }) {
             <button className={`preset-btn ${cohortDays === 30 ? 'active' : ''}`} onClick={() => setCohortDays(30)} title="M0 = janela FIXA de 30 dias corridos do FTD; só coortes que já fecharam os 30 dias (a mais recente ~30 dias atrás). Puxa o período sozinho, independe do slicer do topo.">Coorte 30d</button>
           </div>
         </div>
-      <div className="hero-grid">
-        {heroes.map((m, i) => <Hero key={i} metric={m} />)}
-      </div>
       <div className="support">
         <div className="support-title">Mês anterior · {monthLabelPt_(pm.from)} · {chLabel} · {faixaLabelTxt}{sameday ? ' · same-day' : ''} · mult sobre {baseLbl}{pmFetch.loading ? ' · carregando…' : ''}{pmFetch.error ? ' · erro ao carregar' : ''}</div>
         <RetFaixaPrevRow row={pmRow} label={monthLabelPt_(pm.from)} loading={pmFetch.loading} error={pmFetch.error} base={multBase} />
