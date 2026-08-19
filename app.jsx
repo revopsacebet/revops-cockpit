@@ -1598,7 +1598,7 @@ const RET_MAT_H = { D0: 0, D1: 1, D3: 3, D7: 7, D14: 14, D30: 30 };
 // Períodos VISÍVEIS no eixo, por granularidade (usado no lookback e no recorte final — tem que ser o mesmo
 // número nos dois, senão a busca fica curta e os pontos mais antigos saem com janela deslizante truncada).
 const RET_MAX_PERIODS = { week: 8, day: 30 };
-function RetMultChart({ chFilter, faixaSel, grupoSel, grupoActive, mode, gran, sameday, dataMax, fallbackRows, cohort, cohortDays, srcRF, srcRFLead, coLo, srcLoading, srcError, base }) {
+function RetMultChart({ chFilter, faixaSel, grupoSel, grupoActive, mode, gran, sameday, dataMax, fallbackRows, cohort, cohortDays, srcRF, srcRFLead, coLo, srcLoading, srcError, base, rangeFrom }) {
   const MET = retChartMetrics_(base);            // lista de séries conforme a base do toggle (FTD | D0)
   const bLbl = base === 'd0' ? 'D0' : 'FTD';     // sufixo dos rótulos: Mult D7/FTD vs Mult D7/D0
   const [seriesBy, setSeriesBy] = usePersistedState('rvops:retChartSeries', 'mult'); // 'mult' | 'canal' | 'faixa' | 'grupo' (grupo de risco, pede &byGrupo=1)
@@ -1620,7 +1620,13 @@ function RetMultChart({ chFilter, faixaSel, grupoSel, grupoActive, mode, gran, s
   // conta é explícita e cobre os três pedaços que o ponto mais antigo precisa:
   //   maturidade do multiplicador + span visível do eixo + janela da média móvel.
   // No exemplo acima: 30 + 56 + 30 = 116 dias (contra 60). Custa payload; é o preço de a curva ser verdade.
-  const spanVisivel = (RET_MAX_PERIODS[gran] || 30) * (gran === 'week' ? 7 : 1);
+  // Nº de períodos que o eixo precisa mostrar p/ cobrir o período SELECIONADO no slicer global (rangeFrom→capTo),
+  // com PISO na janela mínima de sempre (8 semanas / 30 dias) — nunca mostra menos que isso, só mais quando o
+  // slicer pede um período mais largo (ex.: YTD não pode ficar truncado nas últimas 8 semanas).
+  const wantedDays = rangeFrom ? isoDiffDays_(rangeFrom, capTo) + 1 : 0;
+  const wantedPeriods = gran === 'week' ? Math.ceil(wantedDays / 7) : wantedDays;
+  const visPeriods = Math.max(RET_MAX_PERIODS[gran] || 30, wantedPeriods || 0);
+  const spanVisivel = visPeriods * (gran === 'week' ? 7 : 1);
   const lookback = (RET_MAT_H[effMetric] || 0) + spanVisivel + (maDays || 0);
   const fetchFrom = capTo ? isoAddDays_(capTo, -Math.max(59, lookback)) : null;
   // Quebra por GRUPO DE RISCO: pede &byGrupo=1 (payload com grupo por linha). Como o srcRF da coorte NÃO tem
@@ -1750,7 +1756,7 @@ function RetMultChart({ chFilter, faixaSel, grupoSel, grupoActive, mode, gran, s
   // Usa o gran do TOGGLE (display), não o effGran — com MA+Semanal os pontos já foram colapsados em semanas.
   const matCutId = effMetric, matCutISO = matDay;
   if (!cohort && dataMax) {
-    const maxPeriods = RET_MAX_PERIODS[gran] || 30;
+    const maxPeriods = visPeriods;
     if (isoKeys.length > maxPeriods) {
       const start = isoKeys.length - maxPeriods;
       xLabels = xLabels.slice(start); isoKeys = isoKeys.slice(start);
@@ -1926,7 +1932,7 @@ function RetMultChart({ chFilter, faixaSel, grupoSel, grupoActive, mode, gran, s
         </svg>
       </div>
       <div className="ch-note">
-        <strong>{cohort ? `Coorte de ${cohortDays} dias — mesma base/janela da tabela (só coortes fechadas)` : `Janela: ${gran === 'week' ? 'últimas 8 semanas' : '30 dias corridos'} terminando na ÚLTIMA safra MADURA${matCutId ? ` do ${matCutId}` : ''}${matCutISO ? ` (até ${dmLabel(matCutISO)})` : ''} — coortes ainda imaturas são cortadas${gran === 'week' ? ' (a semana é um bloco de 7 dias terminando na última safra madura, não a semana-calendário — assim o ponto mais recente cobre a mesma janela da tabela)' : ''}`}</strong>. Eixo X = <strong>{gran === 'week' ? 'semana' : 'dia'} de FTD</strong>; {seriesBy === 'mult' ? <>evolução do <strong>multiplicador {effMetric}/{bLbl}</strong></> : <>uma linha por <strong>{seriesBy === 'canal' ? 'canal' : 'faixa de FTD'}</strong> (multiplicador {effMetric}/{bLbl})</>}. Cada ponto = média ponderada (Σ/Σ) do KPI no período. Segue canal/faixa/modo/same-day/M0.{busy ? ' · carregando…' : ''}{err ? ' · erro' : ''}
+        <strong>{cohort ? `Coorte de ${cohortDays} dias — mesma base/janela da tabela (só coortes fechadas)` : `Janela: ${gran === 'week' ? `últimas ${isoKeys.length} semanas` : `${isoKeys.length} dias corridos`} terminando na ÚLTIMA safra MADURA${matCutId ? ` do ${matCutId}` : ''}${matCutISO ? ` (até ${dmLabel(matCutISO)})` : ''} — coortes ainda imaturas são cortadas${gran === 'week' ? ' (a semana é um bloco de 7 dias terminando na última safra madura, não a semana-calendário — assim o ponto mais recente cobre a mesma janela da tabela)' : ''}`}</strong>. Eixo X = <strong>{gran === 'week' ? 'semana' : 'dia'} de FTD</strong>; {seriesBy === 'mult' ? <>evolução do <strong>multiplicador {effMetric}/{bLbl}</strong></> : <>uma linha por <strong>{seriesBy === 'canal' ? 'canal' : 'faixa de FTD'}</strong> (multiplicador {effMetric}/{bLbl})</>}. Cada ponto = média ponderada (Σ/Σ) do KPI no período. Segue canal/faixa/modo/same-day/M0.{busy ? ' · carregando…' : ''}{err ? ' · erro' : ''}
         {maEff > 0 && <React.Fragment>{' '}<em style={{ color: 'var(--text-dim)' }}>Média móvel de {maEff} dias: janela deslizante ponderada pelo DENOMINADOR ativo (Σ mult×{bLbl}$ ÷ Σ {bLbl}$ = a própria razão pooled da janela) dos últimos {maEff} dias, calculada em dias e {gran === 'week' ? 'amostrada por semana (valor no último dia da semana)' : 'plotada por dia'} — segue o toggle Diário/Semanal e suaviza o ruído. É uma janela TRAILING (só passado): uma virada real aparece com ~{Math.ceil(maEff / 2)} dias de atraso, somados ao corte de maturidade acima. Ponto cuja janela deslizante não esteja CHEIA não é plotado — média sobre menos dias que o rótulo promete suaviza o passado e chega a apagar quedas reais.{maEff > 7 && gran === 'week' ? ' Com MM > 7d no Semanal, semanas vizinhas dividem parte da janela — a linha fica mais "tendenciosa" do que o dado.' : ''}</em></React.Fragment>}{cohort && maEff > 0 && <React.Fragment>{' '}<em style={{ color: 'var(--text-dim)' }}>Na Coorte a janela deslizante puxa como histórico os dias ANTERIORES à janela visível (busca estendida em {maEff} dia{maEff > 1 ? 's' : ''}), então o 1º ponto já sai com janela cheia — o eixo continua mostrando só as safras fechadas da tabela.</em></React.Fragment>}{cohort && maDays > 0 && maEff === 0 && <React.Fragment>{' '}<em style={{ color: 'var(--accent-yellow)' }}>Média móvel esperando o histórico da coorte carregar — os pontos abaixo ainda são o valor bruto do período.</em></React.Fragment>}
         {!cohort && <React.Fragment>{' '}<em>Maturidade: o multiplicador só entra depois de a coorte ter os dias p/ fechar a janela (D0=0 · D1=1 · D7=7 · D14=14 · D30=30 dias após o FTD).</em></React.Fragment>}
       </div>
@@ -2134,7 +2140,7 @@ function TabRetencaoFaixa({ retencaoFaixa, chFilter, channels, bp, meta }) {
       </div>
       <div className="support">
         <div className="support-title">Multiplicador por dimensão · sobre {baseLbl} · {cohort ? 'coorte ' + cohortDays + 'd' : 'últimos 30 dias corridos'} · {chLabel} · {faixaLabelTxt}{grupoActive ? ' · ' + grupoLabelTxt : ''}{sameday ? ' · same-day' : ''}</div>
-        <RetMultChart chFilter={chFilter} faixaSel={faixaSel} grupoSel={grupoSel} grupoActive={grupoActive} mode={mode} gran={gran} sameday={sameday} dataMax={dataMax} fallbackRows={retencaoFaixa} cohort={cohort} cohortDays={cohortDays} srcRF={srcRF} srcRFLead={srcRFLead} coLo={coLo} srcLoading={cohort && coFetch.loading} srcError={cohort ? coFetch.error : null} base={multBase} />
+        <RetMultChart chFilter={chFilter} faixaSel={faixaSel} grupoSel={grupoSel} grupoActive={grupoActive} mode={mode} gran={gran} sameday={sameday} dataMax={dataMax} fallbackRows={retencaoFaixa} cohort={cohort} cohortDays={cohortDays} srcRF={srcRF} srcRFLead={srcRFLead} coLo={coLo} srcLoading={cohort && coFetch.loading} srcError={cohort ? coFetch.error : null} base={multBase} rangeFrom={winFrom} />
       </div>
     </React.Fragment>
   );
@@ -2750,7 +2756,7 @@ function BenchMultChart({ aptRows, houseRows, houseLabel, canals, scope, faixa, 
 
 // View genérica do Benchmark — parametrizada por houseOrder + sameday (p/ reusar na aba Same-day).
 // pkey = prefixo de persistência (filtros sobrevivem a refresh/troca de aba).
-function BenchmarkView({ retencaoFaixa, benchmark, houseOrder, sameday, title, subtitle, pkey, apostouHouse, withNet, defaultMode = 'qtd', multChart = false }) {
+function BenchmarkView({ retencaoFaixa, benchmark, houseOrder, sameday, title, subtitle, pkey, apostouHouse, withNet, defaultMode = 'qtd', multChart = false, range }) {
   // fromBench = Apostou vem do PRÓPRIO JSON (que tem saque/net), não do BQ (aba net Apostou vs Lottu).
   // Caso contrário, Apostou puxa o período próprio (jan–jun) via modo leve only=retfaixa do BQ.
   const fromBench = !!apostouHouse;
@@ -2813,19 +2819,26 @@ function BenchmarkView({ retencaoFaixa, benchmark, houseOrder, sameday, title, s
   const winMax = cap || dataMaxBoth;
   const toEff = (winMax && to && to > winMax) ? winMax : to;
 
-  // default: MTD (mês-calendário mais recente com dado dos dois lados). No modo COORTE vira o último ciclo de
-  // 30 dias FECHADO (mesma ideia da Multiplicadores) — abrir em MTD ali mostraria só safra imatura e o D30
-  // sairia truncado. `touched` para de re-anchorar depois que o usuário mexe na data (o dataMax da Apostou só
-  // aparece quando o fetch do BQ cai, e sem isso a janela editada pulava de volta pro default nessa hora);
-  // trocar de modo zera o touched, porque aí o re-anchor é justamente o que se espera.
+  // default: segue o período selecionado no slicer GLOBAL do topo (range), clampado ao teto que os dois lados
+  // realmente têm dado. No modo COORTE vira o último ciclo de 30 dias FECHADO (mesma ideia da Multiplicadores)
+  // — abrir em MTD/no período global ali mostraria só safra imatura e o D30 sairia truncado, então esse modo
+  // continua com âncora própria, independente do slicer de cima. `touched` para de re-anchorar depois que o
+  // usuário mexe na data local (o dataMax da Apostou só aparece quando o fetch do BQ cai, e sem isso a janela
+  // editada pulava de volta pro default nessa hora); trocar de modo zera o touched, porque aí o re-anchor é
+  // justamente o que se espera. Sem `range` (ou benchmark ainda sem dado) cai no fallback antigo (MTD local).
   const touched = React.useRef(false);
   const lastCohort = React.useRef(cohort);
   React.useEffect(() => {
     if (lastCohort.current !== cohort) { lastCohort.current = cohort; touched.current = false; }
     if (!dataMaxBoth || touched.current) return;
     if (cohort) { const c = isoAddDays_(dataMaxBoth, -MAT30); setTo(c); setFrom(isoAddDays_(c, -(MAT30 - 1))); }
+    else if (range && range.from && range.to) {
+      const from2 = (houseMin && range.from < houseMin) ? houseMin : range.from;
+      const to2 = (range.to > dataMaxBoth) ? dataMaxBoth : range.to;
+      setFrom(from2); setTo(to2);
+    }
     else { setFrom(dataMaxBoth.slice(0, 7) + '-01'); setTo(dataMaxBoth); }
-  }, [dataMaxBoth, cohort]);
+  }, [dataMaxBoth, cohort, range]);
   const editFrom = (v) => { touched.current = true; setFrom(v); };
   const editTo = (v) => { touched.current = true; setTo(v); };
 
@@ -3043,10 +3056,10 @@ function BenchmarkView({ retencaoFaixa, benchmark, houseOrder, sameday, title, s
 // outro): a coorte é CHEIA dos dois. Apostou vem do only=retfaixa SEM &sameday=1; Lottu do benchmark_net.json
 // (rebuild do 'lottubet nosameday'). Bruto = retenção/multiplicadores; Líquido = caixa da safra (Σ dep − Σ saque
 // observados), saque da Apostou vem do retfaixa (depTot/saqTot).
-function NetBenchTab({ benchmarkNet, retencaoFaixa }) {
+function NetBenchTab({ benchmarkNet, retencaoFaixa, range }) {
   return <BenchmarkView retencaoFaixa={retencaoFaixa} benchmark={benchmarkNet}
     houseOrder={['lottu']} sameday={false} withNet={true} pkey="benchsd" defaultMode="val" multChart={true}
-    title="Benchmark Lottu"
+    title="Benchmark Lottu" range={range}
     subtitle="Apostou (BQ ao vivo · coorte cheia) vs Lottu (Excel) — ticket de FTD, depósito e caixa líquido (dep − saque) por faixa e canal · slicers Coorte (Calendário/30d) e Bruto/Líquido" />;
 }
 
