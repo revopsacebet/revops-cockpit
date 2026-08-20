@@ -6893,11 +6893,15 @@ function buildFarolMetrics_(M, comp, channels, ggrChannels, bp, filter, ggrSafra
     // M-1 = freespin/bonus do mês anterior (mesma janela) ÷ Depósitos Totais do mês anterior (dt.m1).
     // `ref` = MESMO numerador sobre o GGR (pedido do Luis 2026-08-12): o card mede o custo contra o que
     // ENTROU de caixa, a referência mede contra o que a casa GANHOU — é o número que diz se o incentivo
-    // está comendo a margem. Denominador = M.ggr.act, o mesmo GGR do card ao lado (ngr limpo), já no
-    // escopo de canal atual. `divPos` de propósito: em canal com GGR negativo (Programática já teve) a
+    // está comendo a margem. `divPos` de propósito: em canal com GGR negativo (Programática já teve) a
     // razão inverteria de sinal e leria como "melhorou" — nesse caso não mostra nada.
+    // FreeSpins usa GGR BRUTO (pedido do Luis 2026-08-20): `gg.act` (ngr limpo) JÁ tira o freespin ganho
+    // (ngr_total = ggr_total − valor_wins_freespin) — dividir freespin por um GGR que já foi reduzido
+    // pelo próprio freespin infla a razão. GGR Bruto = GGR + freespin (desfaz a subtração) → base "antes
+    // do freespin", coerente com o card medir o freespin como fatia do bruto, não do que já sobrou líquido.
+    // Bonificação NÃO recompõe: bônus não entra na conta do GGR (nem bruto nem líquido) — usa `gg.act` direto.
     freespinDep: Object.assign(mk('FreeSpins / Dep', 'pct', div(fs, dt.act), 0.02, div(fsLm, dt.m1), true),
-      { ref: divPos(fs, gg.act), refM1: divPos(fsLm, gg.m1), refLabel: 'do GGR' }),
+      { ref: divPos(fs, gg.act != null ? gg.act + (fs || 0) : null), refM1: divPos(fsLm, gg.m1 != null ? gg.m1 + (fsLm || 0) : null), refLabel: 'do GGR Bruto' }),
     bonusDep:    Object.assign(mk('Bonificação / Dep', 'pct', div(bn, dt.act), 0.028, div(bnLm, dt.m1), true),
       { ref: divPos(bn, gg.act), refM1: divPos(bnLm, gg.m1), refLabel: 'do GGR' }),
     // FreeSpins/Bonif sobre TURNOVER (pedido do Luis, 17/08) — irmãos de FreeSpins/Dep e Bonificação/Dep,
