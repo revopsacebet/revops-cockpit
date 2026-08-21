@@ -3155,6 +3155,11 @@ function buildFarolSpark_(spark, chFilter) {
     bonusDep:    arr((p, h) => h.dep ? h.bonus / h.dep : null),
     freespinTurnover: arr((p, h) => h.turnover ? h.freespin / h.turnover : null),
     bonusTurnover:    arr((p, h) => h.turnover ? h.bonus / h.turnover : null),
+    // Base GGR: freespin sobre o GGR **BRUTO** (ngr + freespin) — `h.ngr` é ngr_total, que JÁ subtraiu o
+    // freespin ganho; recompor desfaz a subtração. Bonificação vai sobre o ngr direto (bônus não entra na
+    // conta do GGR). `> 0` nos dois: semana com GGR ≤ 0 inverteria o sinal da razão e a linha mentiria.
+    freespinGgr: arr((p, h) => (h.ngr + h.freespin) > 0 ? h.freespin / (h.ngr + h.freespin) : null),
+    bonusGgr:    arr((p, h) => h.ngr > 0 ? h.bonus / h.ngr : null),
   };
 }
 
@@ -3237,12 +3242,13 @@ function buildFarolGroups_(MM, f, range, useYtd, sparkByKey) {
     { title: 'Depósito M0', cards: [blS(dress(MM.depM0Total)), blS(roasDepM0Card), blS(multM0Card)] },
     { title: 'Volume & GGR', cards: [blS(ws(dress(MM.depTotal), 'depTotal')), blS(ws(dress(turnoverCard), 'turnover')), blS(ws(dress(MM.ggr), 'ggr')), blS(ws(dressPlain(MM.ggrPerDep), 'ggrPerDep')), blS(ws(dressPlain(holdCard), 'hold')), blS(ws(rolloverCard, 'rollover')), blS(roasGgrM0Card)] },
     // Seção própria pra FreeSpins/Bonificação (pedido do Luis, 17/08) — antes vivia dentro de Volume & GGR,
-    // mas cresceu de 2 pra 4 cards (Dep + Turnover de cada) e virou um assunto à parte: quanto do incentivo
-    // concedido volta em jogo, sob as duas bases. Mesma ordem de sempre: Dep primeiro (a base com meta),
-    // Turnover depois (a nova, sem meta).
+    // mas cresceu de 2 pra 6 cards (Dep + Turnover + GGR de cada) e virou um assunto à parte: quanto do
+    // incentivo concedido volta em jogo, sob as três bases. Ordem = Dep primeiro (a única com meta),
+    // depois Turnover (o que girou), depois GGR (o que a casa ganhou — o que mede margem comida).
     { title: 'FreeSpins & Bonificação', cards: [
       blS(ws(dressPlain(f.freespinDep), 'freespinDep')), blS(ws(dressPlain(f.bonusDep), 'bonusDep')),
       blS(ws(dressPlain(f.freespinTurnover), 'freespinTurnover')), blS(ws(dressPlain(f.bonusTurnover), 'bonusTurnover')),
+      blS(ws(dressPlain(f.freespinGgr), 'freespinGgr')), blS(ws(dressPlain(f.bonusGgr), 'bonusGgr')),
     ] },
     // Retenção: Depósito (view de coorte, meta fixa do plano) + GGR (ngr net, mesma fórmula/janela, SEM meta).
     // ⚠️ o Depósito M3+ usa o residual da FAROL; o GGR M3+ é ratio de coorte puro — ver tooltip/nota.
@@ -6942,6 +6948,20 @@ function buildFarolMetrics_(M, comp, channels, ggrChannels, bp, filter, ggrSafra
     // declarada no plano nem pedida aqui; card fica no estado suportado sem `bp` (Registros já vive assim).
     freespinTurnover: mk('FreeSpins / Turnover', 'pct', div(fs, tn.act), null, div(fsLm, tn.m1), true),
     bonusTurnover:    mk('Bonificação / Turnover', 'pct', div(bn, tn.act), null, div(bnLm, tn.m1), true),
+    // FreeSpins/Bonif sobre GGR (pedido do Luis, 21/08) — terceiro par da seção, fechando as três bases:
+    // Depósito (o que entrou de caixa), Turnover (o que girou) e GGR (o que a casa ganhou). É a base que
+    // diz se o incentivo está comendo a MARGEM. Antes só existia como o `ref` em letra pequena dentro dos
+    // cards de /Dep; agora tem card próprio, com Δ M-1 e sparkline. Sem meta, como os de Turnover: o plano
+    // declara % sobre depósito, não sobre GGR.
+    // ⚠️ FreeSpins vai sobre o GGR **BRUTO** = `gg.act + fs` (pré-freespin): `ngr_total = ggr_total −
+    // valor_wins_freespin`, então dividir o freespin por um GGR que já foi reduzido pelo próprio freespin
+    // infla a razão. Recompor desfaz a subtração e devolve a base "antes do freespin".
+    // Bonificação NÃO recompõe: bônus não entra na conta do GGR (nem bruto nem líquido) → `gg.act` direto.
+    // `divPos` nos dois: com GGR ≤ 0 (Programática já teve) a razão inverteria de sinal e leria como
+    // "melhorou" — nesse caso o card não mostra nada.
+    freespinGgr: mk('FreeSpins / GGR Bruto', 'pct', divPos(fs, gg.act != null ? gg.act + (fs || 0) : null), null,
+                    divPos(fsLm, gg.m1 != null ? gg.m1 + (fsLm || 0) : null), true),
+    bonusGgr:    mk('Bonificação / GGR', 'pct', divPos(bn, gg.act), null, divPos(bnLm, gg.m1), true),
   };
 }
 
