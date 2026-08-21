@@ -3150,6 +3150,8 @@ function buildFarolSpark_(spark, chFilter) {
     turnover:    arr((p, h) => h.n ? h.turnover : null),
     ggrPerDep:   arr((p, h) => h.dep ? h.ngr / h.dep : null),
     hold:        arr((p, h) => h.turnover ? h.ngr / h.turnover : null),
+    // Hold BRUTO (pré-freespin): GGR Bruto = ngr + freespin (ngr_total já subtraiu valor_wins_freespin).
+    holdBruto:   arr((p, h) => h.turnover ? (h.ngr + h.freespin) / h.turnover : null),
     rollover:    arr((p, h) => h.dep ? h.turnover / h.dep : null),
     freespinDep: arr((p, h) => h.dep ? h.freespin / h.dep : null),
     bonusDep:    arr((p, h) => h.dep ? h.bonus / h.dep : null),
@@ -3240,7 +3242,7 @@ function buildFarolGroups_(MM, f, range, useYtd, sparkByKey) {
     // cards de FLUXO. Card ausente (backend < v73) é filtrado no fim da função, não vira buraco.
     { title: 'Aquisição', cards: [blS(ws(dress(MM.invest), 'invest')), blS(ws(dress(MM.registros), 'registros')), blS(ws(dress(MM.ftdQty), 'ftdQty')), blS(ws(dress(MM.ftdAmount), 'ftdAmount')), blS(ws(roasFtdCard, 'roasFtd')), blS(ws(dressPlain(f.roasDepD0), 'roasDepD0')), blS(ws(dressPlain(f.cac), 'cac')), blS(ws(dressPlain(f.ticketFtd), 'ticketFtd'))] },
     { title: 'Depósito M0', cards: [blS(dress(MM.depM0Total)), blS(roasDepM0Card), blS(multM0Card)] },
-    { title: 'Volume & GGR', cards: [blS(ws(dress(MM.depTotal), 'depTotal')), blS(ws(dress(turnoverCard), 'turnover')), blS(ws(dress(MM.ggr), 'ggr')), blS(ws(dressPlain(MM.ggrPerDep), 'ggrPerDep')), blS(ws(dressPlain(holdCard), 'hold')), blS(ws(rolloverCard, 'rollover')), blS(roasGgrM0Card)] },
+    { title: 'Volume & GGR', cards: [blS(ws(dress(MM.depTotal), 'depTotal')), blS(ws(dress(turnoverCard), 'turnover')), blS(ws(dress(MM.ggr), 'ggr')), blS(ws(dressPlain(MM.ggrPerDep), 'ggrPerDep')), blS(ws(dressPlain(holdCard), 'hold')), blS(ws(dressPlain(f.holdBruto), 'holdBruto')), blS(ws(rolloverCard, 'rollover')), blS(roasGgrM0Card)] },
     // Seção própria pra FreeSpins/Bonificação (pedido do Luis, 17/08) — antes vivia dentro de Volume & GGR,
     // mas cresceu de 2 pra 6 cards (Dep + Turnover + GGR de cada) e virou um assunto à parte: quanto do
     // incentivo concedido volta em jogo, sob as três bases. Ordem = Dep primeiro (a única com meta),
@@ -7479,6 +7481,19 @@ function buildFarolMetrics_(M, comp, channels, ggrChannels, bp, filter, ggrSafra
     freespinGgr: mk('FreeSpins / GGR Bruto', 'pct', divPos(fs, gg.act != null ? gg.act + (fs || 0) : null), null,
                     divPos(fsLm, gg.m1 != null ? gg.m1 + (fsLm || 0) : null), true),
     bonusGgr:    mk('Bonificação / GGR', 'pct', divPos(bn, gg.act), null, divPos(bnLm, gg.m1), true),
+    // Hold BRUTO = GGR Bruto ÷ Turnover (pedido do Luis, 21/08) — irmão do card Hold % (House Edge), que
+    // divide o GGR LÍQUIDO. `ngr_total = ggr_total − valor_wins_freespin` (identidade validada no BQ e já
+    // usada na aba Daily Cashflow), então GGR Bruto = `gg.act + fs` desfaz a subtração e o card mede a
+    // MARGEM DE MESA antes do custo de freespin. Ler o par junto: (bruto − líquido) é, em pontos de hold,
+    // exatamente o que o freespin come da margem — é a mesma informação do card FreeSpins/GGR Bruto, mas
+    // na régua do hold, que é a que o time de RevOps compara com house edge de mercado.
+    // SEM meta de propósito: o plano de receita NÃO orça GGR bruto nem freespin (na aba Daily Cashflow a
+    // linha do BP entra com ggrBruto/freespin = 0, só o GGR líquido tem número no plano) — derivar um hold
+    // bruto orçado a partir do hold líquido orçado seria premissa sobre premissa. Mesmo estado dos cards
+    // FreeSpins/Turnover e Registros: farol apagado, mas com Δ M-1 e sparkline. Maior = melhor.
+    holdBruto:   mk('Hold Bruto % (pré-FreeSpins)', 'pct',
+                    div(gg.act != null ? gg.act + (fs || 0) : null, tn.act), null,
+                    div(gg.m1  != null ? gg.m1  + (fsLm || 0) : null, tn.m1)),
   };
 }
 
