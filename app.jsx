@@ -6417,6 +6417,70 @@ function TabPiramideCoorte({ retencaoFaixa, chFilter, meta, retFaixaLive }) {
     if (cel.v >= mt) bateu++;
   }));
 
+  // --- ORDENAÇÃO POR COLUNA (pedido do Luis 21/08, olhando o eixo de campanha com 208 linhas).
+  // Clique no cabeçalho: 1º maior→menor · 2º menor→maior · 3º volta pra ORDEM NATURAL. O terceiro
+  // estado (que a tabela da Multiplicadores não tem) existe porque aqui a ordem natural não é
+  // decoração: no eixo de safra ela é a CRONOLOGIA — a escada, o motivo da aba —, e nos eixos de
+  // dimensão é volume (canal/campanha) ou a escada ordinal (faixa/grupo). Sem caminho de volta, um
+  // clique perdia a leitura principal até recarregar a página.
+  // NÃO é persistido de propósito: ordenação é exploração de um momento. Um sort guardado no
+  // localStorage faz a tela abrir diferente da que o vizinho abre, sem nada na URL que explique.
+  // ⚠️ SEM VALOR ("·" / "—") VAI PRO FIM NAS DUAS DIREÇÕES. A tabela da Multiplicadores trata null como
+  // −Infinity; aqui isso encheria o topo do "menor→maior" de linhas que simplesmente não fecharam o
+  // horizonte, e a pergunta ("quem está pior") ficaria soterrada por quem não tem resposta.
+  // ⚠️ Célula ABERTA entra com o valor que está na tela (acumulado truncado). A regra é "ordena o que se
+  // vê" — e a hachura continua marcando quais linhas são parciais dentro da lista ordenada.
+  const [ordKey, setOrdKey] = React.useState(null);
+  const [ordDir, setOrdDir] = React.useState('desc');
+  const onOrd = (k) => {
+    if (ordKey !== k) { setOrdKey(k); setOrdDir('desc'); return; }
+    if (ordDir === 'desc') { setOrdDir('asc'); return; }
+    setOrdKey(null); setOrdDir('desc');
+  };
+  const ordSeta = (k) => (ordKey === k) ? (ordDir === 'desc' ? ' ▾' : ' ▴') : '';
+  const ordTip = ' · clique p/ ordenar (1º maior→menor · 2º menor→maior · 3º volta à ordem natural)';
+  const linhasOrd = React.useMemo(() => {
+    if (!ordKey) return linhas;
+    const dir = (ordDir === 'asc') ? 1 : -1;
+    const idx = linhas.map((l, i) => i);
+    if (ordKey === '_lb') {
+      // Coluna do rótulo: no eixo de safra a chave é a DATA (ordenar por ela = cronologia, direta ou
+      // invertida); nos eixos de dimensão é o texto do rótulo, sem caixa.
+      const kk = linhas.map((l) => porSafra ? String(l.key) : String(l.lb || l.key).toLowerCase());
+      idx.sort((a, b) => (kk[a] < kk[b] ? -dir : kk[a] > kk[b] ? dir : 0));
+      return idx.map((i) => linhas[i]);
+    }
+    const oc = cols.find((c) => c.key === ordKey);
+    if (!oc) return linhas;
+    // Valor calculado UMA vez por linha (não dentro do comparador): pirCel_ varre as safras da linha.
+    const vs = linhas.map((l) => {
+      const c = pirCel_(l, oc, base, diaOk, soMaduras);
+      return (c.vazia || c.v == null || !isFinite(c.v)) ? null : c.v;
+    });
+    idx.sort((a, b) => {
+      const va = vs[a], vb = vs[b];
+      if (va == null) return (vb == null) ? 0 : 1;   // sem valor sempre no fim
+      if (vb == null) return -1;
+      return va < vb ? -dir : va > vb ? dir : 0;
+    });
+    return idx.map((i) => linhas[i]);
+  }, [linhas, ordKey, ordDir, base, diaOk, soMaduras, porSafra]);
+  // ⚠️⚠️ ÍNDICE NATURAL, não a posição na tela. O `celula` repassa este índice pro `pirHomologo_`, e na
+  // visão SEMANAL o homólogo é pareado por POSIÇÃO na janela (semana-calendário não tem homólogo exato
+  // num outro mês). Passando a posição DEPOIS de ordenar, a 1ª linha da tela compararia contra a 1ª
+  // semana do mês anterior mesmo sendo a 4ª semana — erro silencioso, do tipo que só aparece quando
+  // alguém decide algo com ele. Chave da linha é única nos dois eixos, então dá pra mapear.
+  const posNat = React.useMemo(() => {
+    const m = {};
+    linhas.forEach((l, i) => { m[l.key] = i; });
+    return m;
+  }, [linhas]);
+  // Rótulo do sort pro título do bloco: um print de tabela ordenada não pode parecer a ordem natural.
+  const ordLbl = !ordKey ? null
+    : ((ordKey === '_lb' ? (porSafra ? (gran === 'week' ? 'semana' : 'safra') : pirEixoCol_(eixoDef).toLowerCase())
+                         : ((cols.find((c) => c.key === ordKey) || {}).lb || ordKey))
+       + (ordDir === 'desc' ? ' ▾' : ' ▴'));
+
   // Bolinha de comparação com o mês anterior. `plain` (contexto da safra) não leva: tamanho de safra não
   // é "melhor/pior", é só o que aconteceu.
   const bolinha = (c, v, ref, aberta) => {
@@ -6577,6 +6641,7 @@ function TabPiramideCoorte({ retencaoFaixa, chFilter, meta, retFaixaLive }) {
         <div className="support-title">
           {porSafra ? ('Safra por ' + (gran === 'week' ? 'semana' : 'dia')) : ('Por ' + pirEixoCol_(eixoDef).toLowerCase() + ' · ' + linhas.length + ' linha' + (linhas.length === 1 ? '' : 's'))} · {chLbl} · {faixaLbl} · mult {base === 'ftd' ? 'sobre FTD' : 'sobre D0'}
           {porSafra ? '' : (soMaduras ? ' · só safras maduras' : ' · ⚠ MISTURANDO MATURIDADES')}
+          {ordLbl ? ' · ordenado por ' + ordLbl : ''}
           {exTop3 ? (exOn ? ' · SEM as ' + PIR_EX_N + ' maiores campanhas' : (axCur.error ? ' · ⚠ COM todas as campanhas (o corte falhou)' : ' · carregando campanhas…')) : ''}
           {diaOk ? ' · último dia FECHADO ' + fmtBR_(diaOk) + (dataMax ? ' (dado entra até ' + fmtBR_(dataMax) + ', mas esse dia ainda não fechou)' : '') : ''}
           {comMeta > 0 ? ' · bateu a meta em ' + bateu + ' de ' + comMeta + ' células fechadas com meta' : ''}
@@ -6589,6 +6654,9 @@ function TabPiramideCoorte({ retencaoFaixa, chFilter, meta, retFaixaLive }) {
           <span><i className="pir-dot pir-dot-up" /> melhorou vs o mesmo período do mês anterior</span>
           <span><i className="pir-dot pir-dot-down" /> piorou</span>
           <span><i className="pir-sw pir-sw-open" /> ainda não fechou</span>
+          <span title={'Vale em qualquer coluna, inclusive a primeira.' + ordTip + '. Célula "·" (fora do cálculo) vai sempre pro fim, nas duas direções — senão o topo do "menor→maior" viraria uma lista de quem não fechou o horizonte.'}>
+            {ordLbl ? <strong style={{ color: 'var(--accent-yellow)' }}>ordenado por {ordLbl}</strong> : 'clique no cabeçalho pra ordenar'}
+          </span>
           {prev.error && <span style={{ color: 'var(--negative)' }}>⚠ falhou buscar o mês anterior — sem bolinhas ({prev.error})</span>}
           {soMaduras && <span style={{ color: 'var(--accent-yellow)' }}>⚠ só safras maduras: as imaturas estão FORA do cálculo</span>}
           {/* --- avisos do EIXO. O de maturidade misturada é VERMELHO e não some: fora do eixo de safra
@@ -6688,12 +6756,20 @@ function TabPiramideCoorte({ retencaoFaixa, chFilter, meta, retFaixaLive }) {
           <table className="ch-table pir-table">
             <thead>
               <tr>
-                <th>{porSafra ? (gran === 'week' ? 'Semana do FTD' : 'Safra') : pirEixoCol_(eixoDef)}</th>
+                {/* Cabeçalho clicável = ordenação. A seta ▾/▴ é a única marca de que a ordem não é a
+                    natural, então ela mora no rótulo (não num ícone à parte que sai de um print). */}
+                <th className={'pir-th-ord' + (ordKey === '_lb' ? ' pir-th-on' : '')}
+                    onClick={() => onOrd('_lb')}
+                    title={(porSafra ? 'Ordem natural: cronológica.' : 'Ordem natural: ' + (eixo === 'faixa' || eixo === 'grupo' ? 'a escada da própria dimensão (faixa/grupo em ordem, não por volume).' : 'volume, maior primeiro.')) + ordTip}>
+                  {porSafra ? (gran === 'week' ? 'Semana do FTD' : 'Safra') : pirEixoCol_(eixoDef)}{ordSeta('_lb')}
+                </th>
                 {cols.map((c, i) => {
                   const mt = metaDe(c);
                   return (
-                    <th key={c.key} className={sepCls[i] || undefined} title={c.tip || undefined}>
-                      {c.lb}
+                    <th key={c.key} className={(sepCls[i] ? sepCls[i] + ' ' : '') + 'pir-th-ord' + (ordKey === c.key ? ' pir-th-on' : '')}
+                        onClick={() => onOrd(c.key)}
+                        title={(c.tip ? c.tip : '') + (c.plain ? '' : ' Célula que ainda não fechou entra na ordenação com o acumulado corrente (truncado), e "·" vai sempre pro fim.') + ordTip}>
+                      {c.lb}{ordSeta(c.key)}
                       {mt != null && (
                         <span className={'pir-meta-tag' + (metaDeriv ? ' pir-meta-deriv' : '')}
                               title={metaMix
@@ -6715,7 +6791,7 @@ function TabPiramideCoorte({ retencaoFaixa, chFilter, meta, retFaixaLive }) {
               </tr>
             </thead>
             <tbody>
-              {linhas.map((l, bi) => (
+              {linhasOrd.map((l) => (
                 <tr key={l.key}>
                   {/* Rótulo da linha. No eixo de dimensão o tooltip carrega o que a linha É: quantas
                       safras, de quando a quando e quantos FTDs — sem isso não há como saber se um
@@ -6729,7 +6805,7 @@ function TabPiramideCoorte({ retencaoFaixa, chFilter, meta, retFaixaLive }) {
                     {rotulo(l)}
                     {eixo === 'canal' && derivDeL(l) ? <i className="pir-deriv-mk" title="Meta CASCATEADA (derivada da regra do estudo), não declarada — ver a legenda."> †</i> : ''}
                   </td>
-                  {cols.map((c, i) => celula(l, c, sepCls[i], bi))}
+                  {cols.map((c, i) => celula(l, c, sepCls[i], posNat[l.key]))}
                 </tr>
               ))}
               {!linhas.length && (
