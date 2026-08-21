@@ -48,6 +48,38 @@ function apiPost_(payload, opts) {
 }
 
 // ============================================================
+// WARM-UP DAS ABAS — pré-carga depois da 1ª carga oficial
+// ============================================================
+// Antes: a montagem era 100% lazy — a aba só existia (e só fazia o seu fetch) na 1ª visita, então
+// TODO clique numa aba nova custava um round-trip de BQ inteiro na frente do usuário. Agora, quando o
+// payload oficial da 1ª carga chega, o shell monta as abas restantes ESCONDIDAS (display:none) pra que
+// cada uma dispare o seu fetch antes do clique. Efeito colateral aceito: trocar o slicer passa a
+// refazer o fetch de todas as abas montadas (já era assim pras visitadas).
+//
+// ⚠️ Montar tudo de uma vez são ~20 GETs simultâneos no Apps Script (limite de execuções por usuário
+// + cold start de 18s+ já observado). Então a montagem é ENFILEIRADA: só entra a próxima aba quando o
+// número de GETs em voo pro endpoint cai pra <= WARM_MAX_INFLIGHT. Se algum fetch pendurar, o
+// WARM_STALL_MS destrava a fila (senão a pré-carga morria na 1ª requisição travada).
+let INFLIGHT_GETS = 0;   // GETs de dados em voo (só os do ENDPOINT_URL) — contador do wrapper abaixo
+(function instrumentFetch_() {
+  if (!ENDPOINT_URL || typeof window === 'undefined' || !window.fetch || window.__rvopsFetchWrapped) return;
+  window.__rvopsFetchWrapped = true;
+  const orig = window.fetch.bind(window);
+  window.fetch = function (input, init) {
+    const url = typeof input === 'string' ? input : (input && input.url) || '';
+    const isData = url.indexOf(ENDPOINT_URL) === 0 && !(init && init.method && init.method !== 'GET');
+    if (!isData) return orig(input, init);
+    INFLIGHT_GETS++;
+    const done = () => { INFLIGHT_GETS = Math.max(0, INFLIGHT_GETS - 1); };
+    return orig(input, init).then(r => { done(); return r; }, e => { done(); throw e; });
+  };
+})();
+const WARM_MAX_INFLIGHT = 2;      // GETs de dados em voo tolerados antes da fila liberar a próxima aba
+const WARM_TICK_MS = 400;         // intervalo entre tentativas/montagens
+const WARM_STALL_MS = 20000;      // depois disso esperando, monta a próxima aba de qualquer jeito
+const WARM_SKIP = ['seguranca'];  // aba de config (só POSTs de admin) — não ganha nada sendo pré-carregada
+
+// ============================================================
 // MOCK DATA — Farol snapshot (22/05/2026) — usado enquanto ENDPOINT_URL = null
 // ============================================================
 const MOCK_META = { refDate: '22/05/2026', m0Days: 31 };
@@ -7592,6 +7624,33 @@ function App({ user, onLogout, config }) {
   // Montagem é LAZY: só monta a aba na 1ª visita (não dispara o fetch de todas no load).
   const [visitedTabs, setVisitedTabs] = React.useState({});
   React.useEffect(() => { setVisitedTabs(v => v[activeTabId] ? v : { ...v, [activeTabId]: true }); }, [activeTabId]);
+  // Pré-carga (1× por carga de página): assim que o payload oficial chega, enfileira a montagem das
+  // outras abas (ver WARM_* no topo). Sem cleanup por dependência: o timer NÃO pode ser cancelado quando
+  // o usuário clica "Atualizar" (state.loading volta a true no meio da fila) — só no unmount.
+  const warmStartedRef = React.useRef(false);
+  const warmTimerRef = React.useRef(null);
+  React.useEffect(() => () => { if (warmTimerRef.current) clearTimeout(warmTimerRef.current); }, []);
+  React.useEffect(() => {
+    if (warmStartedRef.current || !ENDPOINT_URL || !state.isLive || state.loading) return;
+    warmStartedRef.current = true;
+    const queue = visibleTabs
+      .map(t => t.id)
+      .filter(id => id !== activeTabId && WARM_SKIP.indexOf(id) < 0);
+    let waited = 0;
+    const step = () => {
+      if (!queue.length) { warmTimerRef.current = null; return; }
+      if (INFLIGHT_GETS > WARM_MAX_INFLIGHT && waited < WARM_STALL_MS) {
+        waited += WARM_TICK_MS;
+        warmTimerRef.current = setTimeout(step, WARM_TICK_MS);
+        return;
+      }
+      waited = 0;
+      const id = queue.shift();
+      setVisitedTabs(v => v[id] ? v : { ...v, [id]: true });
+      warmTimerRef.current = setTimeout(step, WARM_TICK_MS);
+    };
+    warmTimerRef.current = setTimeout(step, WARM_TICK_MS);
+  }, [state.isLive, state.loading]);
   const tabProps = {
     user, M: dispM, farol: farolMetrics, channels: fChannels, bp: state.bp,
     ggrChannels: fGgrChannels, ggrSafra: fGgrSafra, ggrSafraRoas: fGgrSafraRoas, ggrPayback: state.ggrPayback,
