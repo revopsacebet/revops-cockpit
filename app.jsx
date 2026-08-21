@@ -5831,14 +5831,16 @@ function pirTotal_(bins, col, base) {
 // fossem públicos que se pudesse escolher comprar.
 const PIR_EIXOS = [
   { k: 'safra',    lb: 'Safra',   tip: 'Uma linha por safra de FTD (dia ou semana) — o eixo nativo da aba: a escada de maturação.' },
-  { k: 'canal',    lb: 'Canal',   tip: 'Uma linha por canal, cobrindo todas as safras da janela. Cada linha é medida contra a META DO PRÓPRIO CANAL. Liga o "só safras maduras": sem ele, canal que comprou no começo do mês pareceria melhor só por idade.' },
+  { k: 'canal',    lb: 'Canal',  noun: 'canais',    tip: 'Uma linha por canal, cobrindo todas as safras da janela. Cada linha é medida contra a META DO PRÓPRIO CANAL. Liga o "só safras maduras": sem ele, canal que comprou no começo do mês pareceria melhor só por idade.' },
   { k: 'faixa',    lb: 'Faixa',   tip: 'Uma linha por faixa de valor do FTD, em ordem de faixa (é uma escada de valor, não um ranking de volume). O estudo não calibra régua por faixa — a meta do cabeçalho é a do recorte da tela.' },
-  { k: 'campanha', lb: 'Campanha', tip: 'Uma linha por utm_ftd_campaign, maior primeiro (puxa &byCampaign do BQ). São ~140 por mês: na cauda tem campanha de 2 FTDs, e ali um multiplicador de 40x é ruído, não performance.' },
+  { k: 'campanha', lb: 'Campanha', noun: 'campanhas', tip: 'Uma linha por utm_ftd_campaign, maior primeiro (puxa &byCampaign do BQ). São ~200 por mês: na cauda tem campanha de 2 FTDs, e ali um multiplicador de 40x é ruído, não performance — por isso o recorte "Top 20 + Outros" entra ligado aqui.' },
   // `lb` é o rótulo do BOTÃO (espaço é caro na régua — 5 botões já empurram o slicer pra 2ª linha em
   // 1280px) e `col` é o nome longo, usado no cabeçalho da 1ª coluna e nos textos. Só grupo difere.
   { k: 'grupo',    lb: 'Grupo', col: 'Grupo de risco', tip: '⚠ Uma linha por grupo de risco (puxa &byGrupo do BQ). O grupo é um snapshot de HOJE e é uma escada de RECÊNCIA, não um segmento de aquisição: diz onde a safra está agora, não que público ela era.' },
 ];
 const pirEixoCol_ = (e) => e.col || e.lb;
+// substantivo plural da dimensão, p/ o rótulo do "Outros (N campanhas)".
+const pirEixoNoun_ = (k) => { const e = PIR_EIXOS.find((x) => x.k === k); return (e && e.noun) || 'linhas'; };
 const PIR_SEM_CAMP = '(sem campanha)';
 // Linha com pouco FTD entra na tabela (nada de corte silencioso) mas NÃO manda na escala de cor: uma
 // campanha de 2 FTDs com mult 40x esticaria a rampa inteira e pintaria todo o resto de branco — a cor
@@ -5881,13 +5883,78 @@ function pirEixo_(rows, selCh, selFx, dim, base) {
   // reordenar por volume esconderia justamente a progressão, que é o que se vai olhar. Canal e campanha
   // vão por peso (na base do toggle), maior primeiro. O balde "sem X" vai pro fim em todos: ele não
   // disputa posição num ranking, é o resto.
-  const semX = (k) => (k === PIR_SEM_CAMP || k === 'sem grupo' || k === '(sem canal)' || k === '(sem faixa)') ? 1 : 0;
   if (dim === 'faixa' || dim === 'grupo') {
-    out.sort((a, b) => semX(a.key) - semX(b.key) || (a.key < b.key ? -1 : a.key > b.key ? 1 : 0));
+    out.sort((a, b) => pirBalde_(a.key) - pirBalde_(b.key) || (a.key < b.key ? -1 : a.key > b.key ? 1 : 0));
   } else {
-    out.sort((a, b) => semX(a.key) - semX(b.key) || b.peso - a.peso);
+    out.sort((a, b) => pirBalde_(a.key) - pirBalde_(b.key) || b.peso - a.peso);
   }
   return out;
+}
+// "Balde" = a linha do resto (FTD sem UTM, conta sem grupo). Não é um valor da dimensão: é quem não tem
+// valor nenhum. Por isso vai sempre pro fim, não disputa ranking e não entra no "Outros".
+function pirBalde_(k) {
+  return (k === PIR_SEM_CAMP || k === 'sem grupo' || k === '(sem canal)' || k === '(sem faixa)') ? 1 : 0;
+}
+// ============================================================
+// TOP N + "OUTROS" (pedido do Luis 21/08: "filtrar as maiores 20 campanhas em qntd de FTD e colocar o
+// resto num bloco Outros") — o eixo de campanha traz ~208 linhas, e a cauda tem campanha de 2 FTDs.
+// ============================================================
+// ⚠️ O CRITÉRIO É QTD DE FTD, não a base do toggle (FTD$/dep D0). É o critério de TAMANHO DE AMOSTRA, e é
+// ele que faz cauda ser cauda: campanha de 3 FTDs com 40x não é performance, é ruído. Consequência
+// aceita: como a ORDEM natural da tabela é por FTD$, uma linha com menos FTDs pode aparecer acima de uma
+// com mais — quem quer a tabela em ordem de volume clica em "Qtd FTD".
+// ⚠️ ORDENAR NÃO MUDA QUEM ESTÁ NA TABELA. O recorte é sempre "as N maiores em FTD"; clicar em D7 ▾
+// reordena as MESMAS linhas. Sem isso alguém leria o topo de uma tabela ordenada por D7 como "as 20
+// melhores campanhas", que é outra coisa (e quase sempre falsa: as melhores por multiplicador tendem a
+// ser as menores).
+// ⚠️ "OUTROS" É AGREGADO DE VERDADE (soma as bases por DIA e só então divide), não média de razões — e
+// guarda os `dias`, então o corte de maturidade por coluna continua valendo dentro dele.
+// ⚠️ O MÊS ANTERIOR USA O MESMO CONJUNTO DE CHAVES desta janela (e é DIFERENTE da regra do "sem as 3
+// maiores campanhas", onde cada janela perde as suas). A diferença: ali se REMOVE valor, e cortar
+// conjuntos diferentes de cada lado fabricaria a melhora. Aqui nada é removido — as 20 nomeadas + Outros
+// + o balde somam a janela inteira nos dois meses. Com o mesmo conjunto de nomes, "Outros melhorou" tem
+// significado exato ("tudo fora destas 20 melhorou"); com cada mês tendo os seus, seria blend contra
+// blend de composição diferente.
+const PIR_TOP_N = 20;
+const PIR_OUTROS = '__outros';
+// As N chaves que ficam nomeadas. O balde nunca disputa (ver pirBalde_).
+function pirTopNKeys_(linhas, n) {
+  return (linhas || []).filter((l) => !pirBalde_(l.key))
+    .slice().sort((a, b) => (b.nFtd || 0) - (a.nFtd || 0))
+    .slice(0, n).map((l) => l.key);
+}
+// Soma as safras (dia a dia) de várias linhas numa só — é o que permite ao "Outros" respeitar o corte de
+// maturidade coluna por coluna, igual a qualquer outra linha.
+function pirMergeDias_(linhas) {
+  const m = {};
+  (linhas || []).forEach((l) => (l.dias || []).forEach((d) => {
+    const a = m[d.key] || (m[d.key] = pirZero_(d.key, d.key));
+    PIR_NUM.forEach((f) => { a[f] += d[f] || 0; });
+  }));
+  return Object.keys(m).sort().map((k) => m[k]);
+}
+function pirComOutros_(linhas, keys, noun) {
+  if (!linhas || !keys) return linhas;
+  const set = {};
+  keys.forEach((k) => { set[k] = 1; });
+  const dentro = [], fora = [], balde = [];
+  linhas.forEach((l) => {
+    if (pirBalde_(l.key)) balde.push(l);
+    else if (set[l.key]) dentro.push(l);
+    else fora.push(l);
+  });
+  if (!fora.length) return linhas;
+  const dias = pirMergeDias_(fora);
+  const outros = {
+    key: PIR_OUTROS, _outros: true, _n: fora.length,
+    lb: 'Outros (' + fora.length + ' ' + noun + ')',
+    dias: dias,
+    ini: dias.length ? dias[0].key : null,
+    fim: dias.length ? dias[dias.length - 1].key : null,
+    nFtd: fora.reduce((s, l) => s + (l.nFtd || 0), 0),
+    peso: fora.reduce((s, l) => s + (l.peso || 0), 0),
+  };
+  return dentro.concat([outros], balde);
 }
 // Célula de UMA linha, nos dois eixos. Devolve o valor + o estado da maturação, que é o que a tela pinta.
 //   eixo SAFRA (linha sem `dias`): comportamento original — a linha inteira fecha ou não (na semanal, só
@@ -6243,6 +6310,10 @@ function TabPiramideCoorte({ retencaoFaixa, chFilter, meta, retFaixaLive }) {
   const [soMaduras, setSoMaduras] = usePersistedState('rvops:pirSoMaduras', false);
   // "Sem as 3 maiores campanhas" — cada janela perde as SUAS (ver o bloco de comentário do pirTopCamp_).
   const [exTop3, setExTop3] = usePersistedState('rvops:pirExTop3', false);
+  // "Top N + Outros": recorte de LINHA (ver pirTopNKeys_). Padrão LIGADO — o eixo que motivou isso traz
+  // ~208 campanhas e a cauda, além de ilegível, esticava a escala de cor da tabela inteira. Nada é
+  // escondido: o resto vira uma linha agregada, e as linhas visíveis continuam somando o Total.
+  const [topN, setTopN] = usePersistedState('rvops:pirTopN', true);
   // Trocar pra um eixo de dimensão LIGA o "só safras maduras" (ver PIR_EIXOS): sem isso a primeira tela
   // que a pessoa vê compara canais com maturidades diferentes, que é a leitura errada mais fácil de
   // fazer aqui. É um setState VISÍVEL (a caixinha marca), não uma regra escondida — dá pra desligar, e
@@ -6347,10 +6418,24 @@ function TabPiramideCoorte({ retencaoFaixa, chFilter, meta, retFaixaLive }) {
   const temPrev = binsPrev.length > 0;
   // --- LINHAS DA TABELA. Eixo de safra = os próprios bins (comportamento original, intocado); eixo de
   // dimensão = uma linha por valor, cada uma carregando as safras que a compõem.
-  const linhas = React.useMemo(() => porSafra ? bins : pirEixo_(rows, selCh, selFx, eixo, base),
+  const linhasBase = React.useMemo(() => porSafra ? bins : pirEixo_(rows, selCh, selFx, eixo, base),
     [bins, eixo, chKey, fxKey, base, exOn, axCur.rows, retencaoFaixa]);
-  const linhasPrev = React.useMemo(() => porSafra ? null : pirEixo_(prevRows || [], selCh, selFx, eixo, base),
+  const linhasPrevBase = React.useMemo(() => porSafra ? null : pirEixo_(prevRows || [], selCh, selFx, eixo, base),
     [binsPrev, eixo, chKey, fxKey, base, exTop3, exOn, axPrev.rows, prev.rows]);
+  // --- TOP N + OUTROS (ver o bloco do pirTopNKeys_). Só nos eixos em que a ordem é VOLUME: em faixa e
+  // grupo as linhas são uma escada ordinal e agrupar "as menores" num Outros destruiria a leitura — lá o
+  // controle nem aparece. E só aparece quando de fato faz algo (mais linhas que o teto).
+  const eixoVolume = (eixo === 'canal' || eixo === 'campanha');
+  const podeTopN = !porSafra && eixoVolume && linhasBase.length > PIR_TOP_N;
+  const topNOn = podeTopN && !!topN;
+  const topKeys = React.useMemo(() => topNOn ? pirTopNKeys_(linhasBase, PIR_TOP_N) : null, [topNOn, linhasBase]);
+  const nOutros = topNOn ? Math.max(0, linhasBase.filter((l) => !pirBalde_(l.key)).length - PIR_TOP_N) : 0;
+  const noun = pirEixoNoun_(eixo);
+  const linhas = React.useMemo(() => topNOn ? pirComOutros_(linhasBase, topKeys, noun) : linhasBase,
+    [linhasBase, topKeys, topNOn, noun]);
+  // ⚠️ O mês anterior é recortado nas MESMAS chaves (não nas 20 maiores DELE) — ver o bloco de comentário.
+  const linhasPrev = React.useMemo(() => topNOn ? pirComOutros_(linhasPrevBase, topKeys, noun) : linhasPrevBase,
+    [linhasPrevBase, topKeys, topNOn, noun]);
   // Homólogo de linha de dimensão é por CHAVE (o "Google" de agosto contra o "Google" de julho), não por
   // posição: o ranking muda de mês pra mês e casar por posição compararia canais diferentes.
   const prevPorKey = React.useMemo(() => {
@@ -6621,6 +6706,17 @@ function TabPiramideCoorte({ retencaoFaixa, chFilter, meta, retFaixaLive }) {
           <button className={`preset-btn ${base === 'd0' ? 'active' : ''}`} onClick={() => setBase('d0')}
                   title="Acumulado ÷ depósito do D0. A coluna D0 sai (seria 1,00x sempre).">sobre D0</button>
         </div>
+        {podeTopN && (
+        <label className="pir-tgl" style={{ marginLeft: '12px' }}
+               title={'Deixa nomeadas as ' + PIR_TOP_N + ' maiores em QTD DE FTD e agrega o resto numa linha "Outros". '
+                    + 'Nada sai da conta: as linhas visíveis somam o mesmo Total. '
+                    + '⚠️ O critério é quantidade de FTD (tamanho de amostra), não multiplicador — ordenar por outra coluna '
+                    + 'muda a ORDEM, não quem está na tabela. '
+                    + '⚠️ O mês anterior usa o MESMO conjunto de ' + PIR_TOP_N + ', então "Outros" quer dizer "tudo fora destas ' + PIR_TOP_N + '" nos dois meses.'}>
+          <input type="checkbox" checked={!!topN} onChange={(e) => setTopN(e.target.checked)} />
+          Top {PIR_TOP_N} + Outros <span style={{ opacity: .6 }}>{topNOn ? '(' + nOutros + ' ' + noun + ' numa linha)' : '(' + linhasBase.length + ' linhas na tela)'}</span>
+        </label>
+        )}
         <label className={'pir-tgl' + (!porSafra && !soMaduras ? ' pir-tgl-warn' : '')} style={{ marginLeft: '12px' }}
                title={'Tira do CÁLCULO (não só da tela) toda safra que ainda não fechou o horizonte da coluna. Ligado, o Total de cada coluna usa só coorte madura — é o número comparável com a meta. Desligado, entra tudo e o Total bate com a aba Multiplicadores e Retenção.'
                     + (porSafra ? '' : ' ⚠️ Neste eixo cada LINHA cobre todas as safras da janela: desligado, uma linha pode estar mais madura que a outra e a comparação entre linhas passa a medir idade de safra. Por isso trocar de eixo liga este toggle.')}>
@@ -6641,6 +6737,7 @@ function TabPiramideCoorte({ retencaoFaixa, chFilter, meta, retFaixaLive }) {
         <div className="support-title">
           {porSafra ? ('Safra por ' + (gran === 'week' ? 'semana' : 'dia')) : ('Por ' + pirEixoCol_(eixoDef).toLowerCase() + ' · ' + linhas.length + ' linha' + (linhas.length === 1 ? '' : 's'))} · {chLbl} · {faixaLbl} · mult {base === 'ftd' ? 'sobre FTD' : 'sobre D0'}
           {porSafra ? '' : (soMaduras ? ' · só safras maduras' : ' · ⚠ MISTURANDO MATURIDADES')}
+          {topNOn ? ' · TOP ' + PIR_TOP_N + ' em qtd FTD + Outros (' + nOutros + ' ' + noun + ')' : ''}
           {ordLbl ? ' · ordenado por ' + ordLbl : ''}
           {exTop3 ? (exOn ? ' · SEM as ' + PIR_EX_N + ' maiores campanhas' : (axCur.error ? ' · ⚠ COM todas as campanhas (o corte falhou)' : ' · carregando campanhas…')) : ''}
           {diaOk ? ' · último dia FECHADO ' + fmtBR_(diaOk) + (dataMax ? ' (dado entra até ' + fmtBR_(dataMax) + ', mas esse dia ainda não fechou)' : '') : ''}
@@ -6670,6 +6767,11 @@ function TabPiramideCoorte({ retencaoFaixa, chFilter, meta, retFaixaLive }) {
           {!porSafra && soMaduras && (
             <span title="Por coluna, entram só as safras que já fecharam aquele horizonte — as mesmas datas em todas as linhas, que é o que torna a comparação honesta. O tooltip de cada célula diz quantas safras entraram.">
               cada célula usa só as safras que fecharam AQUELE horizonte (o tooltip diz quantas)
+            </span>
+          )}
+          {topNOn && (
+            <span title={'Recorte por QTD DE FTD (tamanho de amostra), não por multiplicador. As ' + PIR_TOP_N + ' nomeadas + Outros + o balde somam a janela inteira — o Total do rodapé não muda. Ordenar por outra coluna reordena as MESMAS linhas: o topo de uma tabela ordenada por D7 não é "as ' + PIR_TOP_N + ' melhores". O mês anterior usa o MESMO conjunto de chaves, então a bolinha do Outros compara "tudo fora destas ' + PIR_TOP_N + '" contra o mesmo recorte de lá.'}>
+              Top {PIR_TOP_N} em qtd FTD · o resto agregado em <strong>Outros</strong> ({nOutros} {noun}) <span style={{ opacity: .6 }}>— nada sai da conta</span>
             </span>
           )}
           {!porSafra && (
@@ -6792,13 +6894,18 @@ function TabPiramideCoorte({ retencaoFaixa, chFilter, meta, retFaixaLive }) {
             </thead>
             <tbody>
               {linhasOrd.map((l) => (
-                <tr key={l.key}>
+                <tr key={l.key} className={l._outros ? 'pir-row-bucket' : undefined}>
                   {/* Rótulo da linha. No eixo de dimensão o tooltip carrega o que a linha É: quantas
                       safras, de quando a quando e quantos FTDs — sem isso não há como saber se um
                       multiplicador alto é performance ou uma campanha de 3 FTDs. */}
                   <td className={'ch-name' + (!porSafra && (l.nFtd || 0) < PIR_EIXO_MIN_QTD ? ' pir-thin' : '')}
                       title={porSafra
                         ? (gran === 'week' ? ('Safras de ' + fmtBR_(l.ini) + ' a ' + fmtBR_(l.fim)) : undefined)
+                        : l._outros
+                        ? ('Agregado das ' + l._n + ' ' + noun + ' fora do Top ' + PIR_TOP_N + ' (as ' + PIR_TOP_N + ' maiores em qtd de FTD ficam nomeadas acima). '
+                           + pirInt_(l.nFtd) + ' FTDs · ' + l.dias.length + ' safras (' + fmtBR_(l.ini) + ' a ' + fmtBR_(l.fim) + '). '
+                           + 'É soma de bases dividida no fim (não média de razões), e respeita o corte de maturidade coluna por coluna. '
+                           + 'A bolinha compara com o MESMO recorte no mês anterior — "tudo fora destas ' + PIR_TOP_N + '".')
                         : (l.key + ' — ' + l.dias.length + ' safra' + (l.dias.length === 1 ? '' : 's')
                            + ' (' + fmtBR_(l.ini) + ' a ' + fmtBR_(l.fim) + ') · ' + pirInt_(l.nFtd) + ' FTDs'
                            + ((l.nFtd || 0) < PIR_EIXO_MIN_QTD ? ' · ⚠ amostra pequena: fora da escala de cor, e o multiplicador aqui oscila muito' : ''))}>
@@ -6896,6 +7003,21 @@ function TabPiramideCoorte({ retencaoFaixa, chFilter, meta, retFaixaLive }) {
           depositante”, G2 dormente de massa. Safra nova cai em grupo ativo <em>por ser nova</em>. A leitura válida
           é “onde a safra desta janela está hoje”; tratar grupo como público de aquisição, ou comparar janelas
           de idades diferentes, produz conclusão invertida.
+          {' '}<strong>“Top {PIR_TOP_N} + Outros”</strong> (só nos eixos de canal e campanha, e só quando há mais de
+          {' '}{PIR_TOP_N} linhas) deixa nomeadas as {PIR_TOP_N} maiores em <strong>quantidade de FTD</strong> e agrega o resto
+          numa linha <em>Outros</em> — que é agregado de verdade (soma as bases por dia e divide no fim) e respeita o
+          corte de maturidade coluna por coluna. <strong>Nada sai da conta:</strong> as linhas visíveis somam o mesmo
+          Total do rodapé, e é justamente por isso que a escala de cor volta a dizer algo (a cauda de campanhas de 2 ou 3
+          FTDs esticava a rampa da tabela inteira).
+          {' '}⚠️ <strong>O critério é quantidade, não multiplicador</strong>, e <strong>ordenar não muda quem está na
+          tabela</strong> — o topo de uma tabela ordenada por D7 não é “as {PIR_TOP_N} melhores campanhas”: as melhores por
+          multiplicador tendem a ser justamente as menores. E como a ordem natural é por FTD$, uma linha com menos FTDs
+          pode aparecer acima de uma com mais; clique em <em>Qtd FTD</em> para ver a tabela em ordem de volume.
+          {' '}⚠️ O <strong>mês anterior usa o MESMO conjunto</strong> de {PIR_TOP_N} chaves — diferente do “sem as 3 maiores
+          campanhas”, onde cada janela perde as suas. Ali se <em>remove</em> valor, e cortar conjuntos diferentes de cada
+          lado fabricaria a melhora; aqui nada é removido, então com os mesmos nomes “Outros melhorou” quer dizer
+          exatamente “tudo fora destas {PIR_TOP_N} melhorou”. O balde <em>(sem campanha)</em> não é uma campanha: não ocupa
+          vaga no Top {PIR_TOP_N} nem entra no Outros — fica na linha dele, no fim.
           {' '}<strong>O rodapé não muda com o eixo</strong> — é sempre o Total da janela, e a soma das linhas fecha
           com ele (é um bom teste de sanidade ao trocar de eixo).
           {' '}<strong>Por que a tabela é uma escada.</strong> Uma célula só fecha quando <strong>safra + horizonte ≤ {diaOk ? fmtBR_(diaOk) : 'último dia fechado'}</strong>.
