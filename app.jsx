@@ -5759,6 +5759,23 @@ function pirSepCls_(cols) {
     return (ini ? 'pir-sep' : '') + (ini && fim ? ' ' : '') + (fim ? 'pir-sep-end' : '');
   });
 }
+// Campos numéricos que a pirâmide soma. UM só lugar de propósito: `pirBins_` (linhas de safra) e
+// `pirEixo_` (linhas de canal/faixa/campanha/grupo) têm que somar exatamente a mesma lista — se uma
+// lista esquecer um campo, o mesmo recorte devolve números diferentes em dois eixos e a divergência
+// chega como "bug do canal X", que é o pior lugar pra procurar.
+const PIR_NUM = ['qtd', 'ftd', 'd0', 'vd1', 'vd3', 'vd4', 'vw1', 'vw2', 'vd30', 'vm0'];
+function pirZero_(key, iso) {
+  const a = { key: key, ini: iso, fim: iso };
+  PIR_NUM.forEach((f) => { a[f] = 0; });
+  return a;
+}
+function pirAcc_(a, r) {
+  const iso = String(r.date);
+  if (iso < a.ini) a.ini = iso;
+  if (iso > a.fim) a.fim = iso;
+  PIR_NUM.forEach((f) => { a[f] += r[f] || 0; });
+  return a;
+}
 // Agrupa as safras da janela em linhas da pirâmide. `ini`/`fim` guardam a borda real do bin — o `fim`
 // é quem decide maturação (ver pirFechada_) e o `ini` rotula a semana.
 function pirBins_(rows, selCh, selFx, gran) {
@@ -5767,12 +5784,7 @@ function pirBins_(rows, selCh, selFx, gran) {
     if (!selCh(r.canal) || !selFx(r.faixa)) return;
     const iso = String(r.date);
     const k = (gran === 'week') ? weekStartISO_(iso) : iso;
-    const a = m[k] || (m[k] = { key: k, ini: iso, fim: iso, qtd: 0, ftd: 0, d0: 0, vd1: 0, vd3: 0, vd4: 0, vw1: 0, vw2: 0, vd30: 0, vm0: 0 });
-    if (iso < a.ini) a.ini = iso;
-    if (iso > a.fim) a.fim = iso;
-    a.qtd += r.qtd || 0; a.ftd += r.ftd || 0; a.d0 += r.d0 || 0;
-    a.vd1 += r.vd1 || 0; a.vd3 += r.vd3 || 0; a.vd4 += r.vd4 || 0;
-    a.vw1 += r.vw1 || 0; a.vw2 += r.vw2 || 0; a.vd30 += r.vd30 || 0; a.vm0 += r.vm0 || 0;
+    pirAcc_(m[k] || (m[k] = pirZero_(k, iso)), r);
   });
   return Object.keys(m).sort().map((k) => m[k]);
 }
@@ -5794,16 +5806,136 @@ function pirTotal_(bins, col, base) {
   }, {});
   return pirValor_(col, t, base);
 }
+// ============================================================
+// EIXO DA PIRÂMIDE (pedido do Luis 21/08: "quero ver o desenvolvimento dos multiplicadores por canal,
+// por faixa, por campanha, por grupo de risco")
+// ============================================================
+// As COLUNAS (horizontes) não mudam; muda o que cada LINHA é. Safra é o eixo nativo — a escada — e
+// segue sendo o padrão.
+//
+// ⚠️⚠️ FORA DO EIXO DE SAFRA A ESCADA NÃO EXISTE, e é exatamente aí que o número mente fácil: a linha
+// "Google" cobre TODAS as safras da janela, então a coluna D30 dela mistura a safra de 01/08 (viveu 30
+// dias) com a de 19/08 (viveu um). Se o Google comprou no começo do mês e o Meta no fim, o D30 do
+// Google sai maior SÓ POR IDADE — e nada na tela diria isso. Daí as três decisões:
+//   1) a linha de dimensão guarda as SAFRAS que a compõem (`dias`), nunca só o agregado;
+//   2) "só safras maduras" passa a valer POR CÉLULA (entram só as safras que fecharam AQUELE
+//      horizonte) — e com o toggle ligado todas as linhas veem o mesmo conjunto de safras por coluna,
+//      que é o que torna a comparação entre linhas honesta;
+//   3) por isso trocar o eixo LIGA o toggle, e desligá-lo com eixo de dimensão grita na tela.
+// Sobra o mix DENTRO da janela (canal concentrado no dia 3 vs espalhado) — 2ª ordem, está no "Como ler".
+//
+// ⚠️ GRUPO DE RISCO é o eixo mais perigoso dos quatro, e não é pela conta: `grupo_risco_atual` é UM
+// snapshot de HOJE (não existe histórico) e os grupos são uma escada de RECÊNCIA. A linha "Grupo 1" não
+// é um segmento de aquisição, é "quem estava ativo quando o snapshot rodou" — safra nova cai em grupo
+// ativo por ser nova. Serve pra ver COMO A SAFRA DA JANELA ESTÁ HOJE, não pra comparar grupos como se
+// fossem públicos que se pudesse escolher comprar.
+const PIR_EIXOS = [
+  { k: 'safra',    lb: 'Safra',   tip: 'Uma linha por safra de FTD (dia ou semana) — o eixo nativo da aba: a escada de maturação.' },
+  { k: 'canal',    lb: 'Canal',   tip: 'Uma linha por canal, cobrindo todas as safras da janela. Cada linha é medida contra a META DO PRÓPRIO CANAL. Liga o "só safras maduras": sem ele, canal que comprou no começo do mês pareceria melhor só por idade.' },
+  { k: 'faixa',    lb: 'Faixa',   tip: 'Uma linha por faixa de valor do FTD, em ordem de faixa (é uma escada de valor, não um ranking de volume). O estudo não calibra régua por faixa — a meta do cabeçalho é a do recorte da tela.' },
+  { k: 'campanha', lb: 'Campanha', tip: 'Uma linha por utm_ftd_campaign, maior primeiro (puxa &byCampaign do BQ). São ~140 por mês: na cauda tem campanha de 2 FTDs, e ali um multiplicador de 40x é ruído, não performance.' },
+  // `lb` é o rótulo do BOTÃO (espaço é caro na régua — 5 botões já empurram o slicer pra 2ª linha em
+  // 1280px) e `col` é o nome longo, usado no cabeçalho da 1ª coluna e nos textos. Só grupo difere.
+  { k: 'grupo',    lb: 'Grupo', col: 'Grupo de risco', tip: '⚠ Uma linha por grupo de risco (puxa &byGrupo do BQ). O grupo é um snapshot de HOJE e é uma escada de RECÊNCIA, não um segmento de aquisição: diz onde a safra está agora, não que público ela era.' },
+];
+const pirEixoCol_ = (e) => e.col || e.lb;
+const PIR_SEM_CAMP = '(sem campanha)';
+// Linha com pouco FTD entra na tabela (nada de corte silencioso) mas NÃO manda na escala de cor: uma
+// campanha de 2 FTDs com mult 40x esticaria a rampa inteira e pintaria todo o resto de branco — a cor
+// passaria a medir tamanho de amostra.
+const PIR_EIXO_MIN_QTD = 30;
+function pirEixoKey_(r, dim) {
+  if (dim === 'canal') return r.canal || '(sem canal)';
+  if (dim === 'faixa') return r.faixa || '(sem faixa)';
+  if (dim === 'grupo') return (r.grupo == null || r.grupo === '') ? 'sem grupo' : String(r.grupo);
+  return r.campanha || PIR_SEM_CAMP;
+}
+function pirEixoLbl_(k, dim) {
+  if (dim === 'faixa') return fxLabel_(k);
+  if (dim === 'grupo') return grupoLabel_(k);
+  if (dim === 'campanha') return (k === PIR_SEM_CAMP) ? k : pirCampLbl_(k);
+  return k;
+}
+// Uma linha por valor da dimensão, cada uma guardando as SAFRAS (dias) que a compõem — a maturação por
+// célula depende disso (ver o bloco acima). O grão de dentro é sempre DIA, mesmo com o toggle semanal:
+// é o grão em que a maturação é exata.
+function pirEixo_(rows, selCh, selFx, dim, base) {
+  const m = {};
+  (rows || []).forEach((r) => {
+    if (!selCh(r.canal) || !selFx(r.faixa)) return;
+    const kv = pirEixoKey_(r, dim);
+    const g = m[kv] || (m[kv] = { key: kv, lb: pirEixoLbl_(kv, dim), dias: {}, ini: null, fim: null, peso: 0, nFtd: 0 });
+    const iso = String(r.date);
+    pirAcc_(g.dias[iso] || (g.dias[iso] = pirZero_(iso, iso)), r);
+    if (g.ini == null || iso < g.ini) g.ini = iso;
+    if (g.fim == null || iso > g.fim) g.fim = iso;
+    g.peso += (base === 'd0') ? (r.d0 || 0) : (r.ftd || 0);
+    g.nFtd += r.qtd || 0;
+  });
+  const out = Object.keys(m).map((k) => {
+    const g = m[k];
+    g.dias = Object.keys(g.dias).sort().map((d) => g.dias[d]);
+    return g;
+  });
+  // FAIXA e GRUPO são ORDINAIS (escada de valor / escada de recência) e vão em ordem de CHAVE —
+  // reordenar por volume esconderia justamente a progressão, que é o que se vai olhar. Canal e campanha
+  // vão por peso (na base do toggle), maior primeiro. O balde "sem X" vai pro fim em todos: ele não
+  // disputa posição num ranking, é o resto.
+  const semX = (k) => (k === PIR_SEM_CAMP || k === 'sem grupo' || k === '(sem canal)' || k === '(sem faixa)') ? 1 : 0;
+  if (dim === 'faixa' || dim === 'grupo') {
+    out.sort((a, b) => semX(a.key) - semX(b.key) || (a.key < b.key ? -1 : a.key > b.key ? 1 : 0));
+  } else {
+    out.sort((a, b) => semX(a.key) - semX(b.key) || b.peso - a.peso);
+  }
+  return out;
+}
+// Célula de UMA linha, nos dois eixos. Devolve o valor + o estado da maturação, que é o que a tela pinta.
+//   eixo SAFRA (linha sem `dias`): comportamento original — a linha inteira fecha ou não (na semanal, só
+//     quando a ÚLTIMA safra dela fecha).
+//   eixo DIMENSÃO: filtra as safras da linha pelo horizonte da coluna. Com o toggle ligado entram só as
+//     maduras (`vazia` quando nenhuma fechou); desligado entra tudo e a célula fica ABERTA enquanto
+//     sobrar uma safra imatura — é o aviso de que ali há mistura de maturidades.
+function pirCel_(l, col, base, diaOk, soMaduras) {
+  if (!l.dias) {
+    const aberta = !pirFechada_(l.fim, col.hz, diaOk);
+    return { v: pirValor_(col, l, base), aberta: aberta, vazia: aberta && !!soMaduras, dias: [l], n: 1, nFech: aberta ? 0 : 1 };
+  }
+  const fech = l.dias.filter((d) => pirFechada_(d.fim, col.hz, diaOk));
+  const usa = soMaduras ? fech : l.dias;
+  return {
+    v: usa.length ? pirTotal_(usa, col, base) : null,
+    aberta: !soMaduras && fech.length < l.dias.length,
+    vazia: !!soMaduras && !fech.length,
+    dias: usa, n: l.dias.length, nFech: fech.length,
+  };
+}
+// Homólogo de uma linha de DIMENSÃO: a MESMA linha no mês anterior, recortada nos MESMOS dias-do-mês que
+// entraram na célula. Sem o recorte, o D30 do "Google" compararia 5 dias de agosto contra 31 de julho —
+// mediria maturação e chamaria de melhora. É o mesmo cuidado do `refBins` do Total.
+function pirRefEixo_(lPrev, cel, col, base) {
+  if (!lPrev || !lPrev.dias || !cel.dias || !cel.dias.length) return null;
+  const dd = {};
+  cel.dias.forEach((d) => { dd[String(d.key).slice(8, 10)] = 1; });
+  const usa = lPrev.dias.filter((d) => dd[String(d.key).slice(8, 10)]);
+  return usa.length ? pirTotal_(usa, col, base) : null;
+}
 // Escala da coluna: SÓ células fechadas. Incluir célula aberta na escala faria o valor truncado de uma
 // safra de ontem puxar o mínimo e recolorir a coluna inteira — a cor passaria a medir maturidade.
-function pirEscala_(bins, col, base, dataMax) {
-  const vs = [];
-  bins.forEach((b) => {
-    if (!pirFechada_(b.fim, col.hz, dataMax)) return;
-    const v = pirValor_(col, b, base);
-    if (v != null && isFinite(v)) vs.push(v);
-  });
-  return vs.length ? { min: Math.min.apply(null, vs), max: Math.max.apply(null, vs) } : null;
+// ⚠️ `minQtd` (só nos eixos de dimensão) tira da ESCALA as linhas pequenas — não da tabela. Se NENHUMA
+// linha alcança o mínimo, a escala volta a usar todas: coluna sem cor nenhuma seria pior que uma rampa
+// feita de amostra pequena, e o aviso disso já está na legenda.
+function pirEscala_(linhas, col, base, diaOk, soMaduras, minQtd) {
+  const calc = (mq) => {
+    const vs = [];
+    (linhas || []).forEach((l) => {
+      if (mq && (l.nFtd || 0) < mq) return;
+      const c = pirCel_(l, col, base, diaOk, soMaduras);
+      if (c.aberta || c.vazia || c.v == null || !isFinite(c.v)) return;
+      vs.push(c.v);
+    });
+    return vs.length ? { min: Math.min.apply(null, vs), max: Math.max.apply(null, vs) } : null;
+  };
+  return calc(minQtd) || (minQtd ? calc(0) : null);
 }
 // ============================================================
 // META DA PIRÂMIDE — régua de CALENDÁRIO (compromisso do mês), não o nível BP.
@@ -6099,6 +6231,10 @@ function TabPiramideCoorte({ retencaoFaixa, chFilter, meta, retFaixaLive }) {
   const [gran, setGran] = usePersistedState('rvops:pirGran', 'day');
   const [base, setBase] = usePersistedState('rvops:pirBase', 'ftd');
   const [faixaSel, setFaixaSel] = React.useState([]);
+  // EIXO — o que cada LINHA é: 'safra' (nativo, a escada) | 'canal' | 'faixa' | 'campanha' | 'grupo'.
+  // Ver o bloco PIR_EIXOS: fora da safra a escada não existe e a maturação passa a valer por CÉLULA.
+  const [eixo, setEixo] = usePersistedState('rvops:pirEixo', 'safra');
+  const porSafra = eixo === 'safra';
   // ⚠️ Este toggle mexe no CÁLCULO, não só na tela. Ele substituiu um "ocultar os valores que ainda não
   // fecharam" que era só cosmético (pintava o texto de transparente) enquanto o Total seguia somando as
   // safras imaturas — a tela ficava limpa e o número, contaminado, que é o pior dos dois mundos.
@@ -6107,6 +6243,15 @@ function TabPiramideCoorte({ retencaoFaixa, chFilter, meta, retFaixaLive }) {
   const [soMaduras, setSoMaduras] = usePersistedState('rvops:pirSoMaduras', false);
   // "Sem as 3 maiores campanhas" — cada janela perde as SUAS (ver o bloco de comentário do pirTopCamp_).
   const [exTop3, setExTop3] = usePersistedState('rvops:pirExTop3', false);
+  // Trocar pra um eixo de dimensão LIGA o "só safras maduras" (ver PIR_EIXOS): sem isso a primeira tela
+  // que a pessoa vê compara canais com maturidades diferentes, que é a leitura errada mais fácil de
+  // fazer aqui. É um setState VISÍVEL (a caixinha marca), não uma regra escondida — dá pra desligar, e
+  // desligado a tela avisa em vermelho.
+  const trocaEixo = (k) => { setEixo(k); if (k !== 'safra') setSoMaduras(true); };
+  // Grão de dentro: com eixo de dimensão a maturação é filtrada por DIA (é o grão em que ela é exata),
+  // então o Total do rodapé também tem que ser montado por dia — senão a soma das linhas não fecha com
+  // o Total e a tela passa a mostrar duas versões do mesmo número.
+  const granEf = porSafra ? gran : 'day';
   // TUDO que decide maturação nesta aba usa `diaOk` (último dia COMPLETO), nunca o dataMax cru.
   const dataMax = meta && meta.dataMaxDate;
   const diaOk = ultimoDiaFechado_(dataMax);
@@ -6130,59 +6275,89 @@ function TabPiramideCoorte({ retencaoFaixa, chFilter, meta, retFaixaLive }) {
       .catch((e) => { if (vivo) setPrev({ rows: null, loading: false, error: String(e.message || e) }); });
     return () => { vivo = false; };
   }, [prevFrom, prevTo]);
-  // --- SEM AS N MAIORES CAMPANHAS: precisa do payload quebrado por campanha (&byCampaign=1), e nas DUAS
-  // janelas. Opt-in — a quebra multiplica as linhas do payload e a esmagadora maioria das visitas não usa.
+  // --- QUEBRA EXTRA (payload próprio), nas DUAS janelas. Opt-in: a quebra multiplica as linhas do
+  // payload e a esmagadora maioria das visitas não usa nem o eixo de campanha/grupo nem o corte do topo.
+  //   eixo campanha  → &byCampaign=1     eixo grupo → &byGrupo=1
+  //   "sem as N maiores campanhas" → &byCampaign=1 (em QUALQUER eixo: o corte é por campanha)
+  // ⚠️ byGrupo e byCampaign COMPÕEM (a linha volta com os dois) e é obrigatório pedir os DOIS quando o
+  // eixo é grupo e o corte do topo está ligado — senão as linhas voltam sem campanha, o corte não acha
+  // o que tirar e a tela mostra "sem as 3 maiores" COM as 3. É o mesmo bug que já zerou a tabela da aba
+  // Multiplicadores.
   const curFrom = (meta && meta.from) || null;
   const curTo   = (meta && meta.to)   || null;
-  const [campCur, setCampCur]   = React.useState({ rows: null, loading: false, error: null });
-  const [campPrev, setCampPrev] = React.useState({ rows: null, loading: false, error: null });
+  const axFlags = ((eixo === 'grupo') ? '&byGrupo=1' : '') + ((eixo === 'campanha' || exTop3) ? '&byCampaign=1' : '');
+  const axNeed = !!axFlags;
+  const [axCur, setAxCur]   = React.useState({ rows: null, loading: false, error: null });
+  const [axPrev, setAxPrev] = React.useState({ rows: null, loading: false, error: null });
   React.useEffect(() => {
-    if (!exTop3 || !ENDPOINT_URL || !curFrom || !curTo) return;
+    if (!axFlags || !ENDPOINT_URL || !curFrom || !curTo) return;
     let vivo = true;
-    setCampCur((s) => ({ ...s, loading: true, error: null }));
-    fetch(`${ENDPOINT_URL}?${authParam_()}&from=${curFrom}&to=${curTo}&only=retfaixa&byCampaign=1`)
+    setAxCur((s) => ({ ...s, loading: true, error: null }));
+    fetch(`${ENDPOINT_URL}?${authParam_()}&from=${curFrom}&to=${curTo}&only=retfaixa${axFlags}`)
       .then((r) => r.ok ? r.json() : Promise.reject(new Error('HTTP ' + r.status)))
-      .then((j) => { if (!vivo) return; if (j.error) throw new Error(j.error); setCampCur({ rows: j.retencaoFaixa || [], loading: false, error: null }); })
-      .catch((e) => { if (vivo) setCampCur({ rows: null, loading: false, error: String(e.message || e) }); });
+      .then((j) => { if (!vivo) return; if (j.error) throw new Error(j.error); setAxCur({ rows: j.retencaoFaixa || [], loading: false, error: null }); })
+      .catch((e) => { if (vivo) setAxCur({ rows: null, loading: false, error: String(e.message || e) }); });
     return () => { vivo = false; };
-  }, [exTop3, curFrom, curTo]);
+  }, [axFlags, curFrom, curTo]);
   React.useEffect(() => {
-    if (!exTop3 || !ENDPOINT_URL || !prevFrom || !prevTo) return;
+    if (!axFlags || !ENDPOINT_URL || !prevFrom || !prevTo) return;
     let vivo = true;
-    setCampPrev((s) => ({ ...s, loading: true, error: null }));
-    fetch(`${ENDPOINT_URL}?${authParam_()}&from=${prevFrom}&to=${prevTo}&only=retfaixa&byCampaign=1`)
+    setAxPrev((s) => ({ ...s, loading: true, error: null }));
+    fetch(`${ENDPOINT_URL}?${authParam_()}&from=${prevFrom}&to=${prevTo}&only=retfaixa${axFlags}`)
       .then((r) => r.ok ? r.json() : Promise.reject(new Error('HTTP ' + r.status)))
-      .then((j) => { if (!vivo) return; if (j.error) throw new Error(j.error); setCampPrev({ rows: j.retencaoFaixa || [], loading: false, error: null }); })
-      .catch((e) => { if (vivo) setCampPrev({ rows: null, loading: false, error: String(e.message || e) }); });
+      .then((j) => { if (!vivo) return; if (j.error) throw new Error(j.error); setAxPrev({ rows: j.retencaoFaixa || [], loading: false, error: null }); })
+      .catch((e) => { if (vivo) setAxPrev({ rows: null, loading: false, error: String(e.message || e) }); });
     return () => { vivo = false; };
-  }, [exTop3, prevFrom, prevTo]);
+  }, [axFlags, prevFrom, prevTo]);
   const fxKey = JSON.stringify(faixaSel);
   // Top N de CADA janela, no recorte da tela (canal+faixa) e na base do toggle.
-  const topCur = React.useMemo(() => pirTopCamp_(benchApostouRows_(campCur.rows || []), selCh, selFx, base, PIR_EX_N),
-    [campCur.rows, chKey, fxKey, base]);
-  const topPrev = React.useMemo(() => pirTopCamp_(benchApostouRows_(campPrev.rows || []), selCh, selFx, base, PIR_EX_N),
-    [campPrev.rows, chKey, fxKey, base]);
+  const topCur = React.useMemo(() => pirTopCamp_(benchApostouRows_(axCur.rows || []), selCh, selFx, base, PIR_EX_N),
+    [axCur.rows, chKey, fxKey, base]);
+  const topPrev = React.useMemo(() => pirTopCamp_(benchApostouRows_(axPrev.rows || []), selCh, selFx, base, PIR_EX_N),
+    [axPrev.rows, chKey, fxKey, base]);
   // ⚠️ O toggle só passa a valer QUANDO O DADO CHEGA. Enquanto carrega (ou se o fetch falhar) a tabela
   // segue mostrando TODAS as campanhas — e diz isso na tela. Um "sem as 3 maiores" que na verdade está
   // com as 3 é o tipo de erro que ninguém percebe olhando.
-  // ⚠️ `.length`: payload de campanha VAZIO não pode ligar o corte. `[]` é truthy, e sem esta guarda um
+  // ⚠️ `.length`: payload de quebra VAZIO não pode ligar o corte. `[]` é truthy, e sem esta guarda um
   // retorno vazio esvaziaria a pirâmide inteira com cara de "não teve safra na janela".
-  const exOn = !!(exTop3 && campCur.rows && campCur.rows.length);
-  const rows = exOn ? pirSemTop_(benchApostouRows_(campCur.rows), topCur) : rowsFull;
-  const bins = React.useMemo(() => pirBins_(rows, selCh, selFx, gran),
-    [retencaoFaixa, chKey, fxKey, gran, exOn, campCur.rows, base]);
+  const axHas = !!(axCur.rows && axCur.rows.length);
+  const exOn = !!(exTop3 && axHas);
+  // Eixos que SÓ existem com a quebra própria: sem o payload não há linha nenhuma pra montar, e a tela
+  // tem que dizer isso em vez de mostrar uma tabela vazia com cara de "não teve safra".
+  const axProprio = (eixo === 'campanha' || eixo === 'grupo');
+  const axPend = axProprio && !axHas;
+  const srcRows = (axNeed && axHas) ? benchApostouRows_(axCur.rows) : (axProprio ? [] : rowsFull);
+  const rows = exOn ? pirSemTop_(srcRows, topCur) : srcRows;
+  const bins = React.useMemo(() => pirBins_(rows, selCh, selFx, granEf),
+    [retencaoFaixa, chKey, fxKey, granEf, exOn, axCur.rows, base, eixo]);
   // ⚠️ SIMETRIA OBRIGATÓRIA na comparação com o mês anterior: se este mês perdeu o topo dele, o mês
   // anterior TEM que perder o topo dele. Faltando o dado de campanha do mês anterior, a comparação
   // simplesmente não acontece (bolinhas somem) — comparar "sem as 3 maiores" contra "com tudo" mediria
   // a exclusão e chamaria de melhora, que é justamente a ilusão que este toggle existe pra desfazer.
-  const exPrevOn = !!(exOn && campPrev.rows && campPrev.rows.length);
+  // ⚠️ E a fonte do mês anterior tem que ter a MESMA quebra: com eixo de grupo, o payload base não traz
+  // `grupo` — todas as linhas cairiam em "Sem grupo" e cada linha compararia contra o balde errado.
+  const exPrevOn = !!(exOn && axPrev.rows && axPrev.rows.length);
+  const prevSrc = axNeed ? benchApostouRows_(axPrev.rows || []) : benchApostouRows_(prev.rows || []);
   const prevRows = exTop3
-    ? (exPrevOn ? pirSemTop_(benchApostouRows_(campPrev.rows), topPrev) : null)
-    : benchApostouRows_(prev.rows || []);
-  const binsPrev = React.useMemo(() => pirBins_(prevRows || [], selCh, selFx, gran),
-    [prev.rows, chKey, fxKey, gran, exTop3, exOn, campPrev.rows, base]);
-  const homologo = pirHomologo_(binsPrev, gran);
+    ? (exPrevOn ? pirSemTop_(prevSrc, topPrev) : null)
+    : prevSrc;
+  const binsPrev = React.useMemo(() => pirBins_(prevRows || [], selCh, selFx, granEf),
+    [prev.rows, chKey, fxKey, granEf, exTop3, exOn, axPrev.rows, base, eixo]);
+  const homologo = pirHomologo_(binsPrev, granEf);
   const temPrev = binsPrev.length > 0;
+  // --- LINHAS DA TABELA. Eixo de safra = os próprios bins (comportamento original, intocado); eixo de
+  // dimensão = uma linha por valor, cada uma carregando as safras que a compõem.
+  const linhas = React.useMemo(() => porSafra ? bins : pirEixo_(rows, selCh, selFx, eixo, base),
+    [bins, eixo, chKey, fxKey, base, exOn, axCur.rows, retencaoFaixa]);
+  const linhasPrev = React.useMemo(() => porSafra ? null : pirEixo_(prevRows || [], selCh, selFx, eixo, base),
+    [binsPrev, eixo, chKey, fxKey, base, exTop3, exOn, axPrev.rows, prev.rows]);
+  // Homólogo de linha de dimensão é por CHAVE (o "Google" de agosto contra o "Google" de julho), não por
+  // posição: o ranking muda de mês pra mês e casar por posição compararia canais diferentes.
+  const prevPorKey = React.useMemo(() => {
+    const m = {};
+    (linhasPrev || []).forEach((l) => { m[l.key] = l; });
+    return m;
+  }, [linhasPrev]);
   // Base D0 → a coluna D0 seria 1,00x em toda linha (é a própria âncora). Sai da tela, como na aba
   // Multiplicadores, senão gasta uma coluna inteira pra repetir uma constante.
   const cols = PIR_COLS.filter((c) => !(base === 'd0' && c.key === 'd0'));
@@ -6205,19 +6380,41 @@ function TabPiramideCoorte({ retencaoFaixa, chFilter, meta, retFaixaLive }) {
   const chLbl = chLabel_(chFilter);
   const faixaLbl = faixaSel.length === 0 ? 'todas as faixas' : (faixaSel.length <= 2 ? faixaSel.map(fxLabel_).join(' + ') : faixaSel.length + ' faixas');
   const metaDe = (c) => (c.bp && bpScope) ? bpScope[c.bp] : null;
-  const rotulo = (b) => (gran === 'week') ? weekLabel_(b.key) : b.key.slice(8, 10) + '/' + b.key.slice(5, 7);
+  // --- META POR LINHA. No eixo de CANAL cada linha é medida contra a régua DO CANAL DELA: medir o
+  // Google (5,37x de D30) contra a meta do Total da Casa (4,87x) diria "bateu" onde o estudo diz que
+  // não, e é o erro que mais convida a decisão errada de verba. Nos outros eixos não existe régua por
+  // linha (o estudo não calibra faixa, campanha nem grupo) e vale a do recorte da tela — dito na legenda.
+  const bpRow = React.useMemo(() => {
+    if (eixo !== 'canal') return null;
+    const m = {};
+    (linhas || []).forEach((l) => { m[l.key] = pirBpScope_({ channels: [l.key] }, base, mkJanela, pesosMix); });
+    return m;
+  }, [eixo, linhas, base, mkJanela, pesosMix]);
+  const scopeDeL = (l) => (eixo === 'canal' && bpRow) ? bpRow[l.key] : bpScope;
+  const metaDeL = (l, c) => { const sc = scopeDeL(l); return (c.bp && sc) ? sc[c.bp] : null; };
+  const derivDeL = (l) => (eixo === 'canal')
+    ? (pirDerivada_({ channels: [l.key] }) || !!(bpRow && bpRow[l.key] && bpRow[l.key]._mix))
+    : metaDeriv;
+  const eixoDef = PIR_EIXOS.find((e) => e.k === eixo) || PIR_EIXOS[0];
+  const rotulo = (b) => porSafra
+    ? ((gran === 'week') ? weekLabel_(b.key) : b.key.slice(8, 10) + '/' + b.key.slice(5, 7))
+    : b.lb;
   const fmtDe = (c) => c.fmt || fmtMultiple;
   // n de safras fechadas por coluna — o rodapé mostra, e é o que separa o Total honesto do Total sujo.
   const fechadasDe = (c) => bins.filter((b) => pirFechada_(b.fim, c.hz, diaOk));
+  // Escala sempre sobre as LINHAS QUE ESTÃO NA TELA (é a comparação que o olho faz). Nos eixos de
+  // dimensão, linha com menos de PIR_EIXO_MIN_QTD FTDs fica fora da escala — ver pirEscala_.
+  const minEsc = porSafra ? 0 : PIR_EIXO_MIN_QTD;
   const escalas = {};
-  cols.forEach((c) => { if (!c.plain) escalas[c.key] = pirEscala_(bins, c, base, diaOk); });
+  cols.forEach((c) => { if (!c.plain) escalas[c.key] = pirEscala_(linhas, c, base, diaOk, soMaduras, minEsc); });
   let bateu = 0, comMeta = 0;
-  bins.forEach((b) => cols.forEach((c) => {
-    const mt = metaDe(c);
-    if (mt == null || c.plain || !pirFechada_(b.fim, c.hz, diaOk)) return;
+  (linhas || []).forEach((l) => cols.forEach((c) => {
+    const mt = metaDeL(l, c);
+    if (mt == null || c.plain) return;
+    const cel = pirCel_(l, c, base, diaOk, soMaduras);
+    if (cel.aberta || cel.vazia || cel.v == null) return;   // taxa de acerto só onde existe célula fechada
     comMeta++;
-    const v = pirValor_(c, b, base);
-    if (v != null && v >= mt) bateu++;
+    if (cel.v >= mt) bateu++;
   }));
 
   // Bolinha de comparação com o mês anterior. `plain` (contexto da safra) não leva: tamanho de safra não
@@ -6245,33 +6442,48 @@ function TabPiramideCoorte({ retencaoFaixa, chFilter, meta, retFaixaLive }) {
     });
     return out.length ? out : null;
   };
-  const celula = (b, c, sep, idx) => {
-    const v = pirValor_(c, b, base);
-    const aberta = !pirFechada_(b.fim, c.hz, diaOk);
-    const bAnt = homologo(b, idx);
-    const ref = bAnt ? pirValor_(c, bAnt, base) : null;
-    const mt = metaDe(c);
+  const celula = (l, c, sep, idx) => {
+    const cel = pirCel_(l, c, base, diaOk, soMaduras);
+    const v = cel.v;
+    const aberta = cel.aberta;
+    // Homólogo: no eixo de safra é o bin do mesmo dia do mês (na semanal, a mesma posição na janela); no
+    // eixo de dimensão é a MESMA linha do mês anterior, recortada nos mesmos dias que entraram AQUI.
+    let ref = null;
+    if (porSafra) {
+      const bAnt = homologo(l, idx);
+      ref = bAnt ? pirValor_(c, bAnt, base) : null;
+    } else if (temPrev) {
+      ref = pirRefEixo_(prevPorKey[l.key], cel, c, base);
+    }
+    const mt = metaDeL(l, c);
     // ⚠️ Vale TAMBÉM em célula aberta, pela mesma razão da bolinha verde: o acumulado só sobe, então
     // quem já passou a meta com o horizonte incompleto passou de vez. O contrário (ainda não passou)
     // é que não conclui nada — e por isso a linha de "bateu em N de M" no topo segue contando só as
     // células FECHADAS, que é onde existe taxa de acerto.
     const bateuAqui = mt != null && v != null && v >= mt;
+    // `fim` da linha = a safra MAIS NOVA que ela contém, então este é o dia em que a linha inteira fecha.
+    const fecha = (c.hz === 'm0') ? pirFimDoMes_(l.fim) : isoAddDays_(l.fim, PIR_HZ[c.hz]);
+    const nSafra = porSafra ? '' : (' · ' + cel.nFech + ' de ' + cel.n + ' safras fecharam o horizonte');
     // Com o toggle ligado a célula imatura não vira "número menor": vira VAZIO. Mostrar um parcial
     // apagadinho e tirá-lo da conta ao mesmo tempo daria duas versões da mesma coluna na mesma tela.
-    if (aberta && soMaduras) {
-      const fecha = (c.hz === 'm0') ? pirFimDoMes_(b.fim) : isoAddDays_(b.fim, PIR_HZ[c.hz]);
+    if (cel.vazia) {
       return (
         <td key={c.key} className={sep || undefined}>
-          <span className="pir-v pir-excl" title={'Fora do cálculo: esta safra só fecha o horizonte em ' + fmtBR_(fecha) + '. Desligue “só safras maduras” para ver o acumulado corrente.'}>·</span>
+          <span className="pir-v pir-excl" title={porSafra
+            ? ('Fora do cálculo: esta safra só fecha o horizonte em ' + fmtBR_(fecha) + '. Desligue “só safras maduras” para ver o acumulado corrente.')
+            : ('Fora do cálculo: NENHUMA safra desta linha fechou o horizonte (a mais nova fecharia em ' + fmtBR_(fecha) + '). Desligue “só safras maduras” para ver o acumulado corrente — mas aí esta linha passa a misturar maturidades.')}>·</span>
         </td>
       );
     }
     const cls = ['pir-v', aberta ? 'pir-open' : '', bateuAqui ? 'pir-meta' : '', c.plain ? 'pir-flat' : ''].filter(Boolean).join(' ');
     let st = null, dica;
     if (aberta) {
-      const fecha = (c.hz === 'm0') ? pirFimDoMes_(b.fim) : isoAddDays_(b.fim, PIR_HZ[c.hz]);
-      dica = 'Ainda não fechou — fecha em ' + fmtBR_(fecha) + '. O valor mostrado é o acumulado corrente, '
-           + 'que só pode subir (o denominador já está inteiro, o numerador não).';
+      dica = porSafra
+        ? ('Ainda não fechou — fecha em ' + fmtBR_(fecha) + '. O valor mostrado é o acumulado corrente, '
+           + 'que só pode subir (o denominador já está inteiro, o numerador não).')
+        : ('MISTURA DE MATURIDADES: ' + cel.nFech + ' de ' + cel.n + ' safras desta linha fecharam o horizonte; '
+           + 'as outras entram truncadas (a mais nova só fecha em ' + fmtBR_(fecha) + '). Comparar esta célula com '
+           + 'outra linha mede em parte a IDADE das safras de cada uma — ligue “só safras maduras”.');
     } else {
       const e = escalas[c.key];
       if (e && !c.plain && v != null) {
@@ -6285,7 +6497,8 @@ function TabPiramideCoorte({ retencaoFaixa, chFilter, meta, retFaixaLive }) {
         // branco da rampa, ilegível. Pego pelo Luis na tela.
         st = { background: 'var(' + PIR_RAMP[i] + ')', color: 'var(' + PIR_INK[i] + ')' };
       }
-      dica = 'Fechado' + (mt != null ? ' · meta ' + fmtMultiple(mt) + (bateuAqui ? ' (bateu)' : '') : '');
+      dica = 'Fechado' + nSafra + (mt != null ? ' · meta ' + fmtMultiple(mt)
+             + (eixo === 'canal' ? ' (do próprio canal)' : '') + (bateuAqui ? ' — bateu' : '') : '');
     }
     if (ref != null && !c.plain) dica += ' · mês anterior: ' + fmtDe(c)(ref);
     return (
@@ -6296,13 +6509,14 @@ function TabPiramideCoorte({ retencaoFaixa, chFilter, meta, retFaixaLive }) {
       </td>
     );
   };
-
   return (
     <React.Fragment>
       <div className="tab-header">
         <div>
           <h1>Pirâmide de Coorte</h1>
-          <div className="subtitle">Depósito acumulado por safra de FTD — cada linha é uma safra, cada coluna um horizonte, e a célula só aparece preenchida quando aquela safra já viveu o horizonte inteiro</div>
+          <div className="subtitle">{porSafra
+            ? 'Depósito acumulado por safra de FTD — cada linha é uma safra, cada coluna um horizonte, e a célula só aparece preenchida quando aquela safra já viveu o horizonte inteiro'
+            : ('Depósito acumulado — cada coluna é um horizonte e cada linha é ' + (eixo === 'canal' ? 'um canal' : eixo === 'faixa' ? 'uma faixa de FTD' : eixo === 'campanha' ? 'uma campanha' : 'um grupo de risco') + ', cobrindo todas as safras da janela. Fora do eixo de safra a escada dá lugar ao corte de maturidade: por coluna entram só as safras que já fecharam aquele horizonte.')}</div>
         </div>
       </div>
       {!retFaixaLive && (
@@ -6315,15 +6529,27 @@ function TabPiramideCoorte({ retencaoFaixa, chFilter, meta, retFaixaLive }) {
         </div>
       )}
       <div className="slicer-group slicer-ruler">
-        <label style={{ fontSize: '11px', color: 'var(--text-muted)' }}>Faixa FTD</label>
+        {/* EIXO primeiro, e de propósito: ele decide o que os outros controles significam (com eixo de
+            dimensão o toggle Dia/Semana não tem o que fazer e sai da tela em vez de ficar mentindo que
+            muda algo). */}
+        <span style={{ fontSize: '11px', color: 'var(--text-muted)' }}>Ver por</span>
+        <div className="slicer-presets" style={{ marginLeft: 6 }}>
+          {PIR_EIXOS.map((e) => (
+            <button key={e.k} className={`preset-btn ${eixo === e.k ? 'active' : ''}`}
+                    onClick={() => trocaEixo(e.k)} title={e.tip}>{e.lb}</button>
+          ))}
+        </div>
+        <label style={{ fontSize: '11px', color: 'var(--text-muted)', marginLeft: '10px' }}>Faixa FTD</label>
         <ChannelMultiSelect options={FAIXA_LIST} selected={faixaSel} onChange={setFaixaSel} labelOf={fxLabel_} allLabel="Todas" countNoun="faixas" />
-        <span style={{ fontSize: '11px', color: 'var(--text-muted)', marginLeft: '10px' }}>Safra</span>
+        {porSafra && <span style={{ fontSize: '11px', color: 'var(--text-muted)', marginLeft: '10px' }}>Safra</span>}
+        {porSafra && (
         <div className="slicer-presets" style={{ marginLeft: 6 }}>
           <button className={`preset-btn ${gran === 'day' ? 'active' : ''}`} onClick={() => setGran('day')}
                   title="Uma linha por DIA de FTD — o grão do anexo. Em janelas longas a pirâmide fica alta.">Dia</button>
           <button className={`preset-btn ${gran === 'week' ? 'active' : ''}`} onClick={() => setGran('week')}
                   title="Uma linha por semana-calendário. A semana só conta como fechada quando a ÚLTIMA safra dela fecha o horizonte.">Semana</button>
         </div>
+        )}
         <span style={{ fontSize: '11px', color: 'var(--text-muted)', marginLeft: '10px' }}>Multiplicador</span>
         <div className="slicer-presets" style={{ marginLeft: 6 }}>
           <button className={`preset-btn ${base === 'ftd' ? 'active' : ''}`} onClick={() => setBase('ftd')}
@@ -6331,10 +6557,11 @@ function TabPiramideCoorte({ retencaoFaixa, chFilter, meta, retFaixaLive }) {
           <button className={`preset-btn ${base === 'd0' ? 'active' : ''}`} onClick={() => setBase('d0')}
                   title="Acumulado ÷ depósito do D0. A coluna D0 sai (seria 1,00x sempre).">sobre D0</button>
         </div>
-        <label className="pir-tgl" style={{ marginLeft: '12px' }}
-               title="Tira do CÁLCULO (não só da tela) toda safra que ainda não fechou o horizonte da coluna. Ligado, o Total de cada coluna usa só coorte madura — é o número comparável com a meta. Desligado, entra tudo e o Total bate com a aba Multiplicadores e Retenção.">
+        <label className={'pir-tgl' + (!porSafra && !soMaduras ? ' pir-tgl-warn' : '')} style={{ marginLeft: '12px' }}
+               title={'Tira do CÁLCULO (não só da tela) toda safra que ainda não fechou o horizonte da coluna. Ligado, o Total de cada coluna usa só coorte madura — é o número comparável com a meta. Desligado, entra tudo e o Total bate com a aba Multiplicadores e Retenção.'
+                    + (porSafra ? '' : ' ⚠️ Neste eixo cada LINHA cobre todas as safras da janela: desligado, uma linha pode estar mais madura que a outra e a comparação entre linhas passa a medir idade de safra. Por isso trocar de eixo liga este toggle.')}>
           <input type="checkbox" checked={!!soMaduras} onChange={(e) => setSoMaduras(e.target.checked)} />
-          Só safras maduras <span style={{ opacity: .6 }}>(tira as imaturas do cálculo)</span>
+          Só safras maduras <span style={{ opacity: .6 }}>{porSafra ? '(tira as imaturas do cálculo)' : '(neste eixo é o que torna as linhas comparáveis)'}</span>
         </label>
         <label className="pir-tgl" style={{ marginLeft: '12px' }}
                title={'Tira do CÁLCULO as ' + PIR_EX_N + ' maiores campanhas (utm_ftd_campaign) — as maiores em '
@@ -6348,8 +6575,9 @@ function TabPiramideCoorte({ retencaoFaixa, chFilter, meta, retFaixaLive }) {
       </div>
       <div className="support">
         <div className="support-title">
-          Safra por {gran === 'week' ? 'semana' : 'dia'} · {chLbl} · {faixaLbl} · mult {base === 'ftd' ? 'sobre FTD' : 'sobre D0'}
-          {exTop3 ? (exOn ? ' · SEM as ' + PIR_EX_N + ' maiores campanhas' : (campCur.error ? ' · ⚠ COM todas as campanhas (o corte falhou)' : ' · carregando campanhas…')) : ''}
+          {porSafra ? ('Safra por ' + (gran === 'week' ? 'semana' : 'dia')) : ('Por ' + pirEixoCol_(eixoDef).toLowerCase() + ' · ' + linhas.length + ' linha' + (linhas.length === 1 ? '' : 's'))} · {chLbl} · {faixaLbl} · mult {base === 'ftd' ? 'sobre FTD' : 'sobre D0'}
+          {porSafra ? '' : (soMaduras ? ' · só safras maduras' : ' · ⚠ MISTURANDO MATURIDADES')}
+          {exTop3 ? (exOn ? ' · SEM as ' + PIR_EX_N + ' maiores campanhas' : (axCur.error ? ' · ⚠ COM todas as campanhas (o corte falhou)' : ' · carregando campanhas…')) : ''}
           {diaOk ? ' · último dia FECHADO ' + fmtBR_(diaOk) + (dataMax ? ' (dado entra até ' + fmtBR_(dataMax) + ', mas esse dia ainda não fechou)' : '') : ''}
           {comMeta > 0 ? ' · bateu a meta em ' + bateu + ' de ' + comMeta + ' células fechadas com meta' : ''}
         </div>
@@ -6363,6 +6591,50 @@ function TabPiramideCoorte({ retencaoFaixa, chFilter, meta, retFaixaLive }) {
           <span><i className="pir-sw pir-sw-open" /> ainda não fechou</span>
           {prev.error && <span style={{ color: 'var(--negative)' }}>⚠ falhou buscar o mês anterior — sem bolinhas ({prev.error})</span>}
           {soMaduras && <span style={{ color: 'var(--accent-yellow)' }}>⚠ só safras maduras: as imaturas estão FORA do cálculo</span>}
+          {/* --- avisos do EIXO. O de maturidade misturada é VERMELHO e não some: fora do eixo de safra
+              ele é a diferença entre comparar performance e comparar idade de safra. --- */}
+          {!porSafra && !soMaduras && (
+            <span style={{ color: 'var(--negative)' }}
+                  title="Cada linha cobre todas as safras da janela, e as safras têm idades diferentes. Sem o corte de maturidade, a linha de um canal que comprou no começo do mês tem D14/D30 mais cheios que a de um canal que comprou no fim — a diferença entre as linhas passa a incluir IDADE, não só performance.">
+              ⚠ MATURIDADES MISTURADAS: neste eixo a comparação entre linhas também mede idade de safra — ligue “só safras maduras”
+            </span>
+          )}
+          {!porSafra && soMaduras && (
+            <span title="Por coluna, entram só as safras que já fecharam aquele horizonte — as mesmas datas em todas as linhas, que é o que torna a comparação honesta. O tooltip de cada célula diz quantas safras entraram.">
+              cada célula usa só as safras que fecharam AQUELE horizonte (o tooltip diz quantas)
+            </span>
+          )}
+          {!porSafra && (
+            <span title={'Linha com menos de ' + PIR_EIXO_MIN_QTD + ' FTDs continua na tabela mas fica FORA da escala de cor: uma campanha de 2 FTDs com mult 40x esticaria a rampa e pintaria todo o resto de branco — a cor passaria a medir tamanho de amostra. Se nenhuma linha alcança o mínimo, a escala volta a usar todas.'}>
+              escala de cor ignora linhas com &lt; {PIR_EIXO_MIN_QTD} FTDs <span style={{ opacity: .6 }}>(o valor continua na tabela)</span>
+            </span>
+          )}
+          {eixo === 'canal' && (
+            <span style={{ color: 'var(--accent-yellow)' }}
+                  title="Google e Meta têm curva própria no estudo; TikTok, Programática, Social e Orgânico têm régua CASCATEADA (marcada com † no rótulo da linha); os demais ficam sem meta. A meta do cabeçalho é a da seleção de canal do topo e vale pro Total — não pra cada linha.">
+              † cada linha é medida contra a meta DO PRÓPRIO CANAL (a do cabeçalho é a da seleção, vale pro Total)
+            </span>
+          )}
+          {!porSafra && eixo !== 'canal' && (
+            <span style={{ color: 'var(--accent-yellow)' }}
+                  title="O estudo de metas calibra escopo de CANAL (Geral, Google, Meta), não faixa, campanha nem grupo de risco. A régua do cabeçalho é a do recorte que está no topo da tela e é a MESMA pra todas as linhas — serve pra ver quem está acima ou abaixo do agregado, não como compromisso daquela linha.">
+              ⚠ a meta é a do recorte da tela, igual pra todas as linhas — o estudo não calibra régua por {pirEixoCol_(eixoDef).toLowerCase()}
+            </span>
+          )}
+          {eixo === 'grupo' && (
+            <span style={{ color: 'var(--negative)' }}
+                  title="grupo_risco_atual é UM snapshot (o do último load) e não existe histórico. Os grupos são uma escada de RECÊNCIA + valor: G0/G1 = chegou agora / ativo, G4/G5 = esfriando/churn de depositante, G2 = dormente de massa. Safra nova cai em grupo ativo POR SER NOVA, então a composição de uma safra vira de cabeça pra baixo quando ela cruza ~30 dias de idade. Leitura válida: onde a safra desta janela está HOJE. Leitura inválida: tratar grupo como público de aquisição, ou comparar janelas de idades diferentes.">
+              ⚠ grupo = snapshot de HOJE (escada de recência), não segmento de aquisição — diz onde a safra está agora
+            </span>
+          )}
+          {axPend && (
+            <span style={{ color: 'var(--negative)' }}>
+              ⚠ {axCur.error ? 'falhou buscar a quebra por ' + pirEixoCol_(eixoDef).toLowerCase() + ' (' + axCur.error + ')' : 'carregando a quebra por ' + pirEixoCol_(eixoDef).toLowerCase() + ' do BigQuery'} — a tabela abaixo fica vazia até chegar.
+            </span>
+          )}
+          {!porSafra && !axPend && !temPrev && !exTop3 && (
+            <span style={{ color: 'var(--text-muted)' }}>sem o mês anterior nesta quebra — sem bolinhas</span>
+          )}
           {/* Quais campanhas saíram — NOMEADAS e nos DOIS meses. Sem isso o toggle vira uma caixinha que
               muda todos os números sem dizer o que tirou, e ninguém consegue conferir se o corte fez sentido. */}
           {exTop3 && exOn && (
@@ -6377,13 +6649,13 @@ function TabPiramideCoorte({ retencaoFaixa, chFilter, meta, retFaixaLive }) {
           )}
           {exTop3 && exOn && !exPrevOn && (
             <span style={{ color: 'var(--negative)' }}>
-              ⚠ sem o mês anterior por campanha{campPrev.error ? ' (' + campPrev.error + ')' : ' — carregando'}: as bolinhas somem de propósito.
+              ⚠ sem o mês anterior por campanha{axPrev.error ? ' (' + axPrev.error + ')' : ' — carregando'}: as bolinhas somem de propósito.
               Comparar “sem as {PIR_EX_N} maiores” contra “com tudo” mediria o corte, não a melhora.
             </span>
           )}
           {exTop3 && !exOn && (
             <span style={{ color: 'var(--negative)' }}>
-              ⚠ {campCur.error ? 'falhou buscar a quebra por campanha (' + campCur.error + ')' : 'carregando a quebra por campanha'} — os números abaixo ainda estão COM todas as campanhas.
+              ⚠ {axCur.error ? 'falhou buscar a quebra por campanha (' + axCur.error + ')' : 'carregando a quebra por campanha'} — os números abaixo ainda estão COM todas as campanhas.
             </span>
           )}
           {metaDeriv && !metaMix && (
@@ -6416,7 +6688,7 @@ function TabPiramideCoorte({ retencaoFaixa, chFilter, meta, retFaixaLive }) {
           <table className="ch-table pir-table">
             <thead>
               <tr>
-                <th>{gran === 'week' ? 'Semana do FTD' : 'Safra'}</th>
+                <th>{porSafra ? (gran === 'week' ? 'Semana do FTD' : 'Safra') : pirEixoCol_(eixoDef)}</th>
                 {cols.map((c, i) => {
                   const mt = metaDe(c);
                   return (
@@ -6443,14 +6715,28 @@ function TabPiramideCoorte({ retencaoFaixa, chFilter, meta, retFaixaLive }) {
               </tr>
             </thead>
             <tbody>
-              {bins.map((b, bi) => (
-                <tr key={b.key}>
-                  <td className="ch-name" title={gran === 'week' ? ('Safras de ' + fmtBR_(b.ini) + ' a ' + fmtBR_(b.fim)) : undefined}>{rotulo(b)}</td>
-                  {cols.map((c, i) => celula(b, c, sepCls[i], bi))}
+              {linhas.map((l, bi) => (
+                <tr key={l.key}>
+                  {/* Rótulo da linha. No eixo de dimensão o tooltip carrega o que a linha É: quantas
+                      safras, de quando a quando e quantos FTDs — sem isso não há como saber se um
+                      multiplicador alto é performance ou uma campanha de 3 FTDs. */}
+                  <td className={'ch-name' + (!porSafra && (l.nFtd || 0) < PIR_EIXO_MIN_QTD ? ' pir-thin' : '')}
+                      title={porSafra
+                        ? (gran === 'week' ? ('Safras de ' + fmtBR_(l.ini) + ' a ' + fmtBR_(l.fim)) : undefined)
+                        : (l.key + ' — ' + l.dias.length + ' safra' + (l.dias.length === 1 ? '' : 's')
+                           + ' (' + fmtBR_(l.ini) + ' a ' + fmtBR_(l.fim) + ') · ' + pirInt_(l.nFtd) + ' FTDs'
+                           + ((l.nFtd || 0) < PIR_EIXO_MIN_QTD ? ' · ⚠ amostra pequena: fora da escala de cor, e o multiplicador aqui oscila muito' : ''))}>
+                    {rotulo(l)}
+                    {eixo === 'canal' && derivDeL(l) ? <i className="pir-deriv-mk" title="Meta CASCATEADA (derivada da regra do estudo), não declarada — ver a legenda."> †</i> : ''}
+                  </td>
+                  {cols.map((c, i) => celula(l, c, sepCls[i], bi))}
                 </tr>
               ))}
-              {!bins.length && (
-                <tr><td colSpan={cols.length + 1} style={{ color: 'var(--text-muted)' }}>sem safra na janela / recorte</td></tr>
+              {!linhas.length && (
+                <tr><td colSpan={cols.length + 1} style={{ color: 'var(--text-muted)' }}>
+                  {axPend ? (axCur.error ? 'a quebra por ' + pirEixoCol_(eixoDef).toLowerCase() + ' não chegou (' + axCur.error + ')' : 'carregando a quebra por ' + pirEixoCol_(eixoDef).toLowerCase() + '…')
+                          : 'sem safra na janela / recorte'}
+                </td></tr>
               )}
             </tbody>
             <tfoot>
@@ -6503,7 +6789,40 @@ function TabPiramideCoorte({ retencaoFaixa, chFilter, meta, retFaixaLive }) {
         <details className="ch-note">
           <summary style={{ cursor: 'pointer', color: 'var(--text-muted)' }}>Como ler esta tabela</summary>
           <div style={{ marginTop: 6 }}>
-          <strong>Por que a tabela é uma escada.</strong> Uma célula só fecha quando <strong>safra + horizonte ≤ {diaOk ? fmtBR_(diaOk) : 'último dia fechado'}</strong>.
+          <strong>“Ver por” troca o EIXO, não as colunas.</strong> Safra (padrão) é o eixo nativo: uma linha por
+          dia/semana de FTD e a escada de maturação. Nos outros quatro eixos cada linha passa a cobrir
+          <strong> todas as safras da janela</strong> — e aí <strong>a escada não existe mais</strong>: a coluna D30 de
+          um canal pode misturar a safra do dia 1º (viveu 30 dias) com a do dia 19 (viveu um). Se um canal
+          concentrou compra no começo do mês e o outro no fim, o D30 do primeiro sai maior
+          <strong> só por idade</strong>. Por isso trocar de eixo <strong>liga “só safras maduras”</strong>: com o
+          toggle ligado cada coluna usa apenas as safras que fecharam <em>aquele</em> horizonte, ou seja
+          o mesmo conjunto de datas em todas as linhas, e o tooltip da célula diz quantas safras entraram
+          (a célula fica “·” quando nenhuma fechou). Desligado, a tela avisa em vermelho — o número continua
+          existindo, só deixa de ser comparável entre linhas.
+          {' '}Sobra um efeito de 2ª ordem que o corte não resolve: dentro do conjunto maduro, o <em>peso</em> de
+          cada dia ainda difere entre linhas (canal concentrado no dia 3 vs espalhado na semana).
+          {' '}<strong>Meta por eixo.</strong> No eixo de <strong>Canal</strong> cada linha é medida contra a régua
+          do <strong>próprio canal</strong> (Google contra 5,37x, não contra o 4,87x da casa) — linha com meta
+          cascateada leva † no rótulo. Nos eixos de <strong>Faixa, Campanha e Grupo</strong> não existe régua por
+          linha: o estudo calibra escopo de canal, então todas as linhas são comparadas com a meta do recorte
+          que está no topo da tela. Serve pra ver quem está acima ou abaixo do agregado; não é compromisso
+          daquela faixa/campanha/grupo.
+          {' '}<strong>Escala de cor</strong> nos eixos de dimensão ignora linhas com menos de {PIR_EIXO_MIN_QTD} FTDs
+          (elas continuam na tabela, com o aviso no tooltip): uma campanha de 2 FTDs com multiplicador de 40x
+          esticaria a rampa e pintaria todas as outras de branco — a cor passaria a medir tamanho de amostra.
+          {' '}<strong>A bolinha do mês anterior</strong> nesses eixos casa <em>a mesma linha</em> (o Google de agosto
+          contra o Google de julho), recortada nos <strong>mesmos dias-do-mês</strong> que entraram na célula — sem
+          esse recorte, 5 dias de agosto contra 31 de julho mediriam maturação. Linha que não existia no mês
+          anterior fica sem bolinha.
+          {' '}⚠️ <strong>Grupo de risco é o eixo mais fácil de ler errado.</strong> O grupo vem de
+          {' '}<code>grupo_risco_atual</code>, que é <strong>um snapshot de hoje</strong> (não há histórico), e a
+          escala é de <strong>recência</strong> — G0/G1 “chegou agora / ativo”, G4/G5 “esfriando / churn de
+          depositante”, G2 dormente de massa. Safra nova cai em grupo ativo <em>por ser nova</em>. A leitura válida
+          é “onde a safra desta janela está hoje”; tratar grupo como público de aquisição, ou comparar janelas
+          de idades diferentes, produz conclusão invertida.
+          {' '}<strong>O rodapé não muda com o eixo</strong> — é sempre o Total da janela, e a soma das linhas fecha
+          com ele (é um bom teste de sanidade ao trocar de eixo).
+          {' '}<strong>Por que a tabela é uma escada.</strong> Uma célula só fecha quando <strong>safra + horizonte ≤ {diaOk ? fmtBR_(diaOk) : 'último dia fechado'}</strong>.
           {' '}⚠️ Esse corte é o último dia <strong>completo</strong>, não o último dia com dado: o dia mais recente da
           base é o de hoje, ainda carregando, então uma safra de ontem não tem D1 — a galera ainda está depositando.
           A safra de ontem não tem D7 — e o número que apareceria ali não é um D7 baixo, é um D7 pela metade.
