@@ -7107,16 +7107,27 @@ function TabPiramideCoorte({ retencaoFaixa, chFilter, meta, retFaixaLive }) {
 // Pirâmide porque ali a linha é um DIA e aqui é um MÊS INTEIRO: uma safra mensal de 30 FTDs é um mês em
 // que a casa não estava comprando, e o multiplicador dela oscila com um jogador.
 const ESC_MIN_QTD = 200;
-// Recorte de LINHAS por idade da safra. Existe porque a tabela cresce um mês por mês e o começo da
-// série (dez/23–dez/24, safras de dezenas de FTDs) empurra 2026 pra baixo da dobra.
-// ⚠️ NÃO vale pro bloco "de onde veio o caixa": lá tirar safra velha quebraria o 100% — o mix precisa
-// de TODAS as safras pra fechar com o depósito da casa.
+// ============================================================
+// PERÍODO — presets de janela + um MÊS específico (pedido do Luis 22/08)
+// ============================================================
+// Valor: 'all' | '24' | '12' | '6' | 'm:YYYY-MM'.
+// O que o período recorta muda com o eixo, e os dois casos são o MESMO conceito ("quais meses estão em
+// jogo"), só que num eixo o mês é linha e no outro é agregado:
+//   · eixo SAFRA          → quais LINHAS aparecem (um mês específico = uma linha só).
+//   · canal/faixa/grupo   → quais safras entram nos MULTIPLICADORES e quais meses de referência entram
+//                           no pooled da RETENÇÃO.
+// ⚠️⚠️ O QUE O PERÍODO **NUNCA** RECORTA: o conjunto de safras que a RETENÇÃO enxerga. O M3+ de julho é,
+// por definição, a safra de janeiro depositando em julho — se a janela tirasse janeiro do universo, a
+// coluna que motivou toda esta aba zeraria ao mexer num controle de exibição. Por isso a linha guarda
+// DUAS listas: `un` (safras da janela, p/ multiplicador e contexto) e `coortes` (todas, p/ retenção).
+// ⚠️ Também não vale pro bloco "de onde veio o caixa": lá tirar safra velha quebraria o 100%.
 const ESC_JANELAS = [
   { k: 'all', lb: 'Todas', n: 0 },
   { k: '24',  lb: '24m',   n: 24 },
   { k: '12',  lb: '12m',   n: 12 },
   { k: '6',   lb: '6m',    n: 6 },
 ];
+const escMesSel_ = (j) => (String(j || '').slice(0, 2) === 'm:') ? String(j).slice(2) : null;
 const escIdx_ = (ym) => { const p = String(ym).split('-'); return (+p[0]) * 12 + (+p[1] - 1); };
 const escFromIdx_ = (i) => Math.floor(i / 12) + '-' + ('0' + (i % 12 + 1)).slice(-2);
 const escMesAdd_ = (ym, n) => escFromIdx_(escIdx_(ym) + n);
@@ -7358,11 +7369,13 @@ function escUnidades_(coortes) {
   });
   return Object.keys(m).sort().map((k) => m[k]);
 }
-function escLinha_(key, lb, coortes) {
-  const un = escUnidades_(coortes);
+// `mesesOk` (mapa mês→1, ou null = todos) recorta o que entra em MULTIPLICADOR e CONTEXTO. A lista
+// `coortes` fica INTEIRA na linha porque o bloco de RETENÇÃO precisa das safras velhas — ver o bloco
+// de comentário do ESC_JANELAS e o escCel_.
+function escLinha_(key, lb, coortes, mesesOk) {
+  const naJanela = mesesOk ? coortes.filter((c) => mesesOk[c.safra]) : coortes;
+  const un = escUnidades_(naJanela);
   return {
-    // `coortes` fica na linha porque o bloco de RETENÇÃO precisa das coortes cruas (idade por mês de
-    // referência), não das unidades já fundidas por safra — ver escCel_.
     key: key, lb: lb, un: un, coortes: coortes,
     qtd: un.reduce((s, u) => s + u.qtd, 0),
     ftd: un.reduce((s, u) => s + u.ftd, 0),
@@ -7423,7 +7436,7 @@ function TabEscadaMensal({ chFilter, meta }) {
   // razão de CONTAGEM de depositantes (não é transição por jogador — ver o tooltip); é o lado que
   // separa "% que volta" de "quanto deposita quem volta".
   const [baseRet, setBaseRet] = usePersistedState('rvops:escBaseRet', 'rs');
-  // Recorte de linhas por idade da safra. Default 'all' de propósito: nada some sem alguém mandar.
+  // Período: preset de janela ou 'm:YYYY-MM'. Default 'all' de propósito: nada some sem alguém mandar.
   const [janela, setJanela] = usePersistedState('rvops:escJanela', 'all');
   // "M3+ sem reativados" — pedido do Luis (22/08). Default LIGADO: com reativados o M3+ passa de 100%
   // em vários meses e o número deixa de significar retenção.
@@ -7487,23 +7500,34 @@ function TabEscadaMensal({ chFilter, meta }) {
 
   // ⚠️ DUAS listas de propósito. `coortes` (todas as safras) é o que o bloco de MIX usa — recortar
   // safra velha lá quebraria o 100% do mês. `coortesTab` é a tabela da escada, que aceita o recorte.
-  const janN = (ESC_JANELAS.find((j) => j.k === janela) || ESC_JANELAS[0]).n;
-  const coortesTab = React.useMemo(() => {
-    if (!janN || !coortes.length) return coortes;
+  const janN = (ESC_JANELAS.find((j) => j.k === janela) || { n: 0 }).n;
+  const mesSel = escMesSel_(janela);
+  // Mapa dos meses EM JOGO. null = todos (evita filtrar à toa no caso mais comum).
+  const mesesJan = React.useMemo(() => {
+    if (!coortes.length) return null;
+    if (mesSel) { const m = {}; m[mesSel] = 1; return m; }
+    if (!janN) return null;
     const nova = coortes.reduce((mx, c) => (c.safra > mx ? c.safra : mx), coortes[0].safra);
     const corte = escMesAdd_(nova, -(janN - 1));
-    return coortes.filter((c) => c.safra >= corte);
-  }, [coortes, janN]);
+    const m = {};
+    for (let i = 0; i < janN; i++) m[escMesAdd_(corte, i)] = 1;
+    return m;
+  }, [coortes, janN, mesSel]);
+  const coortesTab = React.useMemo(
+    () => mesesJan ? coortes.filter((c) => mesesJan[c.safra]) : coortes,
+    [coortes, mesesJan]);
 
   // ⚠️ O recorte de safras vale SÓ no eixo de safra, onde ele é literalmente um filtro de LINHA. Nos
   // eixos de canal/faixa ele viraria um recálculo escondido (a linha "Google" passaria a cobrir 6 safras
   // em vez de 33 sem nada na tela dizer isso) — então lá o controle nem aparece e o universo é inteiro.
+  // No eixo de safra o período escolhe as LINHAS (por isso a fonte já vem recortada). Nos outros ele
+  // recorta dentro da linha, via `mesesJan` — a linha continua conhecendo todas as safras (retenção).
   const linhasSrc = (eixo === 'safra') ? coortesTab : coortes;
   const linhas = React.useMemo(() => {
     if (eixo === 'safra') {
       const m = {};
       linhasSrc.forEach((c) => { (m[c.safra] || (m[c.safra] = [])).push(c); });
-      return Object.keys(m).sort().map((k) => escLinha_(k, monthLabelPt_(k + '-01'), m[k]));
+      return Object.keys(m).sort().map((k) => escLinha_(k, monthLabelPt_(k + '-01'), m[k], null));
     }
     const campo = (eixo === 'canal') ? 'canal' : (eixo === 'grupo') ? 'grupo' : 'faixa';
     const m = {};
@@ -7513,10 +7537,10 @@ function TabEscadaMensal({ chFilter, meta }) {
     // leitura. 'sem grupo' vai pro fim (não tem posição na escada).
     if (eixo === 'faixa') ks.sort();
     if (eixo === 'grupo') ks.sort((a, b) => (a === 'sem grupo' ? 1 : b === 'sem grupo' ? -1 : (Number(a) - Number(b))));
-    const ls = ks.map((k) => escLinha_(k, (eixo === 'faixa') ? fxLabel_(k) : (eixo === 'grupo') ? grupoLabel_(k) : k, m[k]));
+    const ls = ks.map((k) => escLinha_(k, (eixo === 'faixa') ? fxLabel_(k) : (eixo === 'grupo') ? grupoLabel_(k) : k, m[k], mesesJan));
     return (eixo === 'canal') ? ls.sort((a, b) => (b.ftd || 0) - (a.ftd || 0)) : ls;
-  }, [linhasSrc, eixo]);
-  const totalRow = React.useMemo(() => Object.assign(escLinha_('__tot__', 'Total', linhasSrc), { _tot: true }), [linhasSrc]);
+  }, [linhasSrc, eixo, mesesJan]);
+  const totalRow = React.useMemo(() => Object.assign(escLinha_('__tot__', 'Total', linhasSrc, (eixo === 'safra') ? null : mesesJan), { _tot: true }), [linhasSrc, eixo, mesesJan]);
 
   // Meses disponíveis pro seletor do mix: do mais novo pro mais velho, só os que têm depósito.
   const mesesMix = React.useMemo(() => {
@@ -7544,8 +7568,11 @@ function TabEscadaMensal({ chFilter, meta }) {
       const b = escIdx_(c.safra);
       (c.dep || []).forEach((v, i) => { if (v) set[escFromIdx_(b + i)] = 1; });
     });
-    return Object.keys(set).sort();
-  }, [coortes]);
+    const todos = Object.keys(set).sort();
+    // ⚠️ Recorta os meses de REFERÊNCIA do pooled, não as safras que ele enxerga (essas continuam
+    // inteiras em ctx.coortes / row.coortes) — ver o bloco do ESC_JANELAS.
+    return mesesJan ? todos.filter((m) => mesesJan[m]) : todos;
+  }, [coortes, mesesJan]);
   // ⚠️ `coortes` (todas as do recorte de canal/faixa) e NÃO `coortesTab`: a retenção do mês precisa das
   // safras velhas — é o ponto do M3+. O recorte de safras vale só pra quais LINHAS aparecem.
   // ⚠️ Backend sem os vetores de reativado (deploy não propagado) → o corte não pode acontecer EM
@@ -7662,18 +7689,24 @@ function TabEscadaMensal({ chFilter, meta }) {
         </div>
         <label style={{ fontSize: '11px', color: 'var(--text-muted)', marginLeft: '10px' }}>Faixa FTD</label>
         <ChannelMultiSelect options={FAIXA_LIST} selected={faixaSel} onChange={setFaixaSel} labelOf={fxLabel_} allLabel="Todas" countNoun="faixas" />
-        {/* Só no eixo de safra: lá é filtro de LINHA. Nos outros eixos ele mudaria o número sem nada na
-            tela dizer isso — controle que às vezes recalcula em silêncio é pior que controle ausente. */}
-        {porSafra && <span style={{ fontSize: '11px', color: 'var(--text-muted)', marginLeft: '10px' }}>Safras</span>}
-        {porSafra && (
+        <span style={{ fontSize: '11px', color: 'var(--text-muted)', marginLeft: '10px' }}>Período</span>
         <div className="slicer-presets" style={{ marginLeft: 6 }}>
           {ESC_JANELAS.map((j) => (
             <button key={j.k} className={`preset-btn ${janela === j.k ? 'active' : ''}`} onClick={() => setJanela(j.k)}
-                    title={j.n ? ('Só as últimas ' + j.n + ' safras na TABELA (o histórico completo continua no bloco “de onde veio o depósito”, que precisa dele pra fechar 100%). Recorta linhas, não recalcula nada.')
-                               : 'Todas as safras desde o início da base (dez/2023). O começo da série tem safras de dezenas de FTDs — elas ficam fora da escala de cor, mas ocupam linha.'}>{j.lb}</button>
+                    title={(j.n ? ('Últimos ' + j.n + ' meses. ') : 'Toda a base (desde dez/2023). ')
+                         + (porSafra ? 'No eixo de safra isso escolhe quais LINHAS aparecem.'
+                                     : 'Neste eixo, recorta as safras que entram nos MULTIPLICADORES e os meses de referência do pooled da RETENÇÃO.')
+                         + ' ⚠️ Nunca recorta as safras que a retenção ENXERGA: o M3+ de julho é a safra de janeiro depositando em julho.'}>{j.lb}</button>
           ))}
         </div>
-        )}
+        {/* Mês específico. Vazio = segue o preset — os dois controles são o mesmo estado, então clicar
+            num preset limpa o mês e escolher um mês desliga o preset (nunca ficam os dois "ligados"). */}
+        <select value={mesSel || ''} onChange={(e) => setJanela(e.target.value ? ('m:' + e.target.value) : 'all')}
+                title="Um mês específico. No eixo de safra vira uma linha só; nos eixos de canal/faixa/grupo, a tabela inteira passa a falar daquele mês — multiplicador da safra que nasceu nele, retenção com ele como mês de referência."
+                style={{ marginLeft: 6, background: 'rgba(255,255,255,.06)', color: 'var(--text)', border: '1px solid var(--border)', borderRadius: 6, padding: '3px 8px', fontSize: 12 }}>
+          <option value="">um mês…</option>
+          {mesesMix.map((m) => <option key={m} value={m}>{monthLabelPt_(m + '-01')}</option>)}
+        </select>
         <span style={{ fontSize: '11px', color: 'var(--text-muted)', marginLeft: '10px' }}>Retenção sobre</span>
         <div className="slicer-presets" style={{ marginLeft: 6 }}>
           <button className={`preset-btn ${baseRet === 'rs' ? 'active' : ''}`} onClick={() => setBaseRet('rs')}
@@ -7702,7 +7735,7 @@ function TabEscadaMensal({ chFilter, meta }) {
       <div className="support">
         <div className="support-title">
           {porSafra ? ('Safra mensal · ' + linhas.length + ' safras') : ('Por ' + eixoDef.col.toLowerCase() + ' · ' + linhas.length + ' linha' + (linhas.length === 1 ? '' : 's'))}
-          {janN ? ' (últimas ' + janN + ')' : ''}
+          {mesSel ? ' · ' + monthLabelPt_(mesSel + '-01') : janN ? ' · últimos ' + janN + ' meses' : ''}
           {' · '}{chLbl} · {faixaLbl} · retenção sobre {baseRet === 'rs' ? 'R$' : 'jogadores'}
           {soMaduras ? ' · só meses fechados' : ' · ⚠ INCLUINDO o mês corrente (parcial)'}
           {diaOk ? ' · último dia fechado ' + fmtBR_(diaOk) : ''}
@@ -7760,6 +7793,12 @@ function TabEscadaMensal({ chFilter, meta }) {
           {!semReatOn && temReat && (
             <span title="Com o corte desligado, o M3+ é o bruto e a coluna Reativados mostra que fatia dele veio de quem voltou depois de 2+ meses secos (ela está DENTRO do M3+, não ao lado).">
               coluna <strong>Reativados</strong> = a fatia do M3+ que veio de quem voltou (o corte está desligado)
+            </span>
+          )}
+          {mesSel && !porSafra && (
+            <span style={{ color: 'var(--accent-yellow)' }}
+                  title={'A tabela inteira fala de ' + monthLabelPt_(mesSel + '-01') + ': os multiplicadores são da safra que NASCEU nesse mês (quebrada por ' + eixoDef.col.toLowerCase() + '), e a retenção usa esse mês como referência — ou seja, mede as safras MAIS VELHAS. As duas metades continuam com eixos diferentes, só que agora ancoradas no mesmo mês.'}>
+              mês fixo em <strong>{monthLabelPt_(mesSel + '-01')}</strong> — multiplicador da safra que nasceu nele · retenção com ele como referência
             </span>
           )}
           {porGrupo && (
