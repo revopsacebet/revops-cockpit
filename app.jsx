@@ -7128,6 +7128,16 @@ const ESC_JANELAS = [
   { k: '6',   lb: '6m',    n: 6 },
 ];
 const escMesSel_ = (j) => (String(j || '').slice(0, 2) === 'm:') ? String(j).slice(2) : null;
+// Quantas campanhas o dropdown lista (pedido do Luis: "as 10 maiores da casa pro período").
+// ⚠️ O backend manda as TOP 20 DE CADA SAFRA (194 no total) justamente para que este top-10 calculado
+// no período — que pode somar vários meses — não perca alguém que é #11 em cada mês isolado.
+const ESC_TOP_CAMP = 10;
+// utm_ftd_campaign é comprido (`fb-aq-mae-ftd-v02_principal---120248459188640441`); encurta no MEIO
+// pra caber no select sem virar um monte de linha igual começando por 'fb-aq-'.
+function escCampLbl_(c) {
+  const t = String(c || '');
+  return t.length <= 44 ? t : t.slice(0, 30) + '…' + t.slice(-12);
+}
 const escIdx_ = (ym) => { const p = String(ym).split('-'); return (+p[0]) * 12 + (+p[1] - 1); };
 const escFromIdx_ = (i) => Math.floor(i / 12) + '-' + ('0' + (i % 12 + 1)).slice(-2);
 const escMesAdd_ = (ym, n) => escFromIdx_(escIdx_(ym) + n);
@@ -7456,6 +7466,13 @@ function TabEscadaMensal({ chFilter, meta }) {
   // Payload com a quebra por GRUPO DE RISCO — fetch PRÓPRIO e opt-in (o eixo multiplica as coortes de
   // 456 p/ ~2.100). Só dispara quando o eixo é selecionado, e fica em cache no estado depois disso.
   const [dadosGr, setDadosGr] = React.useState({ rows: null, loading: false, error: null });
+  // Payload por CAMPANHA (&byCampanha=1, ~342KB / 194 campanhas). Diferente do de grupo, este é
+  // buscado em BACKGROUND logo depois do base: o dropdown precisa existir ANTES de alguém clicar
+  // nele, e um select que só se popula depois do primeiro clique é pior que a espera.
+  const [dadosCp, setDadosCp] = React.useState({ rows: null, loading: false, error: null });
+  // Campanha selecionada ('' = nenhuma). NÃO é persistido: um filtro de campanha guardado faria a aba
+  // abrir mostrando uma fatia do negócio com cara de total.
+  const [camp, setCamp] = React.useState('');
   React.useEffect(() => {
     if (!ENDPOINT_URL) { setDados({ rows: null, loading: false, error: 'sem endpoint' }); return; }
     let vivo = true;
@@ -7473,6 +7490,21 @@ function TabEscadaMensal({ chFilter, meta }) {
       .catch((e) => { if (vivo) setDados({ rows: null, loading: false, error: String(e.message || e) }); });
     return () => { vivo = false; };
   }, []);
+  React.useEffect(() => {
+    if (!ENDPOINT_URL || !dados.rows || dadosCp.rows || dadosCp.loading) return;
+    let vivo = true;
+    setDadosCp({ rows: null, loading: true, error: null });
+    fetch(`${ENDPOINT_URL}?${authParam_()}&only=escada&byCampanha=1`)
+      .then((r) => r.ok ? r.json() : Promise.reject(new Error('HTTP ' + r.status)))
+      .then((j) => {
+        if (!vivo) return;
+        if (j.error) throw new Error(j.error);
+        if (!j.escadaMensal) throw new Error('backend sem a quebra por campanha');
+        setDadosCp({ rows: j.escadaMensal, loading: false, error: null });
+      })
+      .catch((e) => { if (vivo) setDadosCp({ rows: null, loading: false, error: String(e.message || e) }); });
+    return () => { vivo = false; };
+  }, [dados.rows]);
   React.useEffect(() => {
     if (eixo !== 'grupo' || !ENDPOINT_URL || dadosGr.rows || dadosGr.loading) return;
     let vivo = true;
@@ -7501,10 +7533,21 @@ function TabEscadaMensal({ chFilter, meta }) {
   // não pode é misturar as duas listas, que dobraria cada coorte.
   const porGrupo = eixo === 'grupo';
   const grPend = porGrupo && !(dadosGr.rows && dadosGr.rows.length);
-  const fonte = porGrupo ? (dadosGr.rows || []) : (dados.rows || []);
+  // ⚠️ A fonte só troca pro payload de campanha quando UMA campanha está selecionada. Sem seleção
+  // fica o base — porque o de campanha é recortado no top-20/safra e o Total dele NÃO é o da casa.
+  const campOn = !!(camp && dadosCp.rows && dadosCp.rows.length);
+  const fonte = campOn ? dadosCp.rows.filter((c) => c.campanha === camp)
+              : porGrupo ? (dadosGr.rows || []) : (dados.rows || []);
   const coortes = React.useMemo(
     () => fonte.filter((c) => selCh(c.canal) && selFx(c.faixa)),
     [fonte, chKey, fxKey]);
+  // ⚠️ O BLOCO DE MIX USA SEMPRE O PAYLOAD BASE, nunca a fonte ativa. Ele responde "quanto % do
+  // depósito do mês veio de cada safra" — se seguisse o filtro de campanha, os 100% passariam a ser
+  // 100% DAQUELA CAMPANHA com cara de 100% da casa. (Com o payload de grupo daria no mesmo, porque
+  // ele reconcilia; com o de campanha NÃO, que é recortado no top-20 por safra.)
+  const coortesCasa = React.useMemo(
+    () => (dados.rows || []).filter((c) => selCh(c.canal) && selFx(c.faixa)),
+    [dados.rows, chKey, fxKey]);
 
   // ⚠️ DUAS listas de propósito. `coortes` (todas as safras) é o que o bloco de MIX usa — recortar
   // safra velha lá quebraria o 100% do mês. `coortesTab` é a tabela da escada, que aceita o recorte.
@@ -7553,14 +7596,38 @@ function TabEscadaMensal({ chFilter, meta }) {
   // Meses disponíveis pro seletor do mix: do mais novo pro mais velho, só os que têm depósito.
   const mesesMix = React.useMemo(() => {
     const set = {};
-    coortes.forEach((c) => {
+    coortesCasa.forEach((c) => {
       const b = escIdx_(c.safra);
       (c.dep || []).forEach((v, i) => { if (v) set[escFromIdx_(b + i)] = 1; });
     });
     return Object.keys(set).sort().reverse();
-  }, [coortes]);
+  }, [coortesCasa]);
+  // ⚠️ O SELETOR DE MÊS DO PERÍODO MANDA NESTE BLOCO (pedido do Luis 22/08). Fixar julho lá em cima e
+  // o "de onde veio o depósito" continuar em agosto era duas verdades na mesma tela.
+  // O link é de MÃO ÚNICA de propósito: o de cima sincroniza o de baixo, mas mexer no de baixo NÃO
+  // move a tabela de cima — o mix é um recorte de leitura, e sequestrar o período inteiro a partir
+  // daqui faria a tabela mudar sem que ninguém tenha tocado no controle dela.
+  React.useEffect(() => { if (mesSel) setMesMix(mesSel); }, [mesSel]);
+  // Top N campanhas por FTD$ DENTRO DO PERÍODO (é o que o dropdown lista). Respeita canal e faixa.
+  // ⚠️ A campanha JÁ SELECIONADA entra na lista mesmo se sair do top ao mudar o período — senão o
+  // select apontaria pra um value inexistente e o filtro se desfaria em silêncio.
+  const topCamps = React.useMemo(() => {
+    const rows = dadosCp.rows || [];
+    const t = {};
+    rows.forEach((c) => {
+      // Backend velho responde 200 sem o campo → sem esta guarda o dropdown ganha uma opção
+      // "undefined" que filtra tudo pra zero.
+      if (!c.campanha) return;
+      if (!selCh(c.canal) || !selFx(c.faixa)) return;
+      if (mesesJan && !mesesJan[c.safra]) return;
+      t[c.campanha] = (t[c.campanha] || 0) + (c.ftd || 0);
+    });
+    const ord = Object.keys(t).sort((a, b) => t[b] - t[a]).slice(0, ESC_TOP_CAMP);
+    if (camp && ord.indexOf(camp) < 0) ord.push(camp);
+    return ord.map((k) => ({ campanha: k, ftd: t[k] || 0 }));
+  }, [dadosCp.rows, chKey, fxKey, mesesJan, camp]);
   const mesRef = (mesMix && mesesMix.indexOf(mesMix) >= 0) ? mesMix : (mesesMix[0] || null);
-  const mix = React.useMemo(() => mesRef ? escMix_(coortes, mesRef) : null, [coortes, mesRef]);
+  const mix = React.useMemo(() => mesRef ? escMix_(coortesCasa, mesRef) : null, [coortesCasa, mesRef]);
   const mixAberto = !!(mesRef && ultFech && mesRef > ultFech);
 
   const cols = ESC_COLS;
@@ -7715,6 +7782,18 @@ function TabEscadaMensal({ chFilter, meta }) {
           <option value="">um mês…</option>
           {mesesMix.map((m) => <option key={m} value={m}>{monthLabelPt_(m + '-01')}</option>)}
         </select>
+        <span style={{ fontSize: '11px', color: 'var(--text-muted)', marginLeft: '10px' }}>Campanha</span>
+        <select value={camp} onChange={(e) => setCamp(e.target.value)}
+                disabled={!(dadosCp.rows && dadosCp.rows.length)}
+                title={dadosCp.error ? ('falhou carregar as campanhas: ' + dadosCp.error)
+                     : !dadosCp.rows ? 'carregando as campanhas do BigQuery…'
+                     : 'As ' + ESC_TOP_CAMP + ' maiores campanhas em FTD$ DENTRO DO PERÍODO selecionado (respeita canal e faixa). '
+                     + 'Escolher uma faz a tabela inteira falar dela: multiplicador da safra que a campanha trouxe e retenção das safras dela. '
+                     + '⚠️ Com campanha selecionada o Total é o da CAMPANHA, não o da casa.'}
+                style={{ ...ESC_SELECT_ST, marginLeft: 6, maxWidth: 260 }}>
+          <option value="">{dadosCp.error ? 'campanhas indisponíveis' : !dadosCp.rows ? 'carregando…' : 'Todas'}</option>
+          {topCamps.map((c) => <option key={c.campanha} value={c.campanha}>{escCampLbl_(c.campanha)}</option>)}
+        </select>
         <span style={{ fontSize: '11px', color: 'var(--text-muted)', marginLeft: '10px' }}>Retenção sobre</span>
         <div className="slicer-presets" style={{ marginLeft: 6 }}>
           <button className={`preset-btn ${baseRet === 'rs' ? 'active' : ''}`} onClick={() => setBaseRet('rs')}
@@ -7744,7 +7823,7 @@ function TabEscadaMensal({ chFilter, meta }) {
         <div className="support-title">
           {porSafra ? ('Safra mensal · ' + linhas.length + ' safras') : ('Por ' + eixoDef.col.toLowerCase() + ' · ' + linhas.length + ' linha' + (linhas.length === 1 ? '' : 's'))}
           {mesSel ? ' · ' + monthLabelPt_(mesSel + '-01') : janN ? ' · últimos ' + janN + ' meses' : ''}
-          {' · '}{chLbl} · {faixaLbl} · retenção sobre {baseRet === 'rs' ? 'R$' : 'jogadores'}
+          {' · '}{chLbl} · {faixaLbl}{campOn ? ' · campanha ' + escCampLbl_(camp) : ''} · retenção sobre {baseRet === 'rs' ? 'R$' : 'jogadores'}
           {soMaduras ? ' · só meses fechados' : ' · ⚠ INCLUINDO o mês corrente (parcial)'}
           {diaOk ? ' · último dia fechado ' + fmtBR_(diaOk) : ''}
         </div>
@@ -7807,6 +7886,13 @@ function TabEscadaMensal({ chFilter, meta }) {
             <span style={{ color: 'var(--accent-yellow)' }}
                   title={'A tabela inteira fala de ' + monthLabelPt_(mesSel + '-01') + ': os multiplicadores são da safra que NASCEU nesse mês (quebrada por ' + eixoDef.col.toLowerCase() + '), e a retenção usa esse mês como referência — ou seja, mede as safras MAIS VELHAS. As duas metades continuam com eixos diferentes, só que agora ancoradas no mesmo mês.'}>
               mês fixo em <strong>{monthLabelPt_(mesSel + '-01')}</strong> — multiplicador da safra que nasceu nele · retenção com ele como referência
+            </span>
+          )}
+          {campOn && (
+            <span style={{ color: 'var(--accent-yellow)' }}
+                  title={'A tabela toda está recortada na campanha ' + camp + '. O Total do rodapé é o dela, não o da casa. '
+                       + 'O bloco “de onde veio o depósito” abaixo NÃO segue este filtro — ele precisa de todas as safras pra fechar 100%.'}>
+              filtrado na campanha <strong>{escCampLbl_(camp)}</strong> — o Total é o DELA, não o da casa
             </span>
           )}
           {porGrupo && (
