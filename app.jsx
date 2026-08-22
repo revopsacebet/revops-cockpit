@@ -7171,6 +7171,16 @@ const ESC_COLS = [
     tip: 'Régua do Farol: TUDO que tem mais de 3 meses no mês da linha ÷ (M2 do mês passado + M3+ do mês passado). '
        + 'Na matriz de coorte esse denominador é simplesmente Σ dep[R−1] das safras de idade ≥3 em R — porque idade ≥3 em R é idade ≥2 em R−1. '
        + 'Por isso aqui a conta sai direta, sem precisar do "recorrente" que o card da casa no Farol usa pra chegar no mesmo lugar.' },
+  // ⚠️ A COLUNA EXISTE PORQUE O CORTE NÃO PODE SER UM NÚMERO QUE SÓ SOME (pergunta do Luis: "você só
+  // excluiu reativados? não colocou uma coluna pra eles?"). E ela não é um extra solto: divide pelo MESMO
+  // denominador do M3+, então **M3+ (sem reativados) + Reativados = M3+ bruto**, exato. A coluna deixa de
+  // ser "mais um dado" e vira a DECOMPOSIÇÃO — quanto da retenção é base que ficou e quanto é gente que voltou.
+  // ⚠️ SEM RAMPA DE COR de propósito: reativação alta não é boa nem ruim por si (é caixa que voltou, mas
+  // também é base que tinha ido embora). Pintar de verde diria "quanto mais melhor", que é falso.
+  { key: 'rr',  lb: 'Reativados', blk: 'ret', ref: 'p', reatCol: true, semCor: true,
+    tip: 'Quanto do M3+ é gente que VOLTOU depois de 2+ meses sem depositar — R$ dos reativados ÷ o MESMO denominador do M3+. '
+       + 'Por dividir pelo mesmo denominador, com o corte ligado vale a identidade: M3+ (sem reativados) + Reativados = M3+ bruto. '
+       + 'Ex. jul/26: 87,9% + 11,8% = 99,7%. Sem cor de propósito — reativação alta não é boa nem ruim, é diagnóstico.' },
 ];
 const ESC_RET_FMT = (v) => fmtPct(v, 1);
 // Valor de UMA safra (unidade) numa coluna. Devolve {num, den, aberta} ou null quando a safra não
@@ -7290,8 +7300,10 @@ function escCel_(row, col, ctx) {
     const meses = porMes ? [row.key] : ctx.meses;
     const r = escRet_(coos, col, meses, ctx.ultFech, ctx.soMaduras, ctx.baseRet, ctx.semReat);
     if (!r) return { vazia: true, v: null, n: 0, nUso: 0, aberta: false };
-    return { vazia: false, v: (r.den > 0) ? r.num / r.den : null, n: meses.length, nUso: meses.length,
-             aberta: r.aberta, num: r.num, den: r.den, reat: r.reat, numBruto: r.numBruto };
+    // A coluna de reativados usa o MESMO denominador do M3+ — é o que torna as duas somáveis.
+    const cima = col.reatCol ? r.reat : r.num;
+    return { vazia: false, v: (r.den > 0) ? cima / r.den : null, n: meses.length, nUso: meses.length,
+             aberta: r.aberta, num: cima, den: r.den, reat: r.reat, numBruto: r.numBruto };
   }
   let num = 0, den = 0, n = 0, nUso = 0, aberta = false;
   (row.un || []).forEach((u) => {
@@ -7542,7 +7554,7 @@ function TabEscadaMensal({ chFilter, meta }) {
   const semReatOn = !!(semReat && temReat);
   const ctx = { coortes: coortes, meses: mesesRef, ultFech: ultFech, soMaduras: soMaduras, baseRet: baseRet, porSafra: porSafra, semReat: semReatOn };
   const escalas = {};
-  cols.forEach((c) => { if (!c.plain) escalas[c.key] = escEscala_(linhas, c, ctx); });
+  cols.forEach((c) => { if (!c.plain && !c.semCor) escalas[c.key] = escEscala_(linhas, c, ctx); });
   const fmtDe = (c) => c.plain ? c.fmt : (c.blk === 'ret' ? ESC_RET_FMT : fmtMultiple);
   const chLbl = chLabel_(chFilter);
   const faixaLbl = faixaSel.length === 0 ? 'todas as faixas' : (faixaSel.length <= 2 ? faixaSel.map(fxLabel_).join(' + ') : faixaSel.length + ' faixas');
@@ -7584,8 +7596,14 @@ function TabEscadaMensal({ chFilter, meta }) {
         + '. O valor é um PISO — só pode subir.'
       : 'Fechado') + nS
       + (c.blk === 'ret' ? ' · ' + ((baseRet === 'jog') ? pirInt_(cel.num) + ' ÷ ' + pirInt_(cel.den) + ' depositantes' : fmtBRL(cel.num) + ' ÷ ' + fmtBRL(cel.den)) : '')
+      + (c.reatCol
+         ? ' · ' + ((baseRet === 'jog') ? pirInt_(cel.reat) + ' contas voltaram' : fmtBRL(cel.reat) + ' voltou')
+           + ' depois de 2+ meses secos'
+           + (semReatOn ? ' · soma com a coluna M3+ e dá o M3+ bruto (' + ESC_RET_FMT(((cel.numBruto || 0)) / cel.den) + ')'
+                        : ' · esta fatia JÁ ESTÁ dentro do M3+ ao lado (o corte está desligado)')
+         : '')
       // O par com/sem reativados vai SEMPRE junto: é a diferença entre "a base voltou" e "a base ficou".
-      + ((c.ref === 'p' && cel.reat > 0)
+      + ((c.ref === 'p' && !c.reatCol && cel.reat > 0)
          ? (semReatOn
             ? ' · SEM reativados (fora ' + ((baseRet === 'jog') ? pirInt_(cel.reat) + ' contas' : fmtBRL(cel.reat)) + ', ' + fmtPct(cel.reat / (cel.numBruto || 1), 1) + ' do numerador) · com eles daria ' + ESC_RET_FMT(cel.numBruto / cel.den)
             : ' · COM reativados: ' + ((baseRet === 'jog') ? pirInt_(cel.reat) + ' contas' : fmtBRL(cel.reat)) + ' (' + fmtPct(cel.reat / (cel.num || 1), 1) + ' do numerador) voltaram depois de 2+ meses secos · sem eles daria ' + ESC_RET_FMT((cel.num - cel.reat) / cel.den))
@@ -7735,8 +7753,13 @@ function TabEscadaMensal({ chFilter, meta }) {
           )}
           {semReatOn && (
             <span style={{ color: 'var(--accent-yellow)' }}
-                  title="Reativado = voltou a depositar depois de 2 meses sem depósito nenhum. Ele entra no numerador do M3+ mas não no denominador (não depositou no mês anterior), então infla a retenção. Fora dele, o M3+ mede a base que FICOU — e é o que faz a coluna parar de passar de 100%.">
-              M3+ <strong>sem reativados</strong> — mede quem FICOU, não quem VOLTOU (o tooltip da célula mostra os dois)
+                  title="Reativado = voltou a depositar depois de 2 meses sem depósito nenhum. Ele entra no numerador do M3+ mas não no denominador (não depositou no mês anterior), então infla a retenção. As duas colunas dividem pelo MESMO denominador, então a soma delas é o M3+ bruto — a decomposição é exata, nada fica de fora.">
+              <strong>M3+ + Reativados = M3+ bruto</strong> — a primeira é quem FICOU, a segunda é quem VOLTOU
+            </span>
+          )}
+          {!semReatOn && temReat && (
+            <span title="Com o corte desligado, o M3+ é o bruto e a coluna Reativados mostra que fatia dele veio de quem voltou depois de 2+ meses secos (ela está DENTRO do M3+, não ao lado).">
+              coluna <strong>Reativados</strong> = a fatia do M3+ que veio de quem voltou (o corte está desligado)
             </span>
           )}
           {porGrupo && (
