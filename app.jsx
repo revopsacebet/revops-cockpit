@@ -7222,8 +7222,21 @@ function escUnid_(u, col, arr, closed, soMaduras) {
 // Fora do eixo de safra (canal/faixa) não existe "o mês da linha": aí a conta é POOLED sobre todos os
 // meses de referência fechados — soma numeradores e denominadores de todos os R e divide no fim, que é
 // a mesma álgebra e responde "quanto este canal reteve, em média, por mês".
-function escRet_(coortes, col, mesesRef, ultFech, soMaduras, baseRet) {
-  let num = 0, den = 0, aberta = false, temR = false;
+// ============================================================
+// REATIVADO — "FTD que volta a fazer depósito depois de 2 meses inativo" (definição do Luis, 22/08/2026)
+// ============================================================
+// O backend marca, por (coorte × idade), quanto do depósito veio de conta cujo depósito ANTERIOR foi há
+// 3+ meses (gap >= 3). Aqui esse valor sai do NUMERADOR do M3+.
+//
+// ⚠️ POR QUE SÓ O M3+ — é aritmética, não escolha: na idade 1 o gap máximo é 1 e na idade 2 é 2, então
+// reativação (gap >= 3) só pode existir de idade 3 em diante.
+// ⚠️ O DENOMINADOR NÃO MUDA, e não é esquecimento: o reativado, por definição, não depositou em R−1 —
+// já vale zero embaixo. Ele entra só em cima e é exatamente por isso que INFLA a retenção.
+// Medido: os M3+ acima de 100% eram reativação. fev/26 158,1% → 87,2% · mai/26 110,3% → 82,1% ·
+// jul/26 99,7% → 87,9%.
+function escRet_(coortes, col, mesesRef, ultFech, soMaduras, baseRet, semReat) {
+  const cortaReat = !!(semReat && col.ref === 'p');
+  let num = 0, den = 0, reat = 0, aberta = false, temR = false;
   (mesesRef || []).forEach((R) => {
     const fechado = !ultFech || R <= ultFech;
     if (soMaduras && !fechado) return;
@@ -7240,14 +7253,16 @@ function escRet_(coortes, col, mesesRef, ultFech, soMaduras, baseRet) {
       const n = (a < arr.length) ? (arr[a] || 0) : 0;
       const d = ((a - 1) < arr.length) ? (arr[a - 1] || 0) : 0;
       if (!n && !d) return;                                     // safra inexistente nos dois meses
-      num += n; den += d; achou = true;
+      const rr = ((baseRet === 'jog') ? c.jreat : c.reat) || [];
+      const r = (a >= 3 && a < rr.length) ? (rr[a] || 0) : 0;
+      num += n; den += d; reat += r; achou = true;
     });
     if (!achou) return;
     temR = true;
     if (!fechado) aberta = true;
   });
   if (!temR) return null;
-  return { num: num, den: den, aberta: aberta };
+  return { num: cortaReat ? (num - reat) : num, den: den, aberta: aberta, reat: reat, numBruto: num };
 }
 // Célula da LINHA = soma os numeradores e os denominadores das safras que a compõem e só então divide
 // (nunca média de razões — mesma regra do "Realizado" das outras abas).
@@ -7273,10 +7288,10 @@ function escCel_(row, col, ctx) {
     // tela — senão o rodapé contaria uma história diferente das linhas acima dele.
     const coos = (porMes || row._tot) ? ctx.coortes : (row.coortes || []);
     const meses = porMes ? [row.key] : ctx.meses;
-    const r = escRet_(coos, col, meses, ctx.ultFech, ctx.soMaduras, ctx.baseRet);
+    const r = escRet_(coos, col, meses, ctx.ultFech, ctx.soMaduras, ctx.baseRet, ctx.semReat);
     if (!r) return { vazia: true, v: null, n: 0, nUso: 0, aberta: false };
     return { vazia: false, v: (r.den > 0) ? r.num / r.den : null, n: meses.length, nUso: meses.length,
-             aberta: r.aberta, num: r.num, den: r.den };
+             aberta: r.aberta, num: r.num, den: r.den, reat: r.reat, numBruto: r.numBruto };
   }
   let num = 0, den = 0, n = 0, nUso = 0, aberta = false;
   (row.un || []).forEach((u) => {
@@ -7348,6 +7363,12 @@ const ESC_EIXOS = [
     tip: 'Uma linha por canal, cobrindo TODAS as safras. ⚠️ Aqui cada linha mistura safras de idades diferentes — com "só meses fechados" ligado (padrão), cada coluna usa apenas as safras que alcançaram aquele horizonte.' },
   { k: 'faixa', lb: 'Faixa', col: 'Faixa de FTD',
     tip: 'Uma linha por faixa de valor do 1º depósito, cobrindo todas as safras. É onde a escada mostra que ticket alto retém pior.' },
+  // ⚠️ O eixo mais fácil de ler errado, e aqui é PIOR que na Pirâmide de Coorte (ver o aviso vermelho na
+  // legenda): lá a janela é um mês, aqui as linhas cobrem 3 anos de safra. `grupo_risco_atual` é um
+  // SNAPSHOT de hoje numa escada de RECÊNCIA — então a safra de jan/25 está quase toda em G4/G5 por
+  // IDADE, e a de ago/26 quase toda em G0/G1 pelo mesmo motivo. Puxa payload próprio (&byGrupo=1).
+  { k: 'grupo', lb: 'Grupo', col: 'Grupo de risco', gr: true,
+    tip: 'Uma linha por grupo de risco ATUAL, cobrindo todas as safras (payload próprio, &byGrupo=1). ⚠️ O grupo é um snapshot de HOJE numa escada de recência — a linha "Grupo 1" é "quem está ativo agora", que por construção retém bem. Serve pra ver ONDE a base está, não pra escolher público.' },
 ];
 // ============================================================
 // DE ONDE VEIO O CAIXA DO MÊS (2ª parte do pedido: "% do depósito de agosto por safra")
@@ -7392,10 +7413,16 @@ function TabEscadaMensal({ chFilter, meta }) {
   const [baseRet, setBaseRet] = usePersistedState('rvops:escBaseRet', 'rs');
   // Recorte de linhas por idade da safra. Default 'all' de propósito: nada some sem alguém mandar.
   const [janela, setJanela] = usePersistedState('rvops:escJanela', 'all');
+  // "M3+ sem reativados" — pedido do Luis (22/08). Default LIGADO: com reativados o M3+ passa de 100%
+  // em vários meses e o número deixa de significar retenção.
+  const [semReat, setSemReat] = usePersistedState('rvops:escSemReat', true);
   const [faixaSel, setFaixaSel] = React.useState([]);
   const [mesMix, setMesMix] = React.useState(null);
 
   const [dados, setDados] = React.useState({ rows: null, loading: true, error: null });
+  // Payload com a quebra por GRUPO DE RISCO — fetch PRÓPRIO e opt-in (o eixo multiplica as coortes de
+  // 456 p/ ~2.100). Só dispara quando o eixo é selecionado, e fica em cache no estado depois disso.
+  const [dadosGr, setDadosGr] = React.useState({ rows: null, loading: false, error: null });
   React.useEffect(() => {
     if (!ENDPOINT_URL) { setDados({ rows: null, loading: false, error: 'sem endpoint' }); return; }
     let vivo = true;
@@ -7413,6 +7440,21 @@ function TabEscadaMensal({ chFilter, meta }) {
       .catch((e) => { if (vivo) setDados({ rows: null, loading: false, error: String(e.message || e) }); });
     return () => { vivo = false; };
   }, []);
+  React.useEffect(() => {
+    if (eixo !== 'grupo' || !ENDPOINT_URL || dadosGr.rows || dadosGr.loading) return;
+    let vivo = true;
+    setDadosGr({ rows: null, loading: true, error: null });
+    fetch(`${ENDPOINT_URL}?${authParam_()}&only=escada&byGrupo=1`)
+      .then((r) => r.ok ? r.json() : Promise.reject(new Error('HTTP ' + r.status)))
+      .then((j) => {
+        if (!vivo) return;
+        if (j.error) throw new Error(j.error);
+        if (!j.escadaMensal) throw new Error('o backend em produção ainda não tem a quebra por grupo — falta propagar o deploy');
+        setDadosGr({ rows: j.escadaMensal, loading: false, error: null });
+      })
+      .catch((e) => { if (vivo) setDadosGr({ rows: null, loading: false, error: String(e.message || e) }); });
+    return () => { vivo = false; };
+  }, [eixo]);
 
   const dataMax = meta && meta.dataMaxDate;
   const diaOk = ultimoDiaFechado_(dataMax);
@@ -7421,9 +7463,15 @@ function TabEscadaMensal({ chFilter, meta }) {
   const selFx = (fx) => faixaSel.length === 0 || faixaSel.includes(fx);
   const chKey = chList_(chFilter).join('|') + '#' + ((chFilter && chFilter.scope) || '');
   const fxKey = JSON.stringify(faixaSel);
+  // ⚠️ No eixo de grupo TUDO passa a vir do payload com grupo — inclusive o mix e o Total. Os dois
+  // reconciliam (mesmos 211.489 FTDs / R$122,58M), então trocar a fonte não move número nenhum; o que
+  // não pode é misturar as duas listas, que dobraria cada coorte.
+  const porGrupo = eixo === 'grupo';
+  const grPend = porGrupo && !(dadosGr.rows && dadosGr.rows.length);
+  const fonte = porGrupo ? (dadosGr.rows || []) : (dados.rows || []);
   const coortes = React.useMemo(
-    () => (dados.rows || []).filter((c) => selCh(c.canal) && selFx(c.faixa)),
-    [dados.rows, chKey, fxKey]);
+    () => fonte.filter((c) => selCh(c.canal) && selFx(c.faixa)),
+    [fonte, chKey, fxKey]);
 
   // ⚠️ DUAS listas de propósito. `coortes` (todas as safras) é o que o bloco de MIX usa — recortar
   // safra velha lá quebraria o 100% do mês. `coortesTab` é a tabela da escada, que aceita o recorte.
@@ -7445,12 +7493,15 @@ function TabEscadaMensal({ chFilter, meta }) {
       linhasSrc.forEach((c) => { (m[c.safra] || (m[c.safra] = [])).push(c); });
       return Object.keys(m).sort().map((k) => escLinha_(k, monthLabelPt_(k + '-01'), m[k]));
     }
-    const campo = (eixo === 'canal') ? 'canal' : 'faixa';
+    const campo = (eixo === 'canal') ? 'canal' : (eixo === 'grupo') ? 'grupo' : 'faixa';
     const m = {};
-    linhasSrc.forEach((c) => { (m[c[campo]] || (m[c[campo]] = [])).push(c); });
+    linhasSrc.forEach((c) => { const v = (c[campo] == null) ? 'sem grupo' : c[campo]; (m[v] || (m[v] = [])).push(c); });
     const ks = Object.keys(m);
+    // Faixa e grupo são ESCADAS ordinais, não rankings de volume — ordenar por tamanho destruiria a
+    // leitura. 'sem grupo' vai pro fim (não tem posição na escada).
     if (eixo === 'faixa') ks.sort();
-    const ls = ks.map((k) => escLinha_(k, (eixo === 'faixa') ? fxLabel_(k) : k, m[k]));
+    if (eixo === 'grupo') ks.sort((a, b) => (a === 'sem grupo' ? 1 : b === 'sem grupo' ? -1 : (Number(a) - Number(b))));
+    const ls = ks.map((k) => escLinha_(k, (eixo === 'faixa') ? fxLabel_(k) : (eixo === 'grupo') ? grupoLabel_(k) : k, m[k]));
     return (eixo === 'canal') ? ls.sort((a, b) => (b.ftd || 0) - (a.ftd || 0)) : ls;
   }, [linhasSrc, eixo]);
   const totalRow = React.useMemo(() => Object.assign(escLinha_('__tot__', 'Total', linhasSrc), { _tot: true }), [linhasSrc]);
@@ -7485,7 +7536,11 @@ function TabEscadaMensal({ chFilter, meta }) {
   }, [coortes]);
   // ⚠️ `coortes` (todas as do recorte de canal/faixa) e NÃO `coortesTab`: a retenção do mês precisa das
   // safras velhas — é o ponto do M3+. O recorte de safras vale só pra quais LINHAS aparecem.
-  const ctx = { coortes: coortes, meses: mesesRef, ultFech: ultFech, soMaduras: soMaduras, baseRet: baseRet, porSafra: porSafra };
+  // ⚠️ Backend sem os vetores de reativado (deploy não propagado) → o corte não pode acontecer EM
+  // SILÊNCIO mostrando o número cheio sob um rótulo que diz "sem reativados". Detecta e avisa.
+  const temReat = React.useMemo(() => coortes.some((c) => Array.isArray(c.reat)), [coortes]);
+  const semReatOn = !!(semReat && temReat);
+  const ctx = { coortes: coortes, meses: mesesRef, ultFech: ultFech, soMaduras: soMaduras, baseRet: baseRet, porSafra: porSafra, semReat: semReatOn };
   const escalas = {};
   cols.forEach((c) => { if (!c.plain) escalas[c.key] = escEscala_(linhas, c, ctx); });
   const fmtDe = (c) => c.plain ? c.fmt : (c.blk === 'ret' ? ESC_RET_FMT : fmtMultiple);
@@ -7529,6 +7584,12 @@ function TabEscadaMensal({ chFilter, meta }) {
         + '. O valor é um PISO — só pode subir.'
       : 'Fechado') + nS
       + (c.blk === 'ret' ? ' · ' + ((baseRet === 'jog') ? pirInt_(cel.num) + ' ÷ ' + pirInt_(cel.den) + ' depositantes' : fmtBRL(cel.num) + ' ÷ ' + fmtBRL(cel.den)) : '')
+      // O par com/sem reativados vai SEMPRE junto: é a diferença entre "a base voltou" e "a base ficou".
+      + ((c.ref === 'p' && cel.reat > 0)
+         ? (semReatOn
+            ? ' · SEM reativados (fora ' + ((baseRet === 'jog') ? pirInt_(cel.reat) + ' contas' : fmtBRL(cel.reat)) + ', ' + fmtPct(cel.reat / (cel.numBruto || 1), 1) + ' do numerador) · com eles daria ' + ESC_RET_FMT(cel.numBruto / cel.den)
+            : ' · COM reativados: ' + ((baseRet === 'jog') ? pirInt_(cel.reat) + ' contas' : fmtBRL(cel.reat)) + ' (' + fmtPct(cel.reat / (cel.num || 1), 1) + ' do numerador) voltaram depois de 2+ meses secos · sem eles daria ' + ESC_RET_FMT((cel.num - cel.reat) / cel.den))
+         : '')
       + (c.blk === 'ret' && baseRet === 'jog' ? ' · razão de CONTAGEM de depositantes' : '');
     return (
       <td key={c.key} className={sep || undefined}>
@@ -7602,6 +7663,16 @@ function TabEscadaMensal({ chFilter, meta }) {
           <button className={`preset-btn ${baseRet === 'jog' ? 'active' : ''}`} onClick={() => setBaseRet('jog')}
                   title="Razão entre a CONTAGEM de depositantes de um mês e a do mês anterior. ⚠️ Não é transição por jogador (os dois conjuntos não são os mesmos): é quanto a base de depositantes daquela safra encolheu. Serve pra separar “% que volta” de “quanto deposita quem volta”.">jogadores</button>
         </div>
+        <label className={'pir-tgl' + (semReat && !temReat ? ' pir-tgl-warn' : '')} style={{ marginLeft: '12px' }}
+               title={'REATIVADO = FTD que volta a depositar depois de 2 meses inativo (o depósito anterior dele foi há 3+ meses). '
+                    + 'Ligado, o R$ desses caras sai do NUMERADOR do M3+. O denominador não muda — o reativado, por definição, '
+                    + 'não depositou no mês anterior, então já valia zero embaixo; é entrando só em cima que ele infla a retenção. '
+                    + '⚠️ Só o M3+ é afetado, e isso é aritmética: na idade 1 o gap máximo é 1 e na idade 2 é 2. '
+                    + 'Medido: fev/26 158,1% → 87,2% · mai/26 110,3% → 82,1% · jul/26 99,7% → 87,9% — os M3+ acima de 100% eram reativação. '
+                    + 'O tooltip de cada célula mostra sempre os dois números.'}>
+          <input type="checkbox" checked={!!semReat} onChange={(e) => setSemReat(e.target.checked)} />
+          M3+ sem reativados <span style={{ opacity: .6 }}>{temReat ? '(volta depois de 2+ meses secos)' : '(indisponível neste payload)'}</span>
+        </label>
         <label className="pir-tgl" style={{ marginLeft: '12px' }}
                title={'Tira do CÁLCULO todo mês que ainda não fechou. Vem LIGADO porque o mês corrente é o M0 da safra deste mês e o M1 da safra do mês passado — desligado, a diagonal mais nova aparece cortada no dia de hoje e "a retenção caiu" vira artefato de calendário. Desligado, o parcial aparece hachurado e é sempre um PISO.'
                     + (ultFech ? ' Último mês fechado: ' + monthLabelPt_(ultFech + '-01') + '.' : '')}>
@@ -7657,6 +7728,28 @@ function TabEscadaMensal({ chFilter, meta }) {
           {!soMaduras && (
             <span style={{ color: 'var(--negative)' }}>⚠ o mês corrente está DENTRO do cálculo e ele é parcial — as células hachuradas são piso, não resultado</span>
           )}
+          {semReat && !temReat && (
+            <span style={{ color: 'var(--negative)' }}>
+              ⚠ “M3+ sem reativados” está LIGADO mas o payload não traz a marcação — o número na tela AINDA inclui os reativados (falta propagar o deploy do backend).
+            </span>
+          )}
+          {semReatOn && (
+            <span style={{ color: 'var(--accent-yellow)' }}
+                  title="Reativado = voltou a depositar depois de 2 meses sem depósito nenhum. Ele entra no numerador do M3+ mas não no denominador (não depositou no mês anterior), então infla a retenção. Fora dele, o M3+ mede a base que FICOU — e é o que faz a coluna parar de passar de 100%.">
+              M3+ <strong>sem reativados</strong> — mede quem FICOU, não quem VOLTOU (o tooltip da célula mostra os dois)
+            </span>
+          )}
+          {porGrupo && (
+            <span style={{ color: 'var(--negative)' }}
+                  title="grupo_risco_atual é UM snapshot (o do último load) e não existe histórico. Os grupos são uma escada de RECÊNCIA + valor: G0/G1 = chegou agora / ativo, G4/G5 = esfriando / churn de depositante, G2 = dormente de massa. Nesta aba o efeito é MAIOR que na Pirâmide de Coorte, porque as linhas cobrem 3 anos: a safra de jan/25 está quase toda em G4/G5 por IDADE e a de ago/26 quase toda em G0/G1 pelo mesmo motivo. Logo, 'G1 retém melhor' é em boa parte tautologia — G1 É a definição de quem ainda está ativo. Leitura válida: onde a base está hoje. Leitura inválida: tratar grupo como público de aquisição.">
+              ⚠ grupo = snapshot de HOJE (escada de recência) — “G1 retém melhor” é em boa parte tautologia, não achado
+            </span>
+          )}
+          {grPend && (
+            <span style={{ color: 'var(--negative)' }}>
+              ⚠ {dadosGr.error ? 'falhou buscar a quebra por grupo (' + dadosGr.error + ')' : 'carregando a quebra por grupo do BigQuery'} — a tabela abaixo fica vazia até chegar.
+            </span>
+          )}
           {baseRet === 'jog' && (
             <span style={{ color: 'var(--accent-yellow)' }}
                   title="É a razão entre a contagem de depositantes de um mês e a do mês anterior — não a fração dos MESMOS jogadores que voltou (os conjuntos são diferentes). Se a razão de jogadores cai muito menos que a de R$, o problema é ticket, não churn.">
@@ -7691,7 +7784,9 @@ function TabEscadaMensal({ chFilter, meta }) {
                 </tr>
               ))}
               {!linhas.length && (
-                <tr><td colSpan={cols.length + 1} style={{ color: 'var(--text-muted)' }}>sem safra no recorte</td></tr>
+                <tr><td colSpan={cols.length + 1} style={{ color: 'var(--text-muted)' }}>
+                  {grPend ? (dadosGr.error ? 'a quebra por grupo não chegou (' + dadosGr.error + ')' : 'carregando a quebra por grupo…') : 'sem safra no recorte'}
+                </td></tr>
               )}
             </tbody>
             <tfoot>
