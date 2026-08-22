@@ -7516,7 +7516,17 @@ function TabEscadaMensal({ chFilter, meta }) {
           <span><i className="pir-sw pir-sw-open" /> horizonte inclui mês em aberto (valor é piso)</span>
           <span title={'A rampa vai do p10 ao p90 da coluna (não do mínimo ao máximo) e ignora linhas com menos de ' + ESC_MIN_QTD
                      + ' FTDs. A tabela cobre 3 anos de uma casa que multiplicou por 100: com min–max, uma safra antiga de Mult M3+ 46x sozinha comprimiria 2025 e 2026 inteiros no primeiro passo. Quem está fora das pontas mantém o VALOR e só satura na cor.'}>
-            escala p10–p90 · ignora linhas com &lt; {ESC_MIN_QTD} FTDs
+            escala p10–p90
+          </span>
+          {/* O rótulo cinza-itálico é o marcador de amostra pequena, e ele NÃO estava se explicando
+              sozinho (o Luis perguntou por que alguns meses estavam cinzas). Mostrar o estilo aqui,
+              não só descrever a regra — e dizer o que ele NÃO significa: a linha continua na tabela,
+              continua pintada e continua somando no Total. */}
+          <span title={'A safra tem menos de ' + ESC_MIN_QTD + ' FTDs — num mês inteiro isso é um mês em que a casa não estava comprando, '
+                     + 'e ali o multiplicador oscila com um jogador. A linha CONTINUA na tabela, continua pintada e continua somando no Total; '
+                     + 'ela só não entra no cálculo da escala de cor. Sem esse piso, uma safra de 69 FTDs com 7,23x esticaria a rampa e apagaria '
+                     + 'a diferença entre 2025 e 2026. O piso é ' + ESC_MIN_QTD + ' (e não os 30 da Pirâmide) porque lá a linha é um dia e aqui é um mês.'}>
+            <i style={{ color: 'var(--text-dim)', fontStyle: 'italic' }}>Março/2024</i> = menos de {ESC_MIN_QTD} FTDs, fora da escala de cor <span style={{ opacity: .6 }}>(o valor vale)</span>
           </span>
           <span style={{ color: 'var(--accent-yellow)' }}
                 title="Mult M3 tem o mesmo horizonte em toda linha (4 meses) e por isso compara. Mult M3+ é vida toda: a safra mais velha ganha por IDADE, não por performance.">
