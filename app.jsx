@@ -7426,6 +7426,14 @@ const ESC_BAL_LB = {
   3: 'M3+ — safras de três meses ou mais (base instalada)',
 };
 
+// ⚠️ colorScheme:'dark' NÃO é enfeite: sem ele o Chrome desenha o POPUP nativo do select com o
+// esquema CLARO (fundo branco) enquanto o texto herda a cor clara do app — as opções ficam
+// invisíveis e só aparecem no hover. Pego pelo Luis em 22/08. O cockpit é dark-only (não existe
+// tema claro no CSS), então fixar o esquema aqui é a correção certa, não um remendo de contraste.
+const ESC_SELECT_ST = {
+  background: 'rgba(255,255,255,.06)', color: 'var(--text)', border: '1px solid var(--border)',
+  borderRadius: 6, padding: '3px 8px', fontSize: 12, colorScheme: 'dark',
+};
 function TabEscadaMensal({ chFilter, meta }) {
   const [eixo, setEixo] = usePersistedState('rvops:escEixo', 'safra');
   // ⚠️ PADRÃO LIGADO, ao contrário da Pirâmide. Aqui o mês corrente é o M0 da safra deste mês E o M1 da
@@ -7703,7 +7711,7 @@ function TabEscadaMensal({ chFilter, meta }) {
             num preset limpa o mês e escolher um mês desliga o preset (nunca ficam os dois "ligados"). */}
         <select value={mesSel || ''} onChange={(e) => setJanela(e.target.value ? ('m:' + e.target.value) : 'all')}
                 title="Um mês específico. No eixo de safra vira uma linha só; nos eixos de canal/faixa/grupo, a tabela inteira passa a falar daquele mês — multiplicador da safra que nasceu nele, retenção com ele como mês de referência."
-                style={{ marginLeft: 6, background: 'rgba(255,255,255,.06)', color: 'var(--text)', border: '1px solid var(--border)', borderRadius: 6, padding: '3px 8px', fontSize: 12 }}>
+                style={{ ...ESC_SELECT_ST, marginLeft: 6 }}>
           <option value="">um mês…</option>
           {mesesMix.map((m) => <option key={m} value={m}>{monthLabelPt_(m + '-01')}</option>)}
         </select>
@@ -7838,8 +7846,16 @@ function TabEscadaMensal({ chFilter, meta }) {
                       title={porSafra
                         ? (pirInt_(l.qtd) + ' FTDs · ' + fmtBRL(l.ftd) + ' de FTD$'
                            + ((l.qtd || 0) < ESC_MIN_QTD ? ' · ⚠ amostra pequena: fora da escala de cor' : ''))
-                        : (l.un.length + ' safras (' + monthLabelPt_(l.un[0].safra + '-01') + ' a ' + monthLabelPt_(l.un[l.un.length - 1].safra + '-01') + ') · '
-                           + pirInt_(l.qtd) + ' FTDs')}>
+                        // ⚠️ `un` PODE SER VAZIO e isso não é caso de borda raro: basta o período fixar
+                        // um mês em que aquela linha não teve FTD (grupo 0 existe em UMA safra só). Ler
+                        // `un[0].safra` aí derruba o React inteiro — tela preta, não célula vazia.
+                        // Pego pelo Luis em 22/08 selecionando um mês no eixo de grupo.
+                        // A linha CONTINUA na tabela de propósito: o multiplicador fica vazio (não houve
+                        // safra), mas a retenção daquele mês existe — ela mede as safras mais velhas.
+                        : (l.un.length
+                           ? (l.un.length + ' safras (' + monthLabelPt_(l.un[0].safra + '-01') + ' a ' + monthLabelPt_(l.un[l.un.length - 1].safra + '-01') + ') · '
+                              + pirInt_(l.qtd) + ' FTDs')
+                           : 'Sem FTD no período selecionado — os multiplicadores ficam vazios. A retenção continua valendo: ela mede as safras MAIS VELHAS depositando neste mês.')}>
                     {l.lb}
                   </td>
                   {cols.map((c, i) => celula(l, c, sepCls[i]))}
@@ -7910,7 +7926,7 @@ function TabEscadaMensal({ chFilter, meta }) {
         <div className="support-title" style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
           <span>De onde veio o depósito de</span>
           <select value={mesRef || ''} onChange={(e) => setMesMix(e.target.value)}
-                  style={{ background: 'rgba(255,255,255,.06)', color: 'var(--text)', border: '1px solid var(--border)', borderRadius: 6, padding: '3px 8px', fontSize: 12 }}>
+                  style={ESC_SELECT_ST}>
             {mesesMix.map((m) => <option key={m} value={m}>{monthLabelPt_(m + '-01')}</option>)}
           </select>
           <span>· {chLbl} · {faixaLbl} · total {mix ? fmtBRL(mix.total) : '—'}</span>
