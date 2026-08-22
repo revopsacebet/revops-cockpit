@@ -37,3 +37,15 @@ pirpreview.js
 _pir_preview.html
 mddpreview.js
 _pv_*.html
+escadatest.js
+_dbg.js
+*.bak
+fsggrtest.js
+holdbrutotest.js
+escpreview.js
+_esc_preview.html
+_esc*.html
+_esc*.png
+_dbgtest.js
+app.jsx.bak*
+escpreview.js

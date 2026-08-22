@@ -7087,12 +7087,654 @@ function TabPiramideCoorte({ retencaoFaixa, chFilter, meta, retFaixaLive }) {
   );
 }
 
+// ============================================================
+// PIRÂMIDE MENSAL — a escada de coorte um grão acima (pedido do Luis 22/08/2026:
+// "uma aba igual a pirâmide de coorte, mas por safra mensal. multiplicador m0/m1/m2/m3+,
+//  retenção m1/m0, m2/m1, m3/m2, m3+ — e o split do depósito do mês por safra")
+// ============================================================
+// A Pirâmide de Coorte para em D30/M0 porque a janela dela é o slicer global. Esta aba é a MESMA
+// leitura com a safra em MÊS e o horizonte em MÊS-CALENDÁRIO, sobre TODO o histórico — é a escada que
+// o BP e o benchmark da Lottu falam, e é onde a distância pra Lottu aparece: o gap de multiplicador
+// CRESCE com a idade (2,3× no M0 → 3,8× no M3).
+//
+// ⚠️ NÃO segue o slicer de DATA, e é de propósito. Recortar a escada pela janela global mataria
+// justamente as safras velhas — que são a resposta de "quanto do caixa de hoje vem de coorte madura".
+// O slicer de CANAL e o filtro de faixa continuam valendo (mesmos helpers da Pirâmide).
+//
+// ⚠️ IDADE É MÊS-CALENDÁRIO, não janela de 30 dias: a safra do dia 28 tem 3 dias de M0 e a do dia 1º
+// tem 30. Mesma assimetria da coluna M0 da Pirâmide, e é assim que Farol, BP e Lottu contam.
+// Piso de amostra da ESCALA DE COR (o valor continua na tabela, só sai da rampa). 200 e não os 30 da
+// Pirâmide porque ali a linha é um DIA e aqui é um MÊS INTEIRO: uma safra mensal de 30 FTDs é um mês em
+// que a casa não estava comprando, e o multiplicador dela oscila com um jogador.
+const ESC_MIN_QTD = 200;
+// Recorte de LINHAS por idade da safra. Existe porque a tabela cresce um mês por mês e o começo da
+// série (dez/23–dez/24, safras de dezenas de FTDs) empurra 2026 pra baixo da dobra.
+// ⚠️ NÃO vale pro bloco "de onde veio o caixa": lá tirar safra velha quebraria o 100% — o mix precisa
+// de TODAS as safras pra fechar com o depósito da casa.
+const ESC_JANELAS = [
+  { k: 'all', lb: 'Todas', n: 0 },
+  { k: '24',  lb: '24m',   n: 24 },
+  { k: '12',  lb: '12m',   n: 12 },
+  { k: '6',   lb: '6m',    n: 6 },
+];
+const escIdx_ = (ym) => { const p = String(ym).split('-'); return (+p[0]) * 12 + (+p[1] - 1); };
+const escFromIdx_ = (i) => Math.floor(i / 12) + '-' + ('0' + (i % 12 + 1)).slice(-2);
+const escMesAdd_ = (ym, n) => escFromIdx_(escIdx_(ym) + n);
+// Último mês INTEIRAMENTE fechado. Ancorado no `ultimoDiaFechado_` (dataMax − 1), não no dataMax cru —
+// ver a nota lá: o último dia com dado é hoje, ainda carregando.
+function escUltMesFechado_(diaOk) {
+  if (!diaOk) return null;
+  const ym = diaOk.slice(0, 7);
+  return (pirFimDoMes_(ym + '-01') <= diaOk) ? ym : escMesAdd_(ym, -1);
+}
+// ============================================================
+// COLUNAS
+// ============================================================
+// MULTIPLICADOR = acumulado ÷ FTD$ (a mesma base "sobre FTD" da Pirâmide; não há toggle de base aqui
+// porque não existe "sobre M0" que faça sentido — M0 já é a primeira coluna).
+//   M0 = dep[0]÷FTD$ · M1 = (dep0+dep1)÷FTD$ · M2 · M3
+// ⚠️ M3 e "M3+" NÃO são a mesma coluna, e a diferença importa:
+//   · M3   = acumulado até a idade 3, IGUAL para toda safra → é a coluna COMPARÁVEL entre linhas.
+//   · M3+  = acumulado de TUDO que a safra já depositou. A safra de jan/25 tem 19 meses de vida e a de
+//            abr/26 tem 4: o número maior ali é IDADE, não performance. Serve pra ler LTV realizado de
+//            uma safra, não pra rankear safras.
+// As duas ficaram na tela em vez de eu escolher uma: "m3+" no pedido é ambíguo entre as duas leituras,
+// e a escolha muda a conclusão.
+//
+// RETENÇÃO = escada de razão entre meses consecutivos, a MESMA definição do queryRetention_ do Farol
+// (razão de VALOR depositado, não de jogadores):
+//   M1/M0 = dep[1]÷dep[0] · M2/M1 · M3/M2 · M3+ = Σ_{a≥3} dep[a] ÷ Σ_{a≥3} dep[a−1]  (pooled)
+// O M3+ pooled é a mesma fórmula das LINHAS POR CANAL do Farol (não o residual da casa, que precisa do
+// "recorrente" e não existe por safra).
+const ESC_COLS = [
+  { key: 'qtd',  lb: 'Qtd FTD',   blk: 'ctx', plain: true, of: (r) => r.qtd || null,                fmt: pirInt_ },
+  { key: 'tkt',  lb: 'FTD $$',    blk: 'ctx', plain: true, of: (r) => r.qtd ? r.ftd / r.qtd : null, fmt: fmtBRL },
+  { key: 'ftd',  lb: 'FTD total', blk: 'ctx', plain: true, of: (r) => r.ftd || null,                fmt: fmtBRL },
+  { key: 'm0',   lb: 'Mult M0',   blk: 'mult', ate: 0,
+    tip: 'Depósito do MÊS-CALENDÁRIO do FTD (inclui o próprio FTD) ÷ FTD$. Mesma definição do "Dep M0/FTD" do Farol e da linha Dep Multiplier/FTD do BP.' },
+  { key: 'm1',   lb: 'Mult M1',   blk: 'mult', ate: 1, tip: 'Acumulado M0+M1 ÷ FTD$.' },
+  { key: 'm2',   lb: 'Mult M2',   blk: 'mult', ate: 2, tip: 'Acumulado M0+M1+M2 ÷ FTD$.' },
+  { key: 'm3',   lb: 'Mult M3',   blk: 'mult', ate: 3,
+    tip: 'Acumulado do M0 até o M3 ÷ FTD$. É a coluna COMPARÁVEL entre safras: toda linha tem o mesmo horizonte (4 meses).' },
+  { key: 'mtot', lb: 'Mult M3+',  blk: 'mult', ate: 'tot',
+    tip: '⚠️ VIDA TODA: acumulado de TUDO que a safra já depositou ÷ FTD$. NÃO é comparável entre linhas — a safra de jan/25 '
+       + 'tem 19 meses de vida e a de abr/26 tem 4, então o número maior ali é IDADE, não performance. Para comparar safras use Mult M3. '
+       + 'Só aparece quando a safra já tem pelo menos 4 meses (M0..M3).' },
+  { key: 'r1',  lb: 'M1/M0',  blk: 'ret', step: 1,
+    tip: 'Depósito do M1 ÷ depósito do M0 (razão de VALOR, definição do Farol). ⚠️ Acima de 100% é normal em mês de crescimento: o M0 é uma janela curta (a safra do dia 28 vive 3 dias de M0).' },
+  { key: 'r2',  lb: 'M2/M1',  blk: 'ret', step: 2, tip: 'Depósito do M2 ÷ depósito do M1.' },
+  { key: 'r3',  lb: 'M3/M2',  blk: 'ret', step: 3, tip: 'Depósito do M3 ÷ depósito do M2.' },
+  { key: 'rp',  lb: 'M3+',    blk: 'ret', pooled: true,
+    tip: 'Pooled das idades ≥3: Σ dep[a] ÷ Σ dep[a−1] para a = 3..última. Mesma fórmula das linhas POR CANAL do Farol '
+       + '(o M3+ do card da casa é o residual "recorrente − M+1 − M+2", que não existe por safra). Só aparece a partir de 4 meses de vida.' },
+];
+const ESC_RET_FMT = (v) => fmtPct(v, 1);
+// Valor de UMA safra (unidade) numa coluna. Devolve {num, den, aberta} ou null quando a safra não
+// alcança o horizonte da coluna.
+// `lim` = maior idade utilizável: com "só meses fechados" ligado ela para no último mês FECHADO, senão
+// vai até a última idade com dado (que é o mês corrente, parcial).
+// ⚠️ `aberta` marca que o horizonte inclui um mês que ainda não fechou — o valor é um piso, não o número.
+function escUnid_(u, col, arr, closed, soMaduras) {
+  const last = arr.length - 1;
+  const lim = soMaduras ? Math.min(last, closed) : last;
+  if (lim < 0) return null;
+  if (col.ate === 'tot') {
+    if (lim < 3) return null;                       // "M3+" pede que a safra tenha chegado ao M3
+    let s = 0; for (let a = 0; a <= lim; a++) s += arr[a] || 0;
+    return { num: s, den: u.ftd, aberta: lim > closed };
+  }
+  if (col.ate != null) {
+    const k = col.ate;
+    if (k > lim) return null;
+    let s = 0; for (let a = 0; a <= k; a++) s += arr[a] || 0;
+    return { num: s, den: u.ftd, aberta: k > closed };
+  }
+  if (col.step) {
+    const k = col.step;
+    if (k > lim) return null;
+    return { num: arr[k] || 0, den: arr[k - 1] || 0, aberta: k > closed };
+  }
+  if (lim < 3) return null;                          // pooled M3+
+  let nu = 0, de = 0;
+  for (let a = 3; a <= lim; a++) { nu += arr[a] || 0; de += arr[a - 1] || 0; }
+  return { num: nu, den: de, aberta: lim > closed };
+}
+// Célula da LINHA = soma os numeradores e os denominadores das safras que a compõem e só então divide
+// (nunca média de razões — mesma regra do "Realizado" das outras abas).
+// `nUso`/`n` alimentam o tooltip: numa linha de canal, saber que 3 de 20 safras entraram na coluna M3
+// é a diferença entre ler performance e ler idade de safra.
+function escCel_(row, col, ultFech, soMaduras, baseRet) {
+  const usaJog = (col.blk === 'ret' && baseRet === 'jog');
+  let num = 0, den = 0, n = 0, nUso = 0, aberta = false;
+  (row.un || []).forEach((u) => {
+    n++;
+    const arr = (usaJog ? u.jog : u.dep) || [];
+    const closed = ultFech ? (escIdx_(ultFech) - escIdx_(u.safra)) : -1;
+    const r = escUnid_(u, col, arr, closed, soMaduras);
+    if (!r) return;
+    nUso++;
+    num += r.num || 0;
+    den += r.den || 0;
+    if (r.aberta) aberta = true;
+  });
+  if (!nUso) return { vazia: true, v: null, n: n, nUso: 0, aberta: false };
+  return { vazia: false, v: (den > 0) ? num / den : null, n: n, nUso: nUso, aberta: aberta, num: num, den: den };
+}
+// Escala de cor por coluna, só sobre células FECHADAS e sobre linhas com amostra (mesma regra da
+// Pirâmide: uma safra de 20 FTDs com mult 40x esticaria a rampa e pintaria todo o resto de branco).
+// ⚠️ AQUI A ESCALA É ROBUSTA (p10–p90), não min–max como na Pirâmide, e a razão é a natureza do eixo:
+// lá as linhas são dias de UM mês (população homogênea); aqui são 3 anos de uma casa que multiplicou
+// por 100. out/2024 tem 1.281 FTDs e Mult M3+ de 46x — passa em qualquer piso de amostra e, no
+// min–max, sozinho comprime 2025 e 2026 inteiros no primeiro passo da rampa: a cor deixa de dizer
+// alguma coisa exatamente onde se olha. Com o clamp, quem está fora das pontas continua na tabela com
+// o valor certo e só SATURA na cor.
+function escPctl_(vs, p) {
+  const i = (vs.length - 1) * p, lo = Math.floor(i), hi = Math.ceil(i);
+  return vs[lo] + (vs[hi] - vs[lo]) * (i - lo);
+}
+function escEscala_(linhas, col, ultFech, soMaduras, baseRet) {
+  const grossas = linhas.filter((l) => (l.qtd || 0) >= ESC_MIN_QTD);
+  const alvo = grossas.length ? grossas : linhas;
+  const vs = [];
+  alvo.forEach((l) => {
+    const c = escCel_(l, col, ultFech, soMaduras, baseRet);
+    if (!c.vazia && !c.aberta && c.v != null && isFinite(c.v)) vs.push(c.v);
+  });
+  if (!vs.length) return null;
+  vs.sort((a, b) => a - b);
+  return { min: escPctl_(vs, 0.10), max: escPctl_(vs, 0.90) };
+}
+// Junta as coortes (safra × canal × faixa) do payload em UNIDADES DE SAFRA. É o grão em que a
+// maturação é exata (todas as coortes de uma safra fecham o mês juntas).
+// ⚠️ Somar `jog` entre coortes é EXATO, não aproximação: cada conta tem UM canal e UMA faixa, então as
+// coortes de uma safra são uma partição — não há jogador contado duas vezes.
+function escUnidades_(coortes) {
+  const m = {};
+  (coortes || []).forEach((c) => {
+    const u = m[c.safra] || (m[c.safra] = { safra: c.safra, qtd: 0, ftd: 0, dep: [], jog: [] });
+    u.qtd += c.qtd || 0;
+    u.ftd += c.ftd || 0;
+    (c.dep || []).forEach((v, i) => { u.dep[i] = (u.dep[i] || 0) + (v || 0); });
+    (c.jog || []).forEach((v, i) => { u.jog[i] = (u.jog[i] || 0) + (v || 0); });
+  });
+  return Object.keys(m).sort().map((k) => m[k]);
+}
+function escLinha_(key, lb, coortes) {
+  const un = escUnidades_(coortes);
+  return {
+    key: key, lb: lb, un: un,
+    qtd: un.reduce((s, u) => s + u.qtd, 0),
+    ftd: un.reduce((s, u) => s + u.ftd, 0),
+  };
+}
+const ESC_EIXOS = [
+  { k: 'safra', lb: 'Safra', col: 'Safra',
+    tip: 'Uma linha por safra MENSAL de FTD — o eixo nativo: a escada de maturação mês a mês.' },
+  { k: 'canal', lb: 'Canal', col: 'Canal',
+    tip: 'Uma linha por canal, cobrindo TODAS as safras. ⚠️ Aqui cada linha mistura safras de idades diferentes — com "só meses fechados" ligado (padrão), cada coluna usa apenas as safras que alcançaram aquele horizonte.' },
+  { k: 'faixa', lb: 'Faixa', col: 'Faixa de FTD',
+    tip: 'Uma linha por faixa de valor do 1º depósito, cobrindo todas as safras. É onde a escada mostra que ticket alto retém pior.' },
+];
+// ============================================================
+// DE ONDE VEIO O CAIXA DO MÊS (2ª parte do pedido: "% do depósito de agosto por safra")
+// ============================================================
+// Mesma matriz, lida na diagonal: o depósito do mês R vindo da safra S é dep[R − S]. Some por S e
+// pronto — e por construção o total bate com o depósito da casa no mês (é a mesma player_metrics).
+function escMix_(coortes, mesRef) {
+  const R = escIdx_(mesRef);
+  const bySafra = {};
+  let tot = 0;
+  (coortes || []).forEach((c) => {
+    const i = R - escIdx_(c.safra);
+    if (i < 0 || i >= (c.dep || []).length) return;
+    const v = c.dep[i] || 0;
+    if (!v) return;
+    const o = bySafra[c.safra] || (bySafra[c.safra] = { safra: c.safra, idade: i, dep: 0, jog: 0 });
+    o.dep += v;
+    o.jog += (c.jog && c.jog[i]) || 0;
+    tot += v;
+  });
+  const linhas = Object.keys(bySafra).sort().reverse().map((k) => bySafra[k]);
+  const bal = { 0: 0, 1: 0, 2: 0, 3: 0 };
+  linhas.forEach((l) => { bal[Math.min(3, l.idade)] += l.dep; });
+  return { linhas: linhas, total: tot, baldes: bal };
+}
+const ESC_BAL_LB = {
+  0: 'M0 — safra do próprio mês (dinheiro de quem acabou de chegar)',
+  1: 'M1 — safra do mês passado',
+  2: 'M2 — safra de dois meses atrás',
+  3: 'M3+ — safras de três meses ou mais (base instalada)',
+};
+
+function TabEscadaMensal({ chFilter, meta }) {
+  const [eixo, setEixo] = usePersistedState('rvops:escEixo', 'safra');
+  // ⚠️ PADRÃO LIGADO, ao contrário da Pirâmide. Aqui o mês corrente é o M0 da safra deste mês E o M1 da
+  // safra do mês passado — desligado, TODA a diagonal mais recente aparece cortada no dia de hoje e a
+  // leitura natural ("a retenção caiu") é artefato de calendário. Desligado mostra o parcial hachurado.
+  const [soMaduras, setSoMaduras] = usePersistedState('rvops:escMaduras', true);
+  // Base do bloco de RETENÇÃO. R$ = definição do Farol/BP (as metas 75/72/88 falam desta). Jogadores =
+  // razão de CONTAGEM de depositantes (não é transição por jogador — ver o tooltip); é o lado que
+  // separa "% que volta" de "quanto deposita quem volta".
+  const [baseRet, setBaseRet] = usePersistedState('rvops:escBaseRet', 'rs');
+  // Recorte de linhas por idade da safra. Default 'all' de propósito: nada some sem alguém mandar.
+  const [janela, setJanela] = usePersistedState('rvops:escJanela', 'all');
+  const [faixaSel, setFaixaSel] = React.useState([]);
+  const [mesMix, setMesMix] = React.useState(null);
+
+  const [dados, setDados] = React.useState({ rows: null, loading: true, error: null });
+  React.useEffect(() => {
+    if (!ENDPOINT_URL) { setDados({ rows: null, loading: false, error: 'sem endpoint' }); return; }
+    let vivo = true;
+    setDados((s) => ({ ...s, loading: true, error: null }));
+    fetch(`${ENDPOINT_URL}?${authParam_()}&only=escada`)
+      .then((r) => r.ok ? r.json() : Promise.reject(new Error('HTTP ' + r.status)))
+      .then((j) => {
+        if (!vivo) return;
+        if (j.error) throw new Error(j.error);
+        // ⚠️ Backend antigo (deploy não propagado) responde 200 com o payload INTEIRO do cockpit e sem
+        // `escadaMensal`. Sem esta guarda a aba mostraria uma tabela vazia com cara de "não teve safra".
+        if (!j.escadaMensal) throw new Error('o backend em produção ainda não tem o endpoint only=escada — falta propagar o deploy');
+        setDados({ rows: j.escadaMensal, loading: false, error: null });
+      })
+      .catch((e) => { if (vivo) setDados({ rows: null, loading: false, error: String(e.message || e) }); });
+    return () => { vivo = false; };
+  }, []);
+
+  const dataMax = meta && meta.dataMaxDate;
+  const diaOk = ultimoDiaFechado_(dataMax);
+  const ultFech = escUltMesFechado_(diaOk);
+  const selCh = chSelector_(chFilter);
+  const selFx = (fx) => faixaSel.length === 0 || faixaSel.includes(fx);
+  const chKey = chList_(chFilter).join('|') + '#' + ((chFilter && chFilter.scope) || '');
+  const fxKey = JSON.stringify(faixaSel);
+  const coortes = React.useMemo(
+    () => (dados.rows || []).filter((c) => selCh(c.canal) && selFx(c.faixa)),
+    [dados.rows, chKey, fxKey]);
+
+  // ⚠️ DUAS listas de propósito. `coortes` (todas as safras) é o que o bloco de MIX usa — recortar
+  // safra velha lá quebraria o 100% do mês. `coortesTab` é a tabela da escada, que aceita o recorte.
+  const janN = (ESC_JANELAS.find((j) => j.k === janela) || ESC_JANELAS[0]).n;
+  const coortesTab = React.useMemo(() => {
+    if (!janN || !coortes.length) return coortes;
+    const nova = coortes.reduce((mx, c) => (c.safra > mx ? c.safra : mx), coortes[0].safra);
+    const corte = escMesAdd_(nova, -(janN - 1));
+    return coortes.filter((c) => c.safra >= corte);
+  }, [coortes, janN]);
+
+  const linhas = React.useMemo(() => {
+    if (eixo === 'safra') {
+      const m = {};
+      coortesTab.forEach((c) => { (m[c.safra] || (m[c.safra] = [])).push(c); });
+      return Object.keys(m).sort().map((k) => escLinha_(k, monthLabelPt_(k + '-01'), m[k]));
+    }
+    const campo = (eixo === 'canal') ? 'canal' : 'faixa';
+    const m = {};
+    coortesTab.forEach((c) => { (m[c[campo]] || (m[c[campo]] = [])).push(c); });
+    const ks = Object.keys(m);
+    if (eixo === 'faixa') ks.sort();
+    const ls = ks.map((k) => escLinha_(k, (eixo === 'faixa') ? fxLabel_(k) : k, m[k]));
+    return (eixo === 'canal') ? ls.sort((a, b) => (b.ftd || 0) - (a.ftd || 0)) : ls;
+  }, [coortesTab, eixo]);
+  const totalRow = React.useMemo(() => escLinha_('__tot__', 'Total', coortesTab), [coortesTab]);
+
+  // Meses disponíveis pro seletor do mix: do mais novo pro mais velho, só os que têm depósito.
+  const mesesMix = React.useMemo(() => {
+    const set = {};
+    coortes.forEach((c) => {
+      const b = escIdx_(c.safra);
+      (c.dep || []).forEach((v, i) => { if (v) set[escFromIdx_(b + i)] = 1; });
+    });
+    return Object.keys(set).sort().reverse();
+  }, [coortes]);
+  const mesRef = (mesMix && mesesMix.indexOf(mesMix) >= 0) ? mesMix : (mesesMix[0] || null);
+  const mix = React.useMemo(() => mesRef ? escMix_(coortes, mesRef) : null, [coortes, mesRef]);
+  const mixAberto = !!(mesRef && ultFech && mesRef > ultFech);
+
+  const cols = ESC_COLS;
+  const sepCls = pirSepCls_(cols);
+  const escalas = {};
+  cols.forEach((c) => { if (!c.plain) escalas[c.key] = escEscala_(linhas, c, ultFech, soMaduras, baseRet); });
+  const fmtDe = (c) => c.plain ? c.fmt : (c.blk === 'ret' ? ESC_RET_FMT : fmtMultiple);
+  const chLbl = chLabel_(chFilter);
+  const faixaLbl = faixaSel.length === 0 ? 'todas as faixas' : (faixaSel.length <= 2 ? faixaSel.map(fxLabel_).join(' + ') : faixaSel.length + ' faixas');
+  const eixoDef = ESC_EIXOS.find((e) => e.k === eixo) || ESC_EIXOS[0];
+  const porSafra = eixo === 'safra';
+
+  const celula = (l, c, sep) => {
+    if (c.plain) {
+      return <td key={c.key} className={sep || undefined}><span className="pir-v pir-flat">{c.fmt(c.of(l))}</span></td>;
+    }
+    const cel = escCel_(l, c, ultFech, soMaduras, baseRet);
+    if (cel.vazia) {
+      return (
+        <td key={c.key} className={sep || undefined}>
+          <span className="pir-v pir-excl" title={porSafra
+            ? 'Esta safra ainda não alcançou (ou não fechou) o horizonte desta coluna. Desligue “só meses fechados” para ver o parcial do mês corrente.'
+            : 'Nenhuma das safras desta linha alcançou o horizonte desta coluna.'}>·</span>
+        </td>
+      );
+    }
+    const v = cel.v;
+    let st = null;
+    const e = escalas[c.key];
+    if (!cel.aberta && e && v != null && isFinite(v)) {
+      const t = (e.max === e.min) ? 0.5 : (v - e.min) / (e.max - e.min);
+      const i = Math.min(5, Math.max(0, Math.round(t * 5)));
+      st = { background: 'var(' + PIR_RAMP[i] + ')', color: 'var(' + PIR_INK[i] + ')' };
+    }
+    const nS = porSafra ? '' : (' · ' + cel.nUso + ' de ' + cel.n + ' safras alcançaram este horizonte');
+    const dica = (cel.aberta
+      ? 'PARCIAL: o horizonte inclui ' + (ultFech ? monthLabelPt_(escMesAdd_(ultFech, 1) + '-01') : 'o mês corrente')
+        + ', que ainda não fechou' + (dataMax ? ' (dado até ' + fmtBR_(dataMax) + ')' : '')
+        + '. O valor é um PISO — só pode subir.'
+      : 'Fechado') + nS
+      + (c.blk === 'ret' && baseRet === 'jog' ? ' · razão de CONTAGEM de depositantes' : '');
+    return (
+      <td key={c.key} className={sep || undefined}>
+        <span className={'pir-v' + (cel.aberta ? ' pir-open' : '')} style={st || undefined} title={dica}>
+          <span>{fmtDe(c)(v)}</span>
+        </span>
+      </td>
+    );
+  };
+
+  if (dados.loading) {
+    return (
+      <div className="tab-header"><div><h1>Pirâmide Mensal</h1>
+        <div className="subtitle">carregando a matriz safra × mês do BigQuery…</div></div></div>
+    );
+  }
+  if (dados.error) {
+    return (
+      <React.Fragment>
+        <div className="tab-header"><div><h1>Pirâmide Mensal</h1>
+          <div className="subtitle">escada de coorte por safra mensal</div></div></div>
+        <div style={{
+          background: 'rgba(239,68,68,.12)', border: '1px solid rgba(239,68,68,.45)', borderLeft: '4px solid #ef4444',
+          borderRadius: '8px', padding: '12px 16px', fontSize: '13px', lineHeight: 1.6, color: 'var(--text)',
+        }}>
+          <strong style={{ color: '#f87171' }}>⚠ Não deu para carregar a escada.</strong> {dados.error}
+        </div>
+      </React.Fragment>
+    );
+  }
+
+  return (
+    <React.Fragment>
+      <div className="tab-header">
+        <div>
+          <h1>Pirâmide Mensal</h1>
+          <div className="subtitle">
+            A escada de coorte no grão de MÊS — safra = mês do FTD, horizonte = idade em meses-calendário.
+            Cobre todo o histórico e <strong>não segue o slicer de data</strong> (o de canal e o de faixa valem).
+          </div>
+        </div>
+      </div>
+      <div className="slicer-group slicer-ruler">
+        <span style={{ fontSize: '11px', color: 'var(--text-muted)' }}>Ver por</span>
+        <div className="slicer-presets" style={{ marginLeft: 6 }}>
+          {ESC_EIXOS.map((e) => (
+            <button key={e.k} className={`preset-btn ${eixo === e.k ? 'active' : ''}`}
+                    onClick={() => setEixo(e.k)} title={e.tip}>{e.lb}</button>
+          ))}
+        </div>
+        <label style={{ fontSize: '11px', color: 'var(--text-muted)', marginLeft: '10px' }}>Faixa FTD</label>
+        <ChannelMultiSelect options={FAIXA_LIST} selected={faixaSel} onChange={setFaixaSel} labelOf={fxLabel_} allLabel="Todas" countNoun="faixas" />
+        <span style={{ fontSize: '11px', color: 'var(--text-muted)', marginLeft: '10px' }}>Safras</span>
+        <div className="slicer-presets" style={{ marginLeft: 6 }}>
+          {ESC_JANELAS.map((j) => (
+            <button key={j.k} className={`preset-btn ${janela === j.k ? 'active' : ''}`} onClick={() => setJanela(j.k)}
+                    title={j.n ? ('Só as últimas ' + j.n + ' safras na TABELA (o histórico completo continua no bloco “de onde veio o depósito”, que precisa dele pra fechar 100%). Recorta linhas, não recalcula nada.')
+                               : 'Todas as safras desde o início da base (dez/2023). O começo da série tem safras de dezenas de FTDs — elas ficam fora da escala de cor, mas ocupam linha.'}>{j.lb}</button>
+          ))}
+        </div>
+        <span style={{ fontSize: '11px', color: 'var(--text-muted)', marginLeft: '10px' }}>Retenção sobre</span>
+        <div className="slicer-presets" style={{ marginLeft: 6 }}>
+          <button className={`preset-btn ${baseRet === 'rs' ? 'active' : ''}`} onClick={() => setBaseRet('rs')}
+                  title="R$ depositado — a definição do Farol e do BP (as metas 75/72/88 falam desta). Só o bloco de retenção muda; o multiplicador é sempre sobre FTD$.">R$</button>
+          <button className={`preset-btn ${baseRet === 'jog' ? 'active' : ''}`} onClick={() => setBaseRet('jog')}
+                  title="Razão entre a CONTAGEM de depositantes de um mês e a do mês anterior. ⚠️ Não é transição por jogador (os dois conjuntos não são os mesmos): é quanto a base de depositantes daquela safra encolheu. Serve pra separar “% que volta” de “quanto deposita quem volta”.">jogadores</button>
+        </div>
+        <label className="pir-tgl" style={{ marginLeft: '12px' }}
+               title={'Tira do CÁLCULO todo mês que ainda não fechou. Vem LIGADO porque o mês corrente é o M0 da safra deste mês e o M1 da safra do mês passado — desligado, a diagonal mais nova aparece cortada no dia de hoje e "a retenção caiu" vira artefato de calendário. Desligado, o parcial aparece hachurado e é sempre um PISO.'
+                    + (ultFech ? ' Último mês fechado: ' + monthLabelPt_(ultFech + '-01') + '.' : '')}>
+          <input type="checkbox" checked={!!soMaduras} onChange={(e) => setSoMaduras(e.target.checked)} />
+          Só meses fechados <span style={{ opacity: .6 }}>{ultFech ? '(até ' + monthLabelPt_(ultFech + '-01') + ')' : ''}</span>
+        </label>
+      </div>
+
+      <div className="support">
+        <div className="support-title">
+          {porSafra ? ('Safra mensal · ' + linhas.length + ' safras') : ('Por ' + eixoDef.col.toLowerCase() + ' · ' + linhas.length + ' linha' + (linhas.length === 1 ? '' : 's'))}
+          {janN ? ' (últimas ' + janN + ')' : ''}
+          {' · '}{chLbl} · {faixaLbl} · retenção sobre {baseRet === 'rs' ? 'R$' : 'jogadores'}
+          {soMaduras ? ' · só meses fechados' : ' · ⚠ INCLUINDO o mês corrente (parcial)'}
+          {diaOk ? ' · último dia fechado ' + fmtBR_(diaOk) : ''}
+        </div>
+        <div className="pir-legend">
+          <span>Escala <i className="pir-ramp">{PIR_RAMP.map((v) => <i key={v} style={{ background: 'var(' + v + ')' }} />)}</i> pior → melhor</span>
+          <span><i className="pir-sw pir-sw-open" /> horizonte inclui mês em aberto (valor é piso)</span>
+          <span title={'A rampa vai do p10 ao p90 da coluna (não do mínimo ao máximo) e ignora linhas com menos de ' + ESC_MIN_QTD
+                     + ' FTDs. A tabela cobre 3 anos de uma casa que multiplicou por 100: com min–max, uma safra antiga de Mult M3+ 46x sozinha comprimiria 2025 e 2026 inteiros no primeiro passo. Quem está fora das pontas mantém o VALOR e só satura na cor.'}>
+            escala p10–p90 · ignora linhas com &lt; {ESC_MIN_QTD} FTDs
+          </span>
+          <span style={{ color: 'var(--accent-yellow)' }}
+                title="Mult M3 tem o mesmo horizonte em toda linha (4 meses) e por isso compara. Mult M3+ é vida toda: a safra mais velha ganha por IDADE, não por performance.">
+            ⚠ compare pela coluna <strong>Mult M3</strong> — <strong>Mult M3+</strong> é vida toda e cresce só com a idade da safra
+          </span>
+          {!porSafra && (
+            <span style={{ color: 'var(--negative)' }}
+                  title="Neste eixo cada linha cobre TODAS as safras. Com “só meses fechados” ligado, cada coluna usa apenas as safras que alcançaram aquele horizonte — o tooltip da célula diz quantas de quantas entraram.">
+              ⚠ cada linha mistura safras de idades diferentes — o tooltip da célula diz quantas entraram em cada coluna
+            </span>
+          )}
+          {!soMaduras && (
+            <span style={{ color: 'var(--negative)' }}>⚠ o mês corrente está DENTRO do cálculo e ele é parcial — as células hachuradas são piso, não resultado</span>
+          )}
+          {baseRet === 'jog' && (
+            <span style={{ color: 'var(--accent-yellow)' }}
+                  title="É a razão entre a contagem de depositantes de um mês e a do mês anterior — não a fração dos MESMOS jogadores que voltou (os conjuntos são diferentes). Se a razão de jogadores cai muito menos que a de R$, o problema é ticket, não churn.">
+              † “jogadores” é razão de CONTAGEM de depositantes, não transição por jogador
+            </span>
+          )}
+        </div>
+        <div className="table-scroll tall">
+          <table className="ch-table pir-table">
+            <thead>
+              <tr>
+                <th>{eixoDef.col}</th>
+                {cols.map((c, i) => (
+                  <th key={c.key} className={sepCls[i] || undefined} title={c.tip || undefined}>
+                    {c.lb}{c.blk === 'ret' && baseRet === 'jog' ? <i style={{ opacity: .55, fontWeight: 400 }}> jog</i> : ''}
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {linhas.map((l) => (
+                <tr key={l.key}>
+                  <td className={'ch-name' + ((l.qtd || 0) < ESC_MIN_QTD ? ' pir-thin' : '')}
+                      title={porSafra
+                        ? (pirInt_(l.qtd) + ' FTDs · ' + fmtBRL(l.ftd) + ' de FTD$'
+                           + ((l.qtd || 0) < ESC_MIN_QTD ? ' · ⚠ amostra pequena: fora da escala de cor' : ''))
+                        : (l.un.length + ' safras (' + monthLabelPt_(l.un[0].safra + '-01') + ' a ' + monthLabelPt_(l.un[l.un.length - 1].safra + '-01') + ') · '
+                           + pirInt_(l.qtd) + ' FTDs')}>
+                    {l.lb}
+                  </td>
+                  {cols.map((c, i) => celula(l, c, sepCls[i]))}
+                </tr>
+              ))}
+              {!linhas.length && (
+                <tr><td colSpan={cols.length + 1} style={{ color: 'var(--text-muted)' }}>sem safra no recorte</td></tr>
+              )}
+            </tbody>
+            <tfoot>
+              {/* TOTAL = todas as safras do recorte, somando numeradores e denominadores e dividindo no
+                  fim. ⚠️ Nas colunas M3+ ele mistura vidas diferentes por definição — está no tooltip. */}
+              <tr>
+                <td className="ch-name" title="Soma as bases de todas as safras do recorte e divide no fim (não é média das linhas). ⚠️ Nas colunas “M3+” o Total mistura safras de idades diferentes por definição.">Total</td>
+                {cols.map((c, i) => celula(totalRow, c, sepCls[i]))}
+              </tr>
+            </tfoot>
+          </table>
+        </div>
+        <details className="ch-note">
+          <summary style={{ cursor: 'pointer', color: 'var(--text-muted)' }}>Como ler esta tabela</summary>
+          <div style={{ marginTop: 6 }}>
+            <strong>Multiplicador</strong> = depósito acumulado ÷ FTD$ da safra. <code>Mult M0</code> é o depósito do
+            mês-calendário do FTD (inclui o próprio FTD) — o mesmo “Dep M0/FTD” do Farol e do plano: a safra de
+            jul/26 dá <strong>2,58x</strong> aqui e <strong>2,5831</strong> na linha <em>Dep Multiplier/FTD</em> do BP.
+            <code> Mult M1/M2/M3</code> vão somando os meses seguintes.
+            {' '}⚠️ <strong><code>Mult M3+</code> é vida toda e NÃO compara entre linhas</strong>: a safra de jan/25 tem
+            19 meses de vida e a de abr/26 tem 4 — o número maior ali é idade. Para rankear safras use
+            <strong> Mult M3</strong>, que tem o mesmo horizonte em todas.
+            {' '}<strong>Retenção</strong> é a escada mês a mês na definição do Farol (razão de <strong>valor
+            depositado</strong>, não de jogadores): <code>M1/M0 = dep(M1) ÷ dep(M0)</code>, e assim por diante.
+            {' '}<code>M3+</code> é o <em>pooled</em> das idades ≥3 (<code>Σ dep[a] ÷ Σ dep[a−1]</code>, a partir de a=3) —
+            a mesma fórmula das linhas <strong>por canal</strong> do Farol. O card M3+ da casa no Farol usa o residual
+            (“recorrente − M+1 − M+2”), que não tem equivalente por safra, então os dois não têm que bater à vírgula.
+            {' '}<strong>Idade é mês-calendário</strong>, não janela de 30 dias: a safra do dia 28 vive 3 dias de M0 e a
+            do dia 1º vive 30. É a mesma régua do BP e da Lottu — e é por isso que <strong>valores acima de 100% na
+            retenção são normais</strong> em mês de crescimento forte (o M0 é uma janela curta).
+            {' '}<strong>“Só meses fechados” vem ligado</strong> e mexe no cálculo, não só na tela: o mês corrente é
+            simultaneamente o M0 da safra deste mês e o M1 da safra do mês passado, então desligado a diagonal mais
+            nova aparece cortada no dia de hoje e a leitura “a retenção caiu” vira artefato de calendário. Desligado,
+            as células que incluem mês aberto ficam hachuradas — o valor ali é um <strong>piso</strong>.
+            {' '}<strong>Fora do eixo de safra</strong> cada linha cobre todas as safras: com o toggle ligado, cada
+            coluna usa só as safras que alcançaram aquele horizonte (o tooltip da célula diz quantas de quantas), que
+            é o que torna a comparação entre canais honesta.
+            {' '}<strong>Fonte:</strong> <code>player_metrics</code> (não a <code>vw_cohort_*_wide_monthly</code> que o
+            Farol usa) — aquela view trunca em 24 idades e devolve célula vazia em idade que existe: a safra de jan/25
+            depositou R$353k em ago/26 e lá aquela célula vem NULL. Aqui a matriz reconcilia com o depósito total da
+            casa. Canal = <code>vw_account_attribution</code> (canal do FTD), o mesmo do Farol e da Pirâmide.
+          </div>
+        </details>
+      </div>
+
+      {/* ============================================================
+          DE ONDE VEIO O CAIXA DO MÊS
+          ============================================================ */}
+      <div className="support" style={{ marginTop: 16 }}>
+        <div className="support-title" style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+          <span>De onde veio o depósito de</span>
+          <select value={mesRef || ''} onChange={(e) => setMesMix(e.target.value)}
+                  style={{ background: 'rgba(255,255,255,.06)', color: 'var(--text)', border: '1px solid var(--border)', borderRadius: 6, padding: '3px 8px', fontSize: 12 }}>
+            {mesesMix.map((m) => <option key={m} value={m}>{monthLabelPt_(m + '-01')}</option>)}
+          </select>
+          <span>· {chLbl} · {faixaLbl} · total {mix ? fmtBRL(mix.total) : '—'}</span>
+          {mixAberto && <span style={{ color: 'var(--accent-yellow)' }}>⚠ mês em curso — parcial{dataMax ? ' (até ' + fmtBR_(dataMax) + ')' : ''}</span>}
+        </div>
+        <div className="pir-legend">
+          <span title="Cada real depositado no mês é atribuído à SAFRA do jogador que depositou (o mês do 1º depósito dele). A soma fecha com o depósito total da casa no mês.">
+            cada real do mês atribuído à safra de quem depositou — a soma fecha com o depósito da casa
+          </span>
+          <span style={{ color: 'var(--accent-yellow)' }}
+                title="É a leitura de dependência de aquisição: quanto do caixa do mês é dinheiro de gente que acabou de chegar (M0) contra dinheiro de base instalada (M3+).">
+            M0 alto = caixa dependente de aquisição · M3+ alto = base instalada pagando a conta
+          </span>
+        </div>
+        {mix && mix.total > 0 && (
+        <React.Fragment>
+          {/* Resumo por IDADE da safra — a resposta direta de "quanto veio de gente nova". */}
+          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', margin: '4px 0 12px' }}>
+            {[0, 1, 2, 3].map((k) => {
+              const v = mix.baldes[k] || 0;
+              const p = v / mix.total;
+              return (
+                <div key={k} style={{
+                  flex: '1 1 180px', minWidth: 160, background: 'rgba(255,255,255,.035)',
+                  border: '1px solid var(--border)', borderRadius: 8, padding: '8px 10px',
+                }} title={ESC_BAL_LB[k]}>
+                  <div style={{ fontSize: 10.5, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: .4 }}>
+                    {k === 3 ? 'M3+' : 'M' + k}
+                  </div>
+                  <div style={{ fontSize: 20, fontWeight: 600, lineHeight: 1.2 }}>{fmtPct(p, 1)}</div>
+                  <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>{fmtBRL(v)}</div>
+                  <div style={{ height: 4, background: 'rgba(255,255,255,.08)', borderRadius: 2, marginTop: 6 }}>
+                    <div style={{ height: '100%', width: Math.max(1, p * 100) + '%', background: 'var(--accent-yellow)', borderRadius: 2 }} />
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+          <div className="table-scroll tall">
+            <table className="ch-table pir-table">
+              <thead>
+                <tr>
+                  <th>Safra</th>
+                  <th className="pir-sep-end">Idade</th>
+                  <th className="pir-sep">Depósito no mês</th>
+                  <th>% do mês</th>
+                  <th>% acum.</th>
+                  <th className="pir-sep-end">Depositantes</th>
+                  <th className="pir-sep" style={{ width: '30%' }}>&nbsp;</th>
+                </tr>
+              </thead>
+              <tbody>
+                {(() => { let ac = 0; return mix.linhas.map((l) => {
+                  const p = l.dep / mix.total;
+                  ac += p;
+                  return (
+                    <tr key={l.safra}>
+                      <td className="ch-name">{monthLabelPt_(l.safra + '-01')}</td>
+                      <td className="pir-sep-end"><span className="pir-v pir-flat">{'M' + l.idade}</span></td>
+                      <td className="pir-sep"><span className="pir-v pir-flat">{fmtBRL(l.dep)}</span></td>
+                      <td><span className="pir-v pir-flat">{fmtPct(p, 1)}</span></td>
+                      <td><span className="pir-v pir-flat" style={{ opacity: .6 }}>{fmtPct(ac, 1)}</span></td>
+                      <td className="pir-sep-end"><span className="pir-v pir-flat">{pirInt_(l.jog)}</span></td>
+                      <td className="pir-sep">
+                        <div style={{ height: 10, background: 'rgba(255,255,255,.06)', borderRadius: 2 }}>
+                          <div style={{ height: '100%', width: Math.max(0.5, p * 100) + '%', background: 'var(--accent-yellow)', borderRadius: 2, opacity: .85 }} />
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                }); })()}
+              </tbody>
+              <tfoot>
+                <tr>
+                  <td className="ch-name">Total</td>
+                  <td className="pir-sep-end" />
+                  <td className="pir-sep"><span className="pir-v">{fmtBRL(mix.total)}</span></td>
+                  <td><span className="pir-v">100,0%</span></td>
+                  <td />
+                  <td className="pir-sep-end"><span className="pir-v">{pirInt_(mix.linhas.reduce((s, l) => s + l.jog, 0))}</span></td>
+                  <td className="pir-sep" />
+                </tr>
+              </tfoot>
+            </table>
+          </div>
+        </React.Fragment>
+        )}
+        {(!mix || !(mix.total > 0)) && <div style={{ color: 'var(--text-muted)', fontSize: 12 }}>sem depósito no mês selecionado dentro deste recorte</div>}
+        <details className="ch-note">
+          <summary style={{ cursor: 'pointer', color: 'var(--text-muted)' }}>Como ler este bloco</summary>
+          <div style={{ marginTop: 6 }}>
+            É a mesma matriz lida <strong>na diagonal</strong>: o depósito do mês escolhido vindo da safra S é a
+            célula de idade <code>mês − S</code>. Cada real é atribuído à safra do jogador que o depositou, então a
+            soma das linhas <strong>é</strong> o depósito da casa no mês (dentro do recorte de canal/faixa).
+            {' '}<strong>A leitura que importa</strong> é a dos quatro cartões: <code>M0</code> é caixa de gente que
+            chegou neste mês — quanto maior, mais o resultado do mês depende de comprar FTD agora. <code>M3+</code> é
+            base instalada. Uma casa que cresce trocando M3+ por M0 está financiando o mês com aquisição, não com
+            retenção — e o custo disso não aparece na linha de depósito, aparece no CAC.
+            {' '}⚠️ <strong>Mês em curso é parcial</strong> e o mix dele é enviesado para as safras novas (a safra do
+            próprio mês concentra depósito nos primeiros dias). Para comparar meses, use meses fechados.
+            {' '}⚠️ O <strong>filtro de canal/faixa recorta pela safra do depositante</strong>, não pelo depósito:
+            selecionar “Meta” mostra o caixa do mês vindo de quem foi <em>adquirido</em> pelo Meta, em qualquer safra.
+          </div>
+        </details>
+      </div>
+    </React.Fragment>
+  );
+}
+
 const TABS = [
   { id: 'farol', label: 'Farol', component: TabFarol },
   { id: 'monthlyclose', label: 'Monthly Close', component: TabMonthlyClose },
   { id: 'caccalc', label: 'CAC Calculator', component: TabCacCalculator },
   { id: 'retfaixa', label: 'Multiplicadores e Retenção', component: TabRetencaoFaixa },
   { id: 'piramide', label: 'Pirâmide de Coorte', component: TabPiramideCoorte },
+  { id: 'piramensal', label: 'Pirâmide Mensal', component: TabEscadaMensal },
   { id: 'metricasdia', label: 'Métricas do dia a dia', component: TabMetricasDia },
   { id: 'ativacao', label: 'Ativação D0', component: TabAtivacao },
   { id: 'cashflow', label: 'Daily Cashflow', component: TabDailyCashflow },
