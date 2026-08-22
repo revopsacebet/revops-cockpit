@@ -7160,13 +7160,17 @@ const ESC_COLS = [
     tip: '⚠️ VIDA TODA: acumulado de TUDO que a safra já depositou ÷ FTD$. NÃO é comparável entre linhas — a safra de jan/25 '
        + 'tem 19 meses de vida e a de abr/26 tem 4, então o número maior ali é IDADE, não performance. Para comparar safras use Mult M3. '
        + 'Só aparece quando a safra já tem pelo menos 4 meses (M0..M3).' },
-  { key: 'r1',  lb: 'M1/M0',  blk: 'ret', step: 1,
-    tip: 'Depósito do M1 ÷ depósito do M0 (razão de VALOR, definição do Farol). ⚠️ Acima de 100% é normal em mês de crescimento: o M0 é uma janela curta (a safra do dia 28 vive 3 dias de M0).' },
-  { key: 'r2',  lb: 'M2/M1',  blk: 'ret', step: 2, tip: 'Depósito do M2 ÷ depósito do M1.' },
-  { key: 'r3',  lb: 'M3/M2',  blk: 'ret', step: 3, tip: 'Depósito do M3 ÷ depósito do M2.' },
-  { key: 'rp',  lb: 'M3+',    blk: 'ret', pooled: true,
-    tip: 'Pooled das idades ≥3: Σ dep[a] ÷ Σ dep[a−1] para a = 3..última. Mesma fórmula das linhas POR CANAL do Farol '
-       + '(o M3+ do card da casa é o residual "recorrente − M+1 − M+2", que não existe por safra). Só aparece a partir de 4 meses de vida.' },
+  // ---- RETENÇÃO — RÉGUA DO FAROL, indexada pelo MÊS DE REFERÊNCIA (ver o bloco escRet_) ----
+  { key: 'r1',  lb: 'M1/M0',  blk: 'ret', ref: 1,
+    tip: 'Régua do Farol: no MÊS da linha, o depósito das safras de idade 1 ÷ o que ELAS depositaram no mês anterior. '
+       + '⚠️ Não é a safra da linha — na linha de jul/26 quem está sendo medido é a safra de JUNHO. '
+       + '⚠️ Acima de 100% é normal em mês de crescimento: o M0 é uma janela curta (a safra do dia 28 vive 3 dias de M0).' },
+  { key: 'r2',  lb: 'M2/M1',  blk: 'ret', ref: 2,
+    tip: 'Régua do Farol: no MÊS da linha, o depósito das safras de idade 2 ÷ o que elas depositaram no mês anterior (quando tinham idade 1).' },
+  { key: 'rp',  lb: 'M3+',    blk: 'ret', ref: 'p',
+    tip: 'Régua do Farol: TUDO que tem mais de 3 meses no mês da linha ÷ (M2 do mês passado + M3+ do mês passado). '
+       + 'Na matriz de coorte esse denominador é simplesmente Σ dep[R−1] das safras de idade ≥3 em R — porque idade ≥3 em R é idade ≥2 em R−1. '
+       + 'Por isso aqui a conta sai direta, sem precisar do "recorrente" que o card da casa no Farol usa pra chegar no mesmo lugar.' },
 ];
 const ESC_RET_FMT = (v) => fmtPct(v, 1);
 // Valor de UMA safra (unidade) numa coluna. Devolve {num, den, aberta} ou null quando a safra não
@@ -7189,28 +7193,96 @@ function escUnid_(u, col, arr, closed, soMaduras) {
     let s = 0; for (let a = 0; a <= k; a++) s += arr[a] || 0;
     return { num: s, den: u.ftd, aberta: k > closed };
   }
-  if (col.step) {
-    const k = col.step;
-    if (k > lim) return null;
-    return { num: arr[k] || 0, den: arr[k - 1] || 0, aberta: k > closed };
-  }
-  if (lim < 3) return null;                          // pooled M3+
-  let nu = 0, de = 0;
-  for (let a = 3; a <= lim; a++) { nu += arr[a] || 0; de += arr[a - 1] || 0; }
-  return { num: nu, den: de, aberta: lim > closed };
+  return null;
+}
+// ============================================================
+// RETENÇÃO — RÉGUA DO FAROL (mês de referência), não decaimento da própria safra
+// ============================================================
+// ⚠️ ESTE BLOCO TROCOU DE EIXO em 22/08/2026, a pedido do Luis, e a mudança é de SIGNIFICADO.
+// Antes cada coluna era o passo da PRÓPRIA safra da linha (dep[1]÷dep[0] daquela coorte). Consequência
+// que ele pegou na tela: a linha de jul/26 não tinha M3+ — a coorte de julho tem um mês de vida. Mas a
+// pergunta que se faz sobre julho não é "como a safra de julho decai", é **"quanto a base reteve EM
+// julho"** — e aí o depósito de julho de quem entrou em JANEIRO conta. É a leitura do Farol.
+//
+// Agora a linha é o MÊS DE REFERÊNCIA R e a coluna é a IDADE da safra medida:
+//   M1/M0 = Σ dep(R) das safras de idade 1 em R ÷ Σ dep(R−1) das MESMAS safras
+//   M2/M1 = idem, idade 2
+//   M3+   = Σ dep(R) das safras de idade ≥3 ÷ [ M2 do mês passado + M3+ do mês passado ]
+//
+// ⚠️ O denominador do M3+ é o que o Luis descreveu, e na matriz ele COLAPSA: "idade 2 em R−1" mais
+// "idade ≥3 em R−1" é exatamente "idade ≥3 em R, olhada um mês antes" — ou seja Σ_{a≥3} dep[a−1]. Por
+// isso aqui não é preciso o `recorrente` (recorrente − M+1 − M+2) que o card da casa no Farol usa: ele
+// existe lá porque a view do Farol não tem a matriz inteira, só as idades 1 e 2. Mesmo número, caminho
+// mais curto — e, diferente do residual, este não depende de uma segunda query.
+//
+// ⚠️ CONSEQUÊNCIA QUE VALE SABER: o M1/M0 da linha de jul/26 mede a safra de JUNHO. O número "andou uma
+// linha pra cima" em relação à versão anterior desta aba. É o preço de falar a mesma língua do Farol, e
+// é o mesmo par que o Farol já mostra lado a lado (o Mult M0 dele é da safra do mês; o M0→M1, da anterior).
+//
+// Fora do eixo de safra (canal/faixa) não existe "o mês da linha": aí a conta é POOLED sobre todos os
+// meses de referência fechados — soma numeradores e denominadores de todos os R e divide no fim, que é
+// a mesma álgebra e responde "quanto este canal reteve, em média, por mês".
+function escRet_(coortes, col, mesesRef, ultFech, soMaduras, baseRet) {
+  let num = 0, den = 0, aberta = false, temR = false;
+  (mesesRef || []).forEach((R) => {
+    const fechado = !ultFech || R <= ultFech;
+    if (soMaduras && !fechado) return;
+    const Ri = escIdx_(R);
+    let achou = false;
+    (coortes || []).forEach((c) => {
+      const arr = ((baseRet === 'jog') ? c.jog : c.dep) || [];
+      const a = Ri - escIdx_(c.safra);
+      if (a < 1) return;                                        // idade 0 não tem mês anterior
+      if ((col.ref === 'p') ? (a < 3) : (a !== col.ref)) return;
+      // ⚠️ Ler num e den com guarda de comprimento SEPARADA. Uma coorte pode ter depositado em R−1 e
+      // nada em R (o vetor termina antes) — pular a linha inteira nesse caso tiraria o denominador
+      // junto e a retenção subiria sozinha, que é o erro de sinal mais caro possível aqui.
+      const n = (a < arr.length) ? (arr[a] || 0) : 0;
+      const d = ((a - 1) < arr.length) ? (arr[a - 1] || 0) : 0;
+      if (!n && !d) return;                                     // safra inexistente nos dois meses
+      num += n; den += d; achou = true;
+    });
+    if (!achou) return;
+    temR = true;
+    if (!fechado) aberta = true;
+  });
+  if (!temR) return null;
+  return { num: num, den: den, aberta: aberta };
 }
 // Célula da LINHA = soma os numeradores e os denominadores das safras que a compõem e só então divide
 // (nunca média de razões — mesma regra do "Realizado" das outras abas).
 // `nUso`/`n` alimentam o tooltip: numa linha de canal, saber que 3 de 20 safras entraram na coluna M3
 // é a diferença entre ler performance e ler idade de safra.
-function escCel_(row, col, ultFech, soMaduras, baseRet) {
-  const usaJog = (col.blk === 'ret' && baseRet === 'jog');
+// ⚠️ AS DUAS METADES DA TABELA TÊM EIXOS DIFERENTES, e isso é intencional (é o mesmo par que o Farol
+// já mostra lado a lado):
+//   · MULTIPLICADOR → propriedade da SAFRA da linha (acumulado dela ÷ o FTD$ dela).
+//   · RETENÇÃO      → propriedade do MÊS da linha (régua do Farol; ver escRet_) — precisa das OUTRAS
+//                     safras, então vem de `ctx.coortes`, não de `row.un`.
+// `ctx` = { coortes (todas as do recorte de canal/faixa), meses (todos os meses de referência),
+//           ultFech, soMaduras, baseRet, porSafra }.
+function escCel_(row, col, ctx) {
+  if (col.blk === 'ret') {
+    // Eixo de safra: o mês de referência é o da própria linha, e as safras medidas são TODAS as do
+    // recorte. Eixo de canal/faixa: não há "o mês da linha" → pooled sobre todos os meses, mas só
+    // sobre as safras DAQUELA linha.
+    // ⚠️ A linha de TOTAL não tem mês (a chave dela não é uma data) — ela é pooled sobre todos os
+    // meses de referência, igual aos eixos de dimensão. Sem esta guarda, escIdx_('__tot__') dá NaN e a
+    // célula sai vazia sem dizer por quê.
+    const porMes = ctx.porSafra && !row._tot;
+    // O TOTAL fala do recorte inteiro (ctx.coortes), não das linhas que o filtro de safras deixou na
+    // tela — senão o rodapé contaria uma história diferente das linhas acima dele.
+    const coos = (porMes || row._tot) ? ctx.coortes : (row.coortes || []);
+    const meses = porMes ? [row.key] : ctx.meses;
+    const r = escRet_(coos, col, meses, ctx.ultFech, ctx.soMaduras, ctx.baseRet);
+    if (!r) return { vazia: true, v: null, n: 0, nUso: 0, aberta: false };
+    return { vazia: false, v: (r.den > 0) ? r.num / r.den : null, n: meses.length, nUso: meses.length,
+             aberta: r.aberta, num: r.num, den: r.den };
+  }
   let num = 0, den = 0, n = 0, nUso = 0, aberta = false;
   (row.un || []).forEach((u) => {
     n++;
-    const arr = (usaJog ? u.jog : u.dep) || [];
-    const closed = ultFech ? (escIdx_(ultFech) - escIdx_(u.safra)) : -1;
-    const r = escUnid_(u, col, arr, closed, soMaduras);
+    const closed = ctx.ultFech ? (escIdx_(ctx.ultFech) - escIdx_(u.safra)) : -1;
+    const r = escUnid_(u, col, u.dep || [], closed, ctx.soMaduras);
     if (!r) return;
     nUso++;
     num += r.num || 0;
@@ -7232,12 +7304,12 @@ function escPctl_(vs, p) {
   const i = (vs.length - 1) * p, lo = Math.floor(i), hi = Math.ceil(i);
   return vs[lo] + (vs[hi] - vs[lo]) * (i - lo);
 }
-function escEscala_(linhas, col, ultFech, soMaduras, baseRet) {
+function escEscala_(linhas, col, ctx) {
   const grossas = linhas.filter((l) => (l.qtd || 0) >= ESC_MIN_QTD);
   const alvo = grossas.length ? grossas : linhas;
   const vs = [];
   alvo.forEach((l) => {
-    const c = escCel_(l, col, ultFech, soMaduras, baseRet);
+    const c = escCel_(l, col, ctx);
     if (!c.vazia && !c.aberta && c.v != null && isFinite(c.v)) vs.push(c.v);
   });
   if (!vs.length) return null;
@@ -7262,7 +7334,9 @@ function escUnidades_(coortes) {
 function escLinha_(key, lb, coortes) {
   const un = escUnidades_(coortes);
   return {
-    key: key, lb: lb, un: un,
+    // `coortes` fica na linha porque o bloco de RETENÇÃO precisa das coortes cruas (idade por mês de
+    // referência), não das unidades já fundidas por safra — ver escCel_.
+    key: key, lb: lb, un: un, coortes: coortes,
     qtd: un.reduce((s, u) => s + u.qtd, 0),
     ftd: un.reduce((s, u) => s + u.ftd, 0),
   };
@@ -7361,21 +7435,25 @@ function TabEscadaMensal({ chFilter, meta }) {
     return coortes.filter((c) => c.safra >= corte);
   }, [coortes, janN]);
 
+  // ⚠️ O recorte de safras vale SÓ no eixo de safra, onde ele é literalmente um filtro de LINHA. Nos
+  // eixos de canal/faixa ele viraria um recálculo escondido (a linha "Google" passaria a cobrir 6 safras
+  // em vez de 33 sem nada na tela dizer isso) — então lá o controle nem aparece e o universo é inteiro.
+  const linhasSrc = (eixo === 'safra') ? coortesTab : coortes;
   const linhas = React.useMemo(() => {
     if (eixo === 'safra') {
       const m = {};
-      coortesTab.forEach((c) => { (m[c.safra] || (m[c.safra] = [])).push(c); });
+      linhasSrc.forEach((c) => { (m[c.safra] || (m[c.safra] = [])).push(c); });
       return Object.keys(m).sort().map((k) => escLinha_(k, monthLabelPt_(k + '-01'), m[k]));
     }
     const campo = (eixo === 'canal') ? 'canal' : 'faixa';
     const m = {};
-    coortesTab.forEach((c) => { (m[c[campo]] || (m[c[campo]] = [])).push(c); });
+    linhasSrc.forEach((c) => { (m[c[campo]] || (m[c[campo]] = [])).push(c); });
     const ks = Object.keys(m);
     if (eixo === 'faixa') ks.sort();
     const ls = ks.map((k) => escLinha_(k, (eixo === 'faixa') ? fxLabel_(k) : k, m[k]));
     return (eixo === 'canal') ? ls.sort((a, b) => (b.ftd || 0) - (a.ftd || 0)) : ls;
-  }, [coortesTab, eixo]);
-  const totalRow = React.useMemo(() => escLinha_('__tot__', 'Total', coortesTab), [coortesTab]);
+  }, [linhasSrc, eixo]);
+  const totalRow = React.useMemo(() => Object.assign(escLinha_('__tot__', 'Total', linhasSrc), { _tot: true }), [linhasSrc]);
 
   // Meses disponíveis pro seletor do mix: do mais novo pro mais velho, só os que têm depósito.
   const mesesMix = React.useMemo(() => {
@@ -7392,25 +7470,43 @@ function TabEscadaMensal({ chFilter, meta }) {
 
   const cols = ESC_COLS;
   const sepCls = pirSepCls_(cols);
+  const eixoDef = ESC_EIXOS.find((e) => e.k === eixo) || ESC_EIXOS[0];
+  const porSafra = eixo === 'safra';
+  // Todos os meses de REFERÊNCIA com dado (usados pelo pooled dos eixos de canal/faixa).
+  // ⚠️ Sai de `coortes` (recorte inteiro), não de `coortesTab`: o recorte de safras da tabela não pode
+  // encurtar a régua de retenção — senão o número muda ao mexer num controle que só era de linhas.
+  const mesesRef = React.useMemo(() => {
+    const set = {};
+    coortes.forEach((c) => {
+      const b = escIdx_(c.safra);
+      (c.dep || []).forEach((v, i) => { if (v) set[escFromIdx_(b + i)] = 1; });
+    });
+    return Object.keys(set).sort();
+  }, [coortes]);
+  // ⚠️ `coortes` (todas as do recorte de canal/faixa) e NÃO `coortesTab`: a retenção do mês precisa das
+  // safras velhas — é o ponto do M3+. O recorte de safras vale só pra quais LINHAS aparecem.
+  const ctx = { coortes: coortes, meses: mesesRef, ultFech: ultFech, soMaduras: soMaduras, baseRet: baseRet, porSafra: porSafra };
   const escalas = {};
-  cols.forEach((c) => { if (!c.plain) escalas[c.key] = escEscala_(linhas, c, ultFech, soMaduras, baseRet); });
+  cols.forEach((c) => { if (!c.plain) escalas[c.key] = escEscala_(linhas, c, ctx); });
   const fmtDe = (c) => c.plain ? c.fmt : (c.blk === 'ret' ? ESC_RET_FMT : fmtMultiple);
   const chLbl = chLabel_(chFilter);
   const faixaLbl = faixaSel.length === 0 ? 'todas as faixas' : (faixaSel.length <= 2 ? faixaSel.map(fxLabel_).join(' + ') : faixaSel.length + ' faixas');
-  const eixoDef = ESC_EIXOS.find((e) => e.k === eixo) || ESC_EIXOS[0];
-  const porSafra = eixo === 'safra';
 
   const celula = (l, c, sep) => {
     if (c.plain) {
       return <td key={c.key} className={sep || undefined}><span className="pir-v pir-flat">{c.fmt(c.of(l))}</span></td>;
     }
-    const cel = escCel_(l, c, ultFech, soMaduras, baseRet);
+    const cel = escCel_(l, c, ctx);
     if (cel.vazia) {
       return (
         <td key={c.key} className={sep || undefined}>
-          <span className="pir-v pir-excl" title={porSafra
-            ? 'Esta safra ainda não alcançou (ou não fechou) o horizonte desta coluna. Desligue “só meses fechados” para ver o parcial do mês corrente.'
-            : 'Nenhuma das safras desta linha alcançou o horizonte desta coluna.'}>·</span>
+          <span className="pir-v pir-excl" title={(c.blk === 'ret')
+            ? (porSafra
+              ? 'Neste mês não existe safra da idade desta coluna (ou o mês ainda não fechou). No começo da série é o esperado: em dez/2023 não havia safra de idade 1.'
+              : 'Nenhum mês de referência fechado tem safra da idade desta coluna nesta linha.')
+            : (porSafra
+              ? 'Esta safra ainda não alcançou (ou não fechou) o horizonte desta coluna. Desligue “só meses fechados” para ver o parcial do mês corrente.'
+              : 'Nenhuma das safras desta linha alcançou o horizonte desta coluna.')}>·</span>
         </td>
       );
     }
@@ -7422,12 +7518,17 @@ function TabEscadaMensal({ chFilter, meta }) {
       const i = Math.min(5, Math.max(0, Math.round(t * 5)));
       st = { background: 'var(' + PIR_RAMP[i] + ')', color: 'var(' + PIR_INK[i] + ')' };
     }
-    const nS = porSafra ? '' : (' · ' + cel.nUso + ' de ' + cel.n + ' safras alcançaram este horizonte');
+    const nS = (c.blk === 'ret')
+      ? ((porSafra && !l._tot) ? ' · mês de referência ' + monthLabelPt_(l.key + '-01') + ' (mede as safras de idade '
+                    + (c.ref === 'p' ? '≥3' : c.ref) + ', não a safra desta linha)'
+                  : ' · pooled sobre ' + cel.n + ' meses de referência')
+      : (porSafra ? '' : (' · ' + cel.nUso + ' de ' + cel.n + ' safras alcançaram este horizonte'));
     const dica = (cel.aberta
       ? 'PARCIAL: o horizonte inclui ' + (ultFech ? monthLabelPt_(escMesAdd_(ultFech, 1) + '-01') : 'o mês corrente')
         + ', que ainda não fechou' + (dataMax ? ' (dado até ' + fmtBR_(dataMax) + ')' : '')
         + '. O valor é um PISO — só pode subir.'
       : 'Fechado') + nS
+      + (c.blk === 'ret' ? ' · ' + ((baseRet === 'jog') ? pirInt_(cel.num) + ' ÷ ' + pirInt_(cel.den) + ' depositantes' : fmtBRL(cel.num) + ' ÷ ' + fmtBRL(cel.den)) : '')
       + (c.blk === 'ret' && baseRet === 'jog' ? ' · razão de CONTAGEM de depositantes' : '');
     return (
       <td key={c.key} className={sep || undefined}>
@@ -7465,8 +7566,10 @@ function TabEscadaMensal({ chFilter, meta }) {
         <div>
           <h1>Pirâmide Mensal</h1>
           <div className="subtitle">
-            A escada de coorte no grão de MÊS — safra = mês do FTD, horizonte = idade em meses-calendário.
-            Cobre todo o histórico e <strong>não segue o slicer de data</strong> (o de canal e o de faixa valem).
+            Grão de MÊS, e <strong>duas leituras na mesma linha</strong>: os <strong>multiplicadores</strong> são da
+            safra que nasceu naquele mês; a <strong>retenção</strong> é do mês como referência, na régua do Farol
+            (quem entrou em janeiro e depositou em julho conta no M3+ de julho). Cobre todo o histórico e
+            <strong> não segue o slicer de data</strong> — o de canal e o de faixa valem.
           </div>
         </div>
       </div>
@@ -7480,7 +7583,10 @@ function TabEscadaMensal({ chFilter, meta }) {
         </div>
         <label style={{ fontSize: '11px', color: 'var(--text-muted)', marginLeft: '10px' }}>Faixa FTD</label>
         <ChannelMultiSelect options={FAIXA_LIST} selected={faixaSel} onChange={setFaixaSel} labelOf={fxLabel_} allLabel="Todas" countNoun="faixas" />
-        <span style={{ fontSize: '11px', color: 'var(--text-muted)', marginLeft: '10px' }}>Safras</span>
+        {/* Só no eixo de safra: lá é filtro de LINHA. Nos outros eixos ele mudaria o número sem nada na
+            tela dizer isso — controle que às vezes recalcula em silêncio é pior que controle ausente. */}
+        {porSafra && <span style={{ fontSize: '11px', color: 'var(--text-muted)', marginLeft: '10px' }}>Safras</span>}
+        {porSafra && (
         <div className="slicer-presets" style={{ marginLeft: 6 }}>
           {ESC_JANELAS.map((j) => (
             <button key={j.k} className={`preset-btn ${janela === j.k ? 'active' : ''}`} onClick={() => setJanela(j.k)}
@@ -7488,6 +7594,7 @@ function TabEscadaMensal({ chFilter, meta }) {
                                : 'Todas as safras desde o início da base (dez/2023). O começo da série tem safras de dezenas de FTDs — elas ficam fora da escala de cor, mas ocupam linha.'}>{j.lb}</button>
           ))}
         </div>
+        )}
         <span style={{ fontSize: '11px', color: 'var(--text-muted)', marginLeft: '10px' }}>Retenção sobre</span>
         <div className="slicer-presets" style={{ marginLeft: 6 }}>
           <button className={`preset-btn ${baseRet === 'rs' ? 'active' : ''}`} onClick={() => setBaseRet('rs')}
@@ -7531,6 +7638,15 @@ function TabEscadaMensal({ chFilter, meta }) {
           <span style={{ color: 'var(--accent-yellow)' }}
                 title="Mult M3 tem o mesmo horizonte em toda linha (4 meses) e por isso compara. Mult M3+ é vida toda: a safra mais velha ganha por IDADE, não por performance.">
             ⚠ compare pela coluna <strong>Mult M3</strong> — <strong>Mult M3+</strong> é vida toda e cresce só com a idade da safra
+          </span>
+          {/* Os dois blocos têm EIXOS diferentes e isso tem que estar na tela, não só no tooltip: foi
+              exatamente a confusão que o Luis levantou ("pq não tem M3+ pra julho?"). */}
+          <span style={{ color: 'var(--accent-yellow)' }}
+                title={'MULTIPLICADOR: propriedade da safra que nasceu no mês da linha (acumulado dela ÷ FTD$ dela). '
+                     + 'RETENÇÃO: propriedade do MÊS da linha, régua do Farol — na linha de jul/26 o M1/M0 mede a safra de JUNHO, o M2/M1 mede a de MAIO, '
+                     + 'e o M3+ mede tudo que tinha mais de 3 meses em julho (a safra de jan/25 inclusive). '
+                     + 'É o mesmo par que o Farol já mostra lado a lado: o Mult M0 dele é da safra do mês, o M0→M1 é da safra anterior.'}>
+            ⚠ na linha, <strong>multiplicador é da safra</strong> · <strong>retenção é do mês</strong> (régua do Farol — mede as safras mais velhas)
           </span>
           {!porSafra && (
             <span style={{ color: 'var(--negative)' }}
@@ -7598,11 +7714,20 @@ function TabEscadaMensal({ chFilter, meta }) {
             {' '}⚠️ <strong><code>Mult M3+</code> é vida toda e NÃO compara entre linhas</strong>: a safra de jan/25 tem
             19 meses de vida e a de abr/26 tem 4 — o número maior ali é idade. Para rankear safras use
             <strong> Mult M3</strong>, que tem o mesmo horizonte em todas.
-            {' '}<strong>Retenção</strong> é a escada mês a mês na definição do Farol (razão de <strong>valor
-            depositado</strong>, não de jogadores): <code>M1/M0 = dep(M1) ÷ dep(M0)</code>, e assim por diante.
-            {' '}<code>M3+</code> é o <em>pooled</em> das idades ≥3 (<code>Σ dep[a] ÷ Σ dep[a−1]</code>, a partir de a=3) —
-            a mesma fórmula das linhas <strong>por canal</strong> do Farol. O card M3+ da casa no Farol usa o residual
-            (“recorrente − M+1 − M+2”), que não tem equivalente por safra, então os dois não têm que bater à vírgula.
+            {' '}<strong>Retenção — atenção, o eixo é OUTRO.</strong> Aqui a linha é o <strong>mês de
+            referência</strong>, não a safra: é a régua do Farol. Na linha de <em>julho/2026</em>, <code>M1/M0</code> mede
+            a safra de <strong>junho</strong> (o que ela depositou em julho ÷ o que depositou em junho), <code>M2/M1</code>
+            mede a de <strong>maio</strong>, e <code>M3+</code> mede <strong>tudo que tinha mais de 3 meses em julho</strong> —
+            a safra de jan/25 inclusive. É por isso que julho tem M3+ e a coluna <code>Mult M3+</code> dele não:
+            multiplicador é da safra, retenção é do mês. Mesmo par que o Farol já mostra lado a lado (o Mult M0 dele é da
+            safra do mês; o M0→M1, da anterior).
+            {' '}<strong>A conta do M3+</strong> é <code>Σ dep(R) das safras de idade ≥3 ÷ (M2 do mês passado + M3+ do mês
+            passado)</code>. Na matriz de coorte esse denominador colapsa em <code>Σ dep(R−1) das mesmas safras</code>,
+            porque idade ≥3 em R é idade ≥2 em R−1 — então sai direto, sem o <em>recorrente</em> que o card da casa no
+            Farol precisa para chegar no mesmo lugar (lá a view só tem as idades 1 e 2). Base = <strong>valor
+            depositado</strong>; o toggle troca para contagem de depositantes.
+            {' '}Nos eixos de <strong>canal</strong> e <strong>faixa</strong> não existe “o mês da linha”: a conta vira
+            <strong> pooled</strong> — soma numeradores e denominadores de todos os meses fechados e divide no fim.
             {' '}<strong>Idade é mês-calendário</strong>, não janela de 30 dias: a safra do dia 28 vive 3 dias de M0 e a
             do dia 1º vive 30. É a mesma régua do BP e da Lottu — e é por isso que <strong>valores acima de 100% na
             retenção são normais</strong> em mês de crescimento forte (o M0 é uma janela curta).
