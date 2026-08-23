@@ -7167,6 +7167,31 @@ function escUltMesFechado_(diaOk) {
 //   M1/M0 = dep[1]÷dep[0] · M2/M1 · M3/M2 · M3+ = Σ_{a≥3} dep[a] ÷ Σ_{a≥3} dep[a−1]  (pooled)
 // O M3+ pooled é a mesma fórmula das LINHAS POR CANAL do Farol (não o residual da casa, que precisa do
 // "recorrente" e não existe por safra).
+// ⚠️ DUAS VARIANTES DA MESMA TABELA (2026-08-22). `escCols_('dep')` é a Pirâmide Mensal de sempre
+// (multiplicador = acumulado ÷ FTD$); `escCols_('ggr')` é a aba GGR, onde o acumulado é GGR e o
+// denominador é o INVESTIMENTO da coorte — ou seja, ROAS. Todo o resto da tabela (eixos, filtros,
+// retenção, reativados, maturidade, escala) é literalmente o mesmo código: o que muda é esta lista e
+// o `&metric=` do fetch. A régua de RETENÇÃO também segue a métrica, então na aba GGR ela lê
+// "retenção de GGR mês a mês", não de depósito.
+// ⚠️ 1,0 É A META NATURAL DO ROAS (payback), e por isso as colunas de ROAS levam `meta: 1`. Não é um
+// alvo de plano — é a definição de empatar: abaixo de 1 a safra ainda não devolveu a verba.
+const ESC_COLS_GGR = [
+  { key: 'qtd',  lb: 'Qtd FTD',  blk: 'ctx', plain: true, of: (r) => r.qtd || null, fmt: pirInt_ },
+  { key: 'qtdp', lb: '% FTD',    blk: 'ctx', plain: true, pct: 'qtd' },
+  { key: 'inv',  lb: 'Investim.', blk: 'ctx', plain: true, of: (r) => r.inv || null, fmt: fmtBRL,
+    tip: 'Investimento de aquisição da coorte. Fonte: a mesma vw_cohort_ggr que alimenta o card Investimento/ROAS GGR do Farol, no grão safra × canal, com os ajustes do Farol (Meta × imposto de fechamento; Programática = FTD × CPA fixo, porque não tem spend rastreado). ⚠️ Nas quebras por faixa, grupo e campanha a verba é RATEADA pró-rata pela contagem de FTD dentro do safra × canal — é premissa, não medição.' },
+  { key: 'invp', lb: '% do inv.', blk: 'ctx', plain: true, pct: 'inv' },
+  { key: 'cpa',  lb: 'CPA',      blk: 'ctx', plain: true, of: (r) => (r.qtd && r.inv) ? r.inv / r.qtd : null, fmt: fmtBRL,
+    tip: 'Investimento ÷ nº de FTDs da coorte. É o número que o ROAS tem que devolver.' },
+  { key: 'rg0',  lb: 'ROAS M0',  blk: 'mult', ate: 0, den: 'inv', meta: 1,
+    tip: 'GGR do MÊS-CALENDÁRIO do FTD ÷ investimento da coorte. É quanto da verba volta ainda dentro do mês da compra.' },
+  { key: 'rg1',  lb: 'ROAS M1',  blk: 'mult', ate: 1, den: 'inv', meta: 1, tip: 'GGR acumulado M0+M1 ÷ investimento.' },
+  { key: 'rg2',  lb: 'ROAS M2',  blk: 'mult', ate: 2, den: 'inv', meta: 1, tip: 'GGR acumulado M0+M1+M2 ÷ investimento.' },
+  { key: 'rg3',  lb: 'ROAS M3',  blk: 'mult', ate: 3, den: 'inv', meta: 1,
+    tip: 'GGR acumulado do M0 ao M3 ÷ investimento. É a coluna COMPARÁVEL entre safras: toda linha tem o mesmo horizonte (4 meses).' },
+  { key: 'rgtot', lb: 'ROAS M3+', blk: 'mult', ate: 'tot', den: 'inv', meta: 1,
+    tip: '⚠️ VIDA TODA: todo o GGR que a safra já gerou ÷ investimento. NÃO compara entre linhas — a safra mais velha ganha por IDADE. Para comparar use ROAS M3.' },
+];
 const ESC_COLS = [
   { key: 'qtd',  lb: 'Qtd FTD',   blk: 'ctx', plain: true, of: (r) => r.qtd || null,                fmt: pirInt_ },
   // ⚠️ `pct` = share da linha no TOTAL DESTA TABELA (o mesmo Total do rodapé), NÃO no total da casa.
@@ -7210,26 +7235,47 @@ const ESC_COLS = [
        + 'Por dividir pelo mesmo denominador, com o corte ligado vale a identidade: M3+ (sem reativados) + Reativados = M3+ bruto. '
        + 'Ex. jul/26: 87,9% + 11,8% = 99,7%. Sem cor de propósito — reativação alta não é boa nem ruim, é diagnóstico.' },
 ];
+// ⚠️ As colunas de RETENÇÃO são as MESMAS nas duas abas — a régua do Farol (mês de referência × idade
+// da safra medida) não depende de a métrica ser depósito ou GGR. Concatenar em vez de repetir é o que
+// garante que mexer na régua valha nas duas de uma vez.
+const ESC_COLS_GGR_FULL = ESC_COLS_GGR.concat(ESC_COLS.filter((c) => c.blk === 'ret'));
+function escCols_(metric) { return (metric === 'ggr') ? ESC_COLS_GGR_FULL : ESC_COLS; }
+// Rótulos que mudam com a métrica. Tudo o que é texto de tela sai daqui, pra não haver uma aba
+// dizendo "depósito" com GGR na célula.
+const ESC_MET = {
+  dep: { vlb: 'depósito', VLB: 'Depósito', mult: 'multiplicador', fmtV: fmtBRL,
+         mixT: 'DE ONDE VEIO O DEPÓSITO DE', h1: 'Pirâmide Mensal' },
+  ggr: { vlb: 'GGR', VLB: 'GGR', mult: 'ROAS', fmtV: fmtBRL,
+         mixT: 'DE ONDE VEIO O GGR DE', h1: 'Pirâmide Mensal — GGR' },
+};
 const ESC_RET_FMT = (v) => fmtPct(v, 1);
 // Valor de UMA safra (unidade) numa coluna. Devolve {num, den, aberta} ou null quando a safra não
 // alcança o horizonte da coluna.
 // `lim` = maior idade utilizável: com "só meses fechados" ligado ela para no último mês FECHADO, senão
 // vai até a última idade com dado (que é o mês corrente, parcial).
 // ⚠️ `aberta` marca que o horizonte inclui um mês que ainda não fechou — o valor é um piso, não o número.
+// ⚠️ `col.den` escolhe o DENOMINADOR e é o que separa as duas abas: 'ftd' (default) dá
+// MULTIPLICADOR (acumulado ÷ FTD$) e 'inv' dá ROAS (acumulado ÷ investimento da coorte). O numerador
+// é o mesmo acumulado em ambos — quem troca a métrica da célula é o payload (depósito ou GGR).
+// ⚠️ Safra sem investimento rastreado devolve null em vez de dividir por zero: no eixo de safra isso
+// esvazia as linhas antigas (a casa só tem verba rastreada desde ~mar/2026), que é o correto — um ROAS
+// de safra orgânica com denominador zero seria infinito e roubaria a escala de cor inteira.
 function escUnid_(u, col, arr, closed, soMaduras) {
   const last = arr.length - 1;
   const lim = soMaduras ? Math.min(last, closed) : last;
   if (lim < 0) return null;
+  const den = (col.den === 'inv') ? (u.inv || 0) : u.ftd;
+  if (!(den > 0)) return null;
   if (col.ate === 'tot') {
     if (lim < 3) return null;                       // "M3+" pede que a safra tenha chegado ao M3
     let s = 0; for (let a = 0; a <= lim; a++) s += arr[a] || 0;
-    return { num: s, den: u.ftd, aberta: lim > closed };
+    return { num: s, den: den, aberta: lim > closed };
   }
   if (col.ate != null) {
     const k = col.ate;
     if (k > lim) return null;
     let s = 0; for (let a = 0; a <= k; a++) s += arr[a] || 0;
-    return { num: s, den: u.ftd, aberta: k > closed };
+    return { num: s, den: den, aberta: k > closed };
   }
   return null;
 }
@@ -7378,9 +7424,11 @@ function escEscala_(linhas, col, ctx) {
 function escUnidades_(coortes) {
   const m = {};
   (coortes || []).forEach((c) => {
-    const u = m[c.safra] || (m[c.safra] = { safra: c.safra, qtd: 0, ftd: 0, dep: [], jog: [] });
+    const u = m[c.safra] || (m[c.safra] = { safra: c.safra, qtd: 0, ftd: 0, inv: 0, dep: [], jog: [] });
     u.qtd += c.qtd || 0;
     u.ftd += c.ftd || 0;
+    // `inv` só vem no payload da métrica GGR (backend v84). No de depósito é sempre 0 e ninguém lê.
+    u.inv += c.inv || 0;
     (c.dep || []).forEach((v, i) => { u.dep[i] = (u.dep[i] || 0) + (v || 0); });
     (c.jog || []).forEach((v, i) => { u.jog[i] = (u.jog[i] || 0) + (v || 0); });
   });
@@ -7396,6 +7444,7 @@ function escLinha_(key, lb, coortes, mesesOk) {
     key: key, lb: lb, un: un, coortes: coortes,
     qtd: un.reduce((s, u) => s + u.qtd, 0),
     ftd: un.reduce((s, u) => s + u.ftd, 0),
+    inv: un.reduce((s, u) => s + (u.inv || 0), 0),
   };
 }
 const ESC_EIXOS = [
@@ -7455,21 +7504,36 @@ const ESC_SELECT_ST = {
   background: 'var(--surface-2)', color: 'var(--text)', border: '1px solid var(--border)',
   borderRadius: 6, padding: '3px 8px', fontSize: 12, colorScheme: 'dark',
 };
-function TabEscadaMensal({ chFilter, meta }) {
-  const [eixo, setEixo] = usePersistedState('rvops:escEixo', 'safra');
+// ⚠️ UM COMPONENTE, DUAS ABAS (2026-08-22). `metric='dep'` é a Pirâmide Mensal (multiplicadores sobre
+// FTD$); `metric='ggr'` é a Pirâmide Mensal GGR (ROAS sobre investimento). Clonar o componente daria
+// duas telas que divergem na primeira manutenção — o pedido era explicitamente "a mesma aba, só pra
+// GGR", então a moldura é literalmente o mesmo código e só três coisas variam: a lista de colunas
+// (escCols_), o `&metric=` dos fetches e os rótulos (ESC_MET).
+// ⚠️ As chaves de localStorage levam prefixo por métrica: os toggles das duas abas são INDEPENDENTES.
+// Compartilhar faria mexer no eixo de uma reordenar a outra pelas costas.
+function TabEscadaMensal({ chFilter, meta, metric }) {
+  const met = (metric === 'ggr') ? 'ggr' : 'dep';
+  const M = ESC_MET[met];
+  const pk = (n) => 'rvops:esc' + (met === 'ggr' ? 'G' : '') + n;
+  const qMet = (met === 'ggr') ? '&metric=ggr' : '';
+  const [eixo, setEixo] = usePersistedState(pk('Eixo'), 'safra');
   // ⚠️ PADRÃO LIGADO, ao contrário da Pirâmide. Aqui o mês corrente é o M0 da safra deste mês E o M1 da
   // safra do mês passado — desligado, TODA a diagonal mais recente aparece cortada no dia de hoje e a
   // leitura natural ("a retenção caiu") é artefato de calendário. Desligado mostra o parcial hachurado.
-  const [soMaduras, setSoMaduras] = usePersistedState('rvops:escMaduras', true);
+  const [soMaduras, setSoMaduras] = usePersistedState(pk('Maduras'), true);
   // Base do bloco de RETENÇÃO. R$ = definição do Farol/BP (as metas 75/72/88 falam desta). Jogadores =
   // razão de CONTAGEM de depositantes (não é transição por jogador — ver o tooltip); é o lado que
   // separa "% que volta" de "quanto deposita quem volta".
-  const [baseRet, setBaseRet] = usePersistedState('rvops:escBaseRet', 'rs');
+  const [baseRet, setBaseRet] = usePersistedState(pk('BaseRet'), 'rs');
   // Período: preset de janela ou 'm:YYYY-MM'. Default 'all' de propósito: nada some sem alguém mandar.
-  const [janela, setJanela] = usePersistedState('rvops:escJanela', 'all');
+  // ⚠️ DEFAULT DIFERENTE POR MÉTRICA. Em depósito é 'all' (nada some sem alguém mandar). Em GGR a
+  // verba rastreada só existe de ~mar/2026 pra frente, e antes disso sobram coortes de 1 conta de
+  // Programática com R$ 90 de investimento sintético (CPA fixo) — linhas de ROAS −10x e +19x que são
+  // ruído de 1 jogador. 6 meses é a janela em que a pergunta "quanto da verba voltou" tem resposta.
+  const [janela, setJanela] = usePersistedState(pk('Janela'), met === 'ggr' ? '6' : 'all');   // '6' = a chave do preset 6m em ESC_JANELAS (não '6m', que é só o rótulo)
   // "M3+ sem reativados" — pedido do Luis (22/08). Default LIGADO: com reativados o M3+ passa de 100%
   // em vários meses e o número deixa de significar retenção.
-  const [semReat, setSemReat] = usePersistedState('rvops:escSemReat', true);
+  const [semReat, setSemReat] = usePersistedState(pk('SemReat'), true);
   const [faixaSel, setFaixaSel] = React.useState([]);
   const [mesMix, setMesMix] = React.useState(null);
 
@@ -7496,7 +7560,7 @@ function TabEscadaMensal({ chFilter, meta }) {
     if (!ENDPOINT_URL) { setDados({ rows: null, loading: false, error: 'sem endpoint' }); return; }
     let vivo = true;
     setDados((s) => ({ ...s, loading: true, error: null }));
-    fetch(`${ENDPOINT_URL}?${authParam_()}&only=escada`)
+    fetch(`${ENDPOINT_URL}?${authParam_()}&only=escada${qMet}`)
       .then((r) => r.ok ? r.json() : Promise.reject(new Error('HTTP ' + r.status)))
       .then((j) => {
         if (!vivo) return;
@@ -7513,7 +7577,7 @@ function TabEscadaMensal({ chFilter, meta }) {
     if (!ENDPOINT_URL || !dados.rows || dadosCp.rows || dadosCp.loading) return;
     let vivo = true;
     setDadosCp({ rows: null, loading: true, error: null });
-    fetch(`${ENDPOINT_URL}?${authParam_()}&only=escada&byCampanha=1`)
+    fetch(`${ENDPOINT_URL}?${authParam_()}&only=escada${qMet}&byCampanha=1`)
       .then((r) => r.ok ? r.json() : Promise.reject(new Error('HTTP ' + r.status)))
       .then((j) => {
         if (!vivo) return;
@@ -7533,7 +7597,7 @@ function TabEscadaMensal({ chFilter, meta }) {
     if (st && (st.rows || st.loading)) return;
     let vivo = true;
     setDadosCpGr((s) => ({ ...s, [camp]: { rows: null, loading: true, error: null } }));
-    fetch(`${ENDPOINT_URL}?${authParam_()}&only=escada&byCampanha=1&byGrupo=1&camp=${encodeURIComponent(camp)}`)
+    fetch(`${ENDPOINT_URL}?${authParam_()}&only=escada${qMet}&byCampanha=1&byGrupo=1&camp=${encodeURIComponent(camp)}`)
       .then((r) => r.ok ? r.json() : Promise.reject(new Error('HTTP ' + r.status)))
       .then((j) => {
         if (!vivo) return;
@@ -7550,7 +7614,7 @@ function TabEscadaMensal({ chFilter, meta }) {
     if (eixo !== 'grupo' || camp || !ENDPOINT_URL || dadosGr.rows || dadosGr.loading) return;
     let vivo = true;
     setDadosGr({ rows: null, loading: true, error: null });
-    fetch(`${ENDPOINT_URL}?${authParam_()}&only=escada&byGrupo=1`)
+    fetch(`${ENDPOINT_URL}?${authParam_()}&only=escada${qMet}&byGrupo=1`)
       .then((r) => r.ok ? r.json() : Promise.reject(new Error('HTTP ' + r.status)))
       .then((j) => {
         if (!vivo) return;
@@ -7586,9 +7650,19 @@ function TabEscadaMensal({ chFilter, meta }) {
   // ⚠️ ORDEM IMPORTA: campanha+grupo vem do payload cruzado, campanha sozinha do de campanha, grupo
   // sozinho do de grupo. O `.filter(campanha === camp)` fica nos dois casos de campanha de propósito —
   // é ele que faz a coisa funcionar mesmo se o backend ignorar o `&camp=` e devolver tudo.
-  const fonte = (campOn && porGrupo) ? ((cgSt && cgSt.rows) || []).filter((c) => c.campanha === camp)
+  const fonteBruta = (campOn && porGrupo) ? ((cgSt && cgSt.rows) || []).filter((c) => c.campanha === camp)
               : campOn ? dadosCp.rows.filter((c) => c.campanha === camp)
               : porGrupo ? (dadosGr.rows || []) : (dados.rows || []);
+  // ⚠️⚠️ NO MODO GGR SÓ ENTRA COORTE COM INVESTIMENTO RASTREADO, e isso NÃO é cosmético: sem o filtro
+  // o numerador soma o GGR de coorte orgânica (que não tem verba) e o denominador soma só a verba que
+  // existe. Medido antes do filtro: o Total da coluna ROAS M3 dava 12,42x, com a safra de out/25
+  // aparecendo com R$ 90 de investimento (1 FTD de Programática × CPA fixo) contra R$1,67M de GGR de
+  // 6.985 FTDs — ROAS de 18.525x numa linha só. É o mesmo motivo pelo qual o queryGgrSafraRoas_ do
+  // Farol restringe as coortes ao universo pago; aqui o corte é por coorte (safra × canal × faixa…),
+  // que é o grão em que a verba existe.
+  // Consequência aceita e escrita na tela: esta aba fala SÓ de mídia paga rastreada (≈ mar/2026 pra
+  // frente). Orgânico, afiliados e safras antigas não aparecem — não há ROAS sem investimento.
+  const fonte = (met === 'ggr') ? fonteBruta.filter((c) => (c.inv || 0) > 0) : fonteBruta;
   const coortes = React.useMemo(
     () => fonte.filter((c) => selCh(c.canal) && selFx(c.faixa)),
     [fonte, chKey, fxKey]);
@@ -7596,9 +7670,12 @@ function TabEscadaMensal({ chFilter, meta }) {
   // depósito do mês veio de cada safra" — se seguisse o filtro de campanha, os 100% passariam a ser
   // 100% DAQUELA CAMPANHA com cara de 100% da casa. (Com o payload de grupo daria no mesmo, porque
   // ele reconcilia; com o de campanha NÃO, que é recortado no top-20 por safra.)
+  // ⚠️ No modo GGR o bloco de mix segue o MESMO universo pago da tabela — senão ele responderia
+  // "de onde veio o GGR da casa" embaixo de uma tabela que só fala de mídia paga.
+  const fonteCasa = (met === 'ggr') ? (dados.rows || []).filter((c) => (c.inv || 0) > 0) : (dados.rows || []);
   const coortesCasa = React.useMemo(
-    () => (dados.rows || []).filter((c) => selCh(c.canal) && selFx(c.faixa)),
-    [dados.rows, chKey, fxKey]);
+    () => fonteCasa.filter((c) => selCh(c.canal) && selFx(c.faixa)),
+    [fonteCasa, chKey, fxKey]);
 
   // ⚠️ DUAS listas de propósito. `coortes` (todas as safras) é o que o bloco de MIX usa — recortar
   // safra velha lá quebraria o 100% do mês. `coortesTab` é a tabela da escada, que aceita o recorte.
@@ -7681,7 +7758,7 @@ function TabEscadaMensal({ chFilter, meta }) {
   const mix = React.useMemo(() => mesRef ? escMix_(coortesCasa, mesRef) : null, [coortesCasa, mesRef]);
   const mixAberto = !!(mesRef && ultFech && mesRef > ultFech);
 
-  const cols = ESC_COLS;
+  const cols = escCols_(met);
   const sepCls = pirSepCls_(cols);
   const eixoDef = ESC_EIXOS.find((e) => e.k === eixo) || ESC_EIXOS[0];
   const porSafra = eixo === 'safra';
@@ -7790,14 +7867,14 @@ function TabEscadaMensal({ chFilter, meta }) {
 
   if (dados.loading) {
     return (
-      <div className="tab-header"><div><h1>Pirâmide Mensal</h1>
+      <div className="tab-header"><div><h1>{M.h1}</h1>
         <div className="subtitle">carregando a matriz safra × mês do BigQuery…</div></div></div>
     );
   }
   if (dados.error) {
     return (
       <React.Fragment>
-        <div className="tab-header"><div><h1>Pirâmide Mensal</h1>
+        <div className="tab-header"><div><h1>{M.h1}</h1>
           <div className="subtitle">escada de coorte por safra mensal</div></div></div>
         <div style={{
           background: 'rgba(239,68,68,.12)', border: '1px solid rgba(239,68,68,.45)', borderLeft: '4px solid #ef4444',
@@ -7813,12 +7890,15 @@ function TabEscadaMensal({ chFilter, meta }) {
     <React.Fragment>
       <div className="tab-header">
         <div>
-          <h1>Pirâmide Mensal</h1>
+          <h1>{M.h1}</h1>
           <div className="subtitle">
-            Grão de MÊS, e <strong>duas leituras na mesma linha</strong>: os <strong>multiplicadores</strong> são da
-            safra que nasceu naquele mês; a <strong>retenção</strong> é do mês como referência, na régua do Farol
-            (quem entrou em janeiro e depositou em julho conta no M3+ de julho). Cobre todo o histórico e
+            Grão de MÊS, e <strong>duas leituras na mesma linha</strong>: {met === 'ggr'
+              ? <React.Fragment>o <strong>ROAS GGR acumulado</strong> é da safra que nasceu naquele mês (GGR dela ÷ investimento que a comprou)</React.Fragment>
+              : <React.Fragment>os <strong>multiplicadores</strong> são da safra que nasceu naquele mês</React.Fragment>
+            }; a <strong>retenção</strong> é do mês como referência, na régua do Farol
+            (quem entrou em janeiro e {M.vlb === 'GGR' ? 'gerou GGR' : 'depositou'} em julho conta no M3+ de julho). Cobre todo o histórico e
             <strong> não segue o slicer de data</strong> — o de canal e o de faixa valem.
+            {met === 'ggr' && <React.Fragment>{' '}<strong style={{ color: 'var(--accent-yellow)' }}>ROAS 1,00x = payback</strong> — a célula fica marcada quando a safra devolveu a verba.</React.Fragment>}
           </div>
         </div>
       </div>
@@ -7975,8 +8055,33 @@ function TabEscadaMensal({ chFilter, meta }) {
           {campOn && (
             <span style={{ color: 'var(--accent-yellow)' }}
                   title={'A tabela toda está recortada na campanha ' + camp + '. O Total do rodapé é o dela, não o da casa. '
-                       + 'O bloco “de onde veio o depósito” abaixo NÃO segue este filtro — ele precisa de todas as safras pra fechar 100%.'}>
+                       + 'O bloco “de onde veio o ' + M.vlb + '” abaixo NÃO segue este filtro — ele precisa de todas as safras pra fechar 100%.'}>
               filtrado na campanha <strong>{escCampLbl_(camp)}</strong> — o Total é o DELA, não o da casa
+            </span>
+          )}
+          {met === 'ggr' && (
+            <span style={{ color: 'var(--negative)' }}
+                  title={'Sem investimento não existe ROAS: as coortes sem verba rastreada (orgânico, afiliados, tudo antes de ~mar/2026) '
+                       + 'ficam FORA da tabela inteira, não só das colunas de ROAS. Sem esse corte o numerador somaria o GGR delas e o '
+                       + 'denominador não — medido: o Total da coluna ROAS M3 dava 12,42x, com out/25 aparecendo com R$ 90 de investimento '
+                       + 'contra R$ 1,67M de GGR. Consequência: os totais desta aba NÃO são os da casa, são os da mídia paga rastreada.'}>
+              ⚠ só coortes com <strong>investimento rastreado</strong> (mídia paga) — orgânico e safras pré-mar/26 ficam fora, e o Total é o do PAGO
+            </span>
+          )}
+          {met === 'ggr' && (
+            <span style={{ color: 'var(--negative)' }}
+                  title={'As safras de mar e abr/2026 são a RAMPA: verba pequena (R$ 37k e R$ 301k) com ROAS alto, provavelmente porque parte do '
+                       + 'FTD daquele canal ainda não tinha spend registrado. Como são as únicas com 4 meses de vida, as colunas ROAS M3 e M3+ '
+                       + 'falam quase só delas — o Total dessas duas colunas não representa a operação atual. Para comparar o dinheiro de hoje, '
+                       + 'use ROAS M0/M1/M2, onde mai, jun e jul entram.'}>
+              ⚠ <strong>ROAS M3/M3+</strong> hoje só tem mar–abr/26 (safras de rampa, verba pequena) — compare pelo M0/M1/M2
+            </span>
+          )}
+          {met === 'ggr' && (
+            <span style={{ color: 'var(--accent-yellow)' }}
+                  title={'GGR pode ser NEGATIVO num mês (jogador que ganhou), e razão entre números que trocam de sinal não se lê como % de '
+                       + 'retenção. Onde aparecer negativo ou acima de 100%, olhe o tooltip da célula: ele mostra o numerador e o denominador crus.'}>
+              ⚠ a retenção aqui é de <strong>GGR</strong>, que pode ser negativo — % fora de 0–100 é sinal, não erro
             </span>
           )}
           {porGrupo && (
@@ -8091,7 +8196,7 @@ function TabEscadaMensal({ chFilter, meta }) {
           ============================================================ */}
       <div className="support" style={{ marginTop: 16 }}>
         <div className="support-title" style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
-          <span>De onde veio o depósito de</span>
+          <span>De onde veio o {M.vlb} de</span>
           <select value={mesRef || ''} onChange={(e) => setMesMix(e.target.value)}
                   style={ESC_SELECT_ST}>
             {mesesMix.map((m) => <option key={m} value={m}>{monthLabelPt_(m + '-01')}</option>)}
@@ -8138,10 +8243,10 @@ function TabEscadaMensal({ chFilter, meta }) {
                 <tr>
                   <th>Safra</th>
                   <th className="pir-sep-end">Idade</th>
-                  <th className="pir-sep">Depósito no mês</th>
+                  <th className="pir-sep">{M.VLB} no mês</th>
                   <th>% do mês</th>
                   <th>% acum.</th>
-                  <th className="pir-sep-end">Depositantes</th>
+                  <th className="pir-sep-end">{met === 'ggr' ? 'Jogadores' : 'Depositantes'}</th>
                   <th className="pir-sep" style={{ width: '30%' }}>&nbsp;</th>
                 </tr>
               </thead>
@@ -8203,6 +8308,7 @@ function TabEscadaMensal({ chFilter, meta }) {
   );
 }
 
+function TabEscadaGgr(p) { return <TabEscadaMensal {...p} metric="ggr" />; }
 const TABS = [
   { id: 'farol', label: 'Farol', component: TabFarol },
   { id: 'monthlyclose', label: 'Monthly Close', component: TabMonthlyClose },
@@ -8210,6 +8316,9 @@ const TABS = [
   { id: 'retfaixa', label: 'Multiplicadores e Retenção', component: TabRetencaoFaixa },
   { id: 'piramide', label: 'Pirâmide de Coorte', component: TabPiramideCoorte },
   { id: 'piramensal', label: 'Pirâmide Mensal', component: TabEscadaMensal },
+  // ⚠️ MESMO COMPONENTE, outra métrica. O registro de abas passa `tabProps` por spread, então a única
+  // forma de fixar a métrica é este wrapper — que é justamente o que mantém as duas abas idênticas.
+  { id: 'piramensalggr', label: 'Pirâmide GGR', component: TabEscadaGgr },
   { id: 'metricasdia', label: 'Métricas do dia a dia', component: TabMetricasDia },
   { id: 'ativacao', label: 'Ativação D0', component: TabAtivacao },
   { id: 'cashflow', label: 'Daily Cashflow', component: TabDailyCashflow },
