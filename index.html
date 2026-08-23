@@ -137,6 +137,15 @@
   /* opções do dropdown nativo: força fundo escuro + texto claro (o bg amarelo
      do select vazava pro popup e deixava as opções ilegíveis) */
   .slicer select option { background: var(--surface); color: var(--text); }
+  /* ⚠️ MESMO DEFEITO FORA DO .slicer, e a regra acima NÃO alcançava: as réguas de aba são
+     `.slicer-group.slicer-ruler` — nenhuma carrega a classe `slicer` (conferido: 5 usos de
+     slicer-group+slicer-ruler, 0 de slicer+slicer-ruler). Sem isso o popup nativo do select da
+     Pirâmide Mensal (mês e Campanha) saía com o fundo semi-transparente composto sobre BRANCO e o
+     texto claro por cima = opções invisíveis, com só a linha destacada legível. `color-scheme: dark`
+     NÃO resolve: o Chrome/Windows pinta o popup com o background COMPUTADO do select, e alpha .06
+     sobre a janela branca do popup dá quase branco. Global de propósito — o cockpit é dark-only. */
+  select option { background: var(--surface); color: var(--text); }
+  select option:checked { background: var(--surface-2); color: var(--text); }
   /* GLOBAL top slicer keeps the yellow accent (MTD/diário/7d/30d, Canal, Growth/Total Casa) */
   .slicer-main input[type="date"] { background: rgba(250, 204, 21, .06); border-color: rgba(250, 204, 21, .45); }
   .slicer-main input[type="date"]:focus { border-color: var(--accent-yellow); }
@@ -2547,8 +2556,12 @@ function escLinha_(key,lb,coortes,mesesOk){const naJanela=mesesOk?coortes.filter
 function escMix_(coortes,mesRef){const R=escIdx_(mesRef);const bySafra={};let tot=0;(coortes||[]).forEach(c=>{const i=R-escIdx_(c.safra);if(i<0||i>=(c.dep||[]).length)return;const v=c.dep[i]||0;if(!v)return;const o=bySafra[c.safra]||(bySafra[c.safra]={safra:c.safra,idade:i,dep:0,jog:0});o.dep+=v;o.jog+=c.jog&&c.jog[i]||0;tot+=v;});const linhas=Object.keys(bySafra).sort().reverse().map(k=>bySafra[k]);const bal={0:0,1:0,2:0,3:0};linhas.forEach(l=>{bal[Math.min(3,l.idade)]+=l.dep;});return{linhas:linhas,total:tot,baldes:bal};}const ESC_BAL_LB={0:'M0 — safra do próprio mês (dinheiro de quem acabou de chegar)',1:'M1 — safra do mês passado',2:'M2 — safra de dois meses atrás',3:'M3+ — safras de três meses ou mais (base instalada)'};// ⚠️ colorScheme:'dark' NÃO é enfeite: sem ele o Chrome desenha o POPUP nativo do select com o
 // esquema CLARO (fundo branco) enquanto o texto herda a cor clara do app — as opções ficam
 // invisíveis e só aparecem no hover. Pego pelo Luis em 22/08. O cockpit é dark-only (não existe
-// tema claro no CSS), então fixar o esquema aqui é a correção certa, não um remendo de contraste.
-const ESC_SELECT_ST={background:'rgba(255,255,255,.06)',color:'var(--text)',border:'1px solid var(--border)',borderRadius:6,padding:'3px 8px',fontSize:12,colorScheme:'dark'};function TabEscadaMensal({chFilter,meta}){const[eixo,setEixo]=usePersistedState('rvops:escEixo','safra');// ⚠️ PADRÃO LIGADO, ao contrário da Pirâmide. Aqui o mês corrente é o M0 da safra deste mês E o M1 da
+// tema claro no CSS), então fixar o esquema aqui é parte da correção — mas ⚠️ NÃO BASTA: o Luis
+// voltou com o popup ainda ilegível (22/08, 2ª vez). Ver os dois comentários abaixo.
+const ESC_SELECT_ST={// ⚠️ background OPACO, não rgba(): o popup nativo herda o background COMPUTADO do select e o
+// alpha compõe sobre a janela BRANCA do popup — era isso que apagava as opções, não a falta de
+// color-scheme. A outra metade do fix é a regra `select option` no CSS do index.html.
+background:'var(--surface-2)',color:'var(--text)',border:'1px solid var(--border)',borderRadius:6,padding:'3px 8px',fontSize:12,colorScheme:'dark'};function TabEscadaMensal({chFilter,meta}){const[eixo,setEixo]=usePersistedState('rvops:escEixo','safra');// ⚠️ PADRÃO LIGADO, ao contrário da Pirâmide. Aqui o mês corrente é o M0 da safra deste mês E o M1 da
 // safra do mês passado — desligado, TODA a diagonal mais recente aparece cortada no dia de hoje e a
 // leitura natural ("a retenção caiu") é artefato de calendário. Desligado mostra o parcial hachurado.
 const[soMaduras,setSoMaduras]=usePersistedState('rvops:escMaduras',true);// Base do bloco de RETENÇÃO. R$ = definição do Farol/BP (as metas 75/72/88 falam desta). Jogadores =

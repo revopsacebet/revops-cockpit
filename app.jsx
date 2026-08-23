@@ -7439,9 +7439,13 @@ const ESC_BAL_LB = {
 // ⚠️ colorScheme:'dark' NÃO é enfeite: sem ele o Chrome desenha o POPUP nativo do select com o
 // esquema CLARO (fundo branco) enquanto o texto herda a cor clara do app — as opções ficam
 // invisíveis e só aparecem no hover. Pego pelo Luis em 22/08. O cockpit é dark-only (não existe
-// tema claro no CSS), então fixar o esquema aqui é a correção certa, não um remendo de contraste.
+// tema claro no CSS), então fixar o esquema aqui é parte da correção — mas ⚠️ NÃO BASTA: o Luis
+// voltou com o popup ainda ilegível (22/08, 2ª vez). Ver os dois comentários abaixo.
 const ESC_SELECT_ST = {
-  background: 'rgba(255,255,255,.06)', color: 'var(--text)', border: '1px solid var(--border)',
+  // ⚠️ background OPACO, não rgba(): o popup nativo herda o background COMPUTADO do select e o
+  // alpha compõe sobre a janela BRANCA do popup — era isso que apagava as opções, não a falta de
+  // color-scheme. A outra metade do fix é a regra `select option` no CSS do index.html.
+  background: 'var(--surface-2)', color: 'var(--text)', border: '1px solid var(--border)',
   borderRadius: 6, padding: '3px 8px', fontSize: 12, colorScheme: 'dark',
 };
 function TabEscadaMensal({ chFilter, meta }) {
