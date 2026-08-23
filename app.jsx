@@ -7169,8 +7169,15 @@ function escUltMesFechado_(diaOk) {
 // "recorrente" e não existe por safra).
 const ESC_COLS = [
   { key: 'qtd',  lb: 'Qtd FTD',   blk: 'ctx', plain: true, of: (r) => r.qtd || null,                fmt: pirInt_ },
+  // ⚠️ `pct` = share da linha no TOTAL DESTA TABELA (o mesmo Total do rodapé), NÃO no total da casa.
+  // Assim ele responde "quanto esta linha pesa dentro do recorte que está na tela" e o rodapé fecha
+  // 100%. Se o denominador fosse a casa, com canal/faixa/campanha/período filtrados a coluna somaria
+  // qualquer coisa menos 100 e ninguém saberia por quê. Pedido do Luis (22/08) lendo a tabela de grupo
+  // de risco: sem o share, "Grupo 1: 1.040 FTDs" não diz se é metade da campanha ou 5% dela.
+  { key: 'qtdp', lb: '% FTD',     blk: 'ctx', plain: true, pct: 'qtd' },
   { key: 'tkt',  lb: 'FTD $$',    blk: 'ctx', plain: true, of: (r) => r.qtd ? r.ftd / r.qtd : null, fmt: fmtBRL },
   { key: 'ftd',  lb: 'FTD total', blk: 'ctx', plain: true, of: (r) => r.ftd || null,                fmt: fmtBRL },
+  { key: 'ftdp', lb: '% do FTD$', blk: 'ctx', plain: true, pct: 'ftd' },
   { key: 'm0',   lb: 'Mult M0',   blk: 'mult', ate: 0,
     tip: 'Depósito do MÊS-CALENDÁRIO do FTD (inclui o próprio FTD) ÷ FTD$. Mesma definição do "Dep M0/FTD" do Farol e da linha Dep Multiplier/FTD do BP.' },
   { key: 'm1',   lb: 'Mult M1',   blk: 'mult', ate: 1, tip: 'Acumulado M0+M1 ÷ FTD$.' },
@@ -7707,6 +7714,23 @@ function TabEscadaMensal({ chFilter, meta }) {
 
   const celula = (l, c, sep) => {
     if (c.plain) {
+      // Share: divide pelo Total do rodapé — a mesma linha que a tabela já mostra, então ele fecha 100%.
+      if (c.pct) {
+        const den = (totalRow && totalRow[c.pct]) || 0;
+        const num = (l && l[c.pct]) || 0;
+        const p = den ? num / den : null;
+        return (
+          <td key={c.key} className={sep || undefined}>
+            <span className="pir-v pir-flat pir-pct"
+                  title={p == null ? 'sem base no recorte'
+                    : ((c.pct === 'qtd' ? pirInt_(num) + ' de ' + pirInt_(den) + ' FTDs'
+                                        : fmtBRL(num) + ' de ' + fmtBRL(den) + ' de FTD$')
+                       + ' do TOTAL DESTA TABELA (o do rodapé) — segue os filtros de canal, faixa, campanha e período.')}>
+              {p == null ? '·' : fmtPct(p, 1)}
+            </span>
+          </td>
+        );
+      }
       return <td key={c.key} className={sep || undefined}><span className="pir-v pir-flat">{c.fmt(c.of(l))}</span></td>;
     }
     const cel = escCel_(l, c, ctx);
