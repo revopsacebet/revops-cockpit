@@ -7477,6 +7477,14 @@ function TabEscadaMensal({ chFilter, meta }) {
   // Campanha selecionada ('' = nenhuma). NÃO é persistido: um filtro de campanha guardado faria a aba
   // abrir mostrando uma fatia do negócio com cara de total.
   const [camp, setCamp] = React.useState('');
+  // ⚠️ CAMPANHA × GRUPO precisa de um TERCEIRO payload. O de campanha (&byCampanha=1) não carrega a
+  // coluna `grupo` e o de grupo (&byGrupo=1) não carrega `campanha` — cruzar os dois no cliente é
+  // impossível, e era isso que fazia a tabela mostrar UMA linha “Sem grupo” com o total inteiro da
+  // campanha (reportado pelo Luis 22/08; o dado existe no BQ — essa campanha tem G1 915 / G2 755 / G4 484).
+  // Trazer o grão completo campanha×grupo não serve: sai de 329 coortes safra×campanha para 1.372 (4,2×)
+  // e o payload iria de ~600KB para ~2,5MB pro front jogar 99% fora. Então o RECORTE VAI PRO SERVIDOR
+  // (`&camp=<slug>`, backend v83) e isto aqui é um cache POR CAMPANHA — trocar e voltar não re-consulta.
+  const [dadosCpGr, setDadosCpGr] = React.useState({});
   React.useEffect(() => {
     if (!ENDPOINT_URL) { setDados({ rows: null, loading: false, error: 'sem endpoint' }); return; }
     let vivo = true;
@@ -7509,8 +7517,30 @@ function TabEscadaMensal({ chFilter, meta }) {
       .catch((e) => { if (vivo) setDadosCp({ rows: null, loading: false, error: String(e.message || e) }); });
     return () => { vivo = false; };
   }, [dados.rows]);
+  // Cruzamento campanha × grupo, sob demanda: só quando as DUAS coisas estão ativas.
+  // ⚠️ DEGRADA SOZINHO com backend velho: sem entender `&camp=`, o v82 devolve o grão inteiro
+  // campanha×grupo — pesado, mas o `.filter(campanha === camp)` da fonte entrega a mesma tabela.
   React.useEffect(() => {
-    if (eixo !== 'grupo' || !ENDPOINT_URL || dadosGr.rows || dadosGr.loading) return;
+    if (eixo !== 'grupo' || !camp || !ENDPOINT_URL) return;
+    const st = dadosCpGr[camp];
+    if (st && (st.rows || st.loading)) return;
+    let vivo = true;
+    setDadosCpGr((s) => ({ ...s, [camp]: { rows: null, loading: true, error: null } }));
+    fetch(`${ENDPOINT_URL}?${authParam_()}&only=escada&byCampanha=1&byGrupo=1&camp=${encodeURIComponent(camp)}`)
+      .then((r) => r.ok ? r.json() : Promise.reject(new Error('HTTP ' + r.status)))
+      .then((j) => {
+        if (!vivo) return;
+        if (j.error) throw new Error(j.error);
+        if (!j.escadaMensal) throw new Error('backend sem o cruzamento campanha × grupo');
+        setDadosCpGr((s) => ({ ...s, [camp]: { rows: j.escadaMensal, loading: false, error: null } }));
+      })
+      .catch((e) => { if (vivo) setDadosCpGr((s) => ({ ...s, [camp]: { rows: null, loading: false, error: String(e.message || e) } })); });
+    return () => { vivo = false; };
+  }, [eixo, camp]);
+  React.useEffect(() => {
+    // ⚠️ `|| camp`: com campanha selecionada quem manda é o payload cruzado acima — buscar o de grupo
+    // da casa aqui seria uma query de BigQuery pra um dado que a tela não vai usar. Limpa a campanha e vem.
+    if (eixo !== 'grupo' || camp || !ENDPOINT_URL || dadosGr.rows || dadosGr.loading) return;
     let vivo = true;
     setDadosGr({ rows: null, loading: true, error: null });
     fetch(`${ENDPOINT_URL}?${authParam_()}&only=escada&byGrupo=1`)
@@ -7523,7 +7553,7 @@ function TabEscadaMensal({ chFilter, meta }) {
       })
       .catch((e) => { if (vivo) setDadosGr({ rows: null, loading: false, error: String(e.message || e) }); });
     return () => { vivo = false; };
-  }, [eixo]);
+  }, [eixo, camp]);
 
   const dataMax = meta && meta.dataMaxDate;
   const diaOk = ultimoDiaFechado_(dataMax);
@@ -7536,11 +7566,21 @@ function TabEscadaMensal({ chFilter, meta }) {
   // reconciliam (mesmos 211.489 FTDs / R$122,58M), então trocar a fonte não move número nenhum; o que
   // não pode é misturar as duas listas, que dobraria cada coorte.
   const porGrupo = eixo === 'grupo';
-  const grPend = porGrupo && !(dadosGr.rows && dadosGr.rows.length);
+  // Estado do payload cruzado da campanha selecionada (só existe quando os dois filtros estão ativos).
+  const cgSt = (camp && dadosCpGr[camp]) || null;
+  // ⚠️ A pendência de grupo agora tem DUAS fontes possíveis: com campanha, quem tem que chegar é o
+  // payload cruzado; sem campanha, o de grupo da casa. Antes isso olhava só o segundo, então com
+  // campanha selecionada a tabela renderizava (do payload SEM grupo) e nada avisava — o número
+  // aparecia certo na coluna errada.
+  const grPend = porGrupo && (camp ? !(cgSt && cgSt.rows && cgSt.rows.length) : !(dadosGr.rows && dadosGr.rows.length));
   // ⚠️ A fonte só troca pro payload de campanha quando UMA campanha está selecionada. Sem seleção
   // fica o base — porque o de campanha é recortado no top-20/safra e o Total dele NÃO é o da casa.
-  const campOn = !!(camp && dadosCp.rows && dadosCp.rows.length);
-  const fonte = campOn ? dadosCp.rows.filter((c) => c.campanha === camp)
+  const campOn = !!(camp && (dadosCp.rows && dadosCp.rows.length || (cgSt && cgSt.rows && cgSt.rows.length)));
+  // ⚠️ ORDEM IMPORTA: campanha+grupo vem do payload cruzado, campanha sozinha do de campanha, grupo
+  // sozinho do de grupo. O `.filter(campanha === camp)` fica nos dois casos de campanha de propósito —
+  // é ele que faz a coisa funcionar mesmo se o backend ignorar o `&camp=` e devolver tudo.
+  const fonte = (campOn && porGrupo) ? ((cgSt && cgSt.rows) || []).filter((c) => c.campanha === camp)
+              : campOn ? dadosCp.rows.filter((c) => c.campanha === camp)
               : porGrupo ? (dadosGr.rows || []) : (dados.rows || []);
   const coortes = React.useMemo(
     () => fonte.filter((c) => selCh(c.canal) && selFx(c.faixa)),
@@ -7833,7 +7873,28 @@ function TabEscadaMensal({ chFilter, meta }) {
         </div>
         <div className="pir-legend">
           <span>Escala <i className="pir-ramp">{PIR_RAMP.map((v) => <i key={v} style={{ background: 'var(' + v + ')' }} />)}</i> pior → melhor</span>
-          <span><i className="pir-sw pir-sw-open" /> horizonte inclui mês em aberto (valor é piso)</span>
+          <span><i className="pir-sw pir-sw-open" /> mês em aberto (valor é piso)</span>
+          {semReat && !temReat && (
+            <span style={{ color: 'var(--negative)' }}>
+              ⚠ “M3+ sem reativados” está LIGADO mas o payload não traz a marcação — o número na tela AINDA inclui os reativados (falta propagar o deploy do backend).
+            </span>
+          )}
+          {grPend && (
+            <span style={{ color: 'var(--negative)' }}>
+              ⚠ {(camp ? (cgSt && cgSt.error) : dadosGr.error)
+                  ? 'falhou buscar a quebra por grupo (' + (camp ? cgSt.error : dadosGr.error) + ')'
+                  : (camp ? 'carregando campanha × grupo do BigQuery' : 'carregando a quebra por grupo do BigQuery')} — a tabela abaixo fica vazia até chegar.
+            </span>
+          )}
+        {/* ⚠️ TUDO O QUE É DIDÁTICA VIVE FECHADO. Eram 12 avisos empilhados acima da tabela, 4 linhas de
+            texto vermelho e amarelo antes de qualquer número — o Luis pediu pra tirar (22/08). Nada foi
+            REMOVIDO: cada aviso explicava uma decisão real de leitura (mult é da safra × retenção é do mês,
+            escala p10–p90, M3+ vida toda, grupo é snapshot) e todos já viviam também no tooltip da coluna
+            e no “Como ler esta tabela”. O que fica FORA do accordion é só o que não é opinável: a rampa,
+            o marcador de mês aberto e as pendências/erros de payload. */}
+          <details className="pir-legend-more">
+            <summary>como ler · avisos</summary>
+            <div className="pir-legend pir-legend-in">
           <span title={'A rampa vai do p10 ao p90 da coluna (não do mínimo ao máximo) e ignora linhas com menos de ' + ESC_MIN_QTD
                      + ' FTDs. A tabela cobre 3 anos de uma casa que multiplicou por 100: com min–max, uma safra antiga de Mult M3+ 46x sozinha comprimiria 2025 e 2026 inteiros no primeiro passo. Quem está fora das pontas mantém o VALOR e só satura na cor.'}>
             escala p10–p90
@@ -7870,11 +7931,6 @@ function TabEscadaMensal({ chFilter, meta }) {
           {!soMaduras && (
             <span style={{ color: 'var(--negative)' }}>⚠ o mês corrente está DENTRO do cálculo e ele é parcial — as células hachuradas são piso, não resultado</span>
           )}
-          {semReat && !temReat && (
-            <span style={{ color: 'var(--negative)' }}>
-              ⚠ “M3+ sem reativados” está LIGADO mas o payload não traz a marcação — o número na tela AINDA inclui os reativados (falta propagar o deploy do backend).
-            </span>
-          )}
           {semReatOn && (
             <span style={{ color: 'var(--accent-yellow)' }}
                   title="Reativado = voltou a depositar depois de 2 meses sem depósito nenhum. Ele entra no numerador do M3+ mas não no denominador (não depositou no mês anterior), então infla a retenção. As duas colunas dividem pelo MESMO denominador, então a soma delas é o M3+ bruto — a decomposição é exata, nada fica de fora.">
@@ -7905,17 +7961,14 @@ function TabEscadaMensal({ chFilter, meta }) {
               ⚠ grupo = snapshot de HOJE (escada de recência) — “G1 retém melhor” é em boa parte tautologia, não achado
             </span>
           )}
-          {grPend && (
-            <span style={{ color: 'var(--negative)' }}>
-              ⚠ {dadosGr.error ? 'falhou buscar a quebra por grupo (' + dadosGr.error + ')' : 'carregando a quebra por grupo do BigQuery'} — a tabela abaixo fica vazia até chegar.
-            </span>
-          )}
           {baseRet === 'jog' && (
             <span style={{ color: 'var(--accent-yellow)' }}
                   title="É a razão entre a contagem de depositantes de um mês e a do mês anterior — não a fração dos MESMOS jogadores que voltou (os conjuntos são diferentes). Se a razão de jogadores cai muito menos que a de R$, o problema é ticket, não churn.">
               † “jogadores” é razão de CONTAGEM de depositantes, não transição por jogador
             </span>
           )}
+            </div>
+          </details>
         </div>
         <div className="table-scroll tall">
           <table className="ch-table pir-table">
