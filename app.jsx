@@ -2792,31 +2792,17 @@ function BenchmarkView({ retencaoFaixa, benchmark, houseOrder, sameday, title, s
   // fromBench = Apostou vem do PRÓPRIO JSON (que tem saque/net), não do BQ (aba net Apostou vs Lottu).
   // Caso contrário, Apostou puxa o período próprio (jan–jun) via modo leve only=retfaixa do BQ.
   const fromBench = !!apostouHouse;
-  // ============================================================
-  // VER POR GRUPO DE RISCO (pedido do Luis 22/08: "igual temos pras outras análises")
-  // ============================================================
-  // ⚠️⚠️ A QUEBRA É SÓ DO LADO APOSTOU, e isso NÃO é preguiça — é o dado que existe. O lado Lottu vem do
-  // `benchmark_net.json`, cujo grão é data × canal × faixa; não há grupo de risco ali. Existe um
-  // `risk_lottu_scoring_snapshot` no Databricks (181 snapshots diários, 5,9M usuários, categorias 1..5)
-  // e o `user_id` dele CASA com o do ClickHouse — mas o comportamental da Lottu está no ClickHouse e o
-  // risco no Databricks: bancos diferentes, sem join, e 5,9M ids não passam pelo teto de 2.000 linhas da
-  // API. Enquanto alguém não materializar a categoria dentro do ClickHouse, a Lottu fica como régua
-  // HOUSE-LEVEL: uma linha só, repetida como referência. A tela diz isso.
-  // ⚠️ E mesmo que passasse a existir: a escala de lá tem 94% dos usuários na categoria 1, enquanto a
-  // nossa é uma escada de RECÊNCIA (G0/G1 ativo → G4/G5 esfriando). Não são a mesma coisa; empilhar as
-  // duas como se fossem produziria conclusão invertida.
-  const [porGrupo, setPorGrupo] = usePersistedState(`rvops:${pkey}:porGrupo`, false);
   const [aptFetch, setAptFetch] = React.useState({ rows: null, loading: false, error: null });
   React.useEffect(() => {
     if (fromBench || !benchmark || !ENDPOINT_URL) return;
     const fullFrom = benchmark.dateMin;   // = span exato das casas (diário)
     const fullTo = benchmark.dateMax;
     setAptFetch(s => ({ ...s, loading: true, error: null }));
-    fetch(`${ENDPOINT_URL}?${authParam_()}&from=${fullFrom}&to=${fullTo}&only=retfaixa${sameday ? '&sameday=1' : ''}${porGrupo ? '&byGrupo=1' : ''}`)
+    fetch(`${ENDPOINT_URL}?${authParam_()}&from=${fullFrom}&to=${fullTo}&only=retfaixa${sameday ? '&sameday=1' : ''}`)
       .then(r => r.ok ? r.json() : Promise.reject(new Error('HTTP ' + r.status)))
       .then(j => { if (j.error) throw new Error(j.error); setAptFetch({ rows: j.retencaoFaixa || [], loading: false, error: null }); })
       .catch(e => setAptFetch({ rows: null, loading: false, error: String(e.message || e) }));
-  }, [benchmark, sameday, fromBench, porGrupo]);
+  }, [benchmark, sameday, fromBench]);
 
   const aptRows = React.useMemo(() => {
     if (fromBench) return benchHouseRows_(benchmark, apostouHouse);
@@ -2890,22 +2876,6 @@ function BenchmarkView({ retencaoFaixa, benchmark, houseOrder, sameday, title, s
 
   const aptAgg = aggBench_(aptRows, { canals, scope, faixa, from, to: toEff });
   const apt = benchMetrics_(aptAgg, mode);
-  // Uma linha por grupo + o Total. Só entra em cena quando o payload JÁ TROUXE a coluna `grupo` —
-  // senão todas as linhas cairiam num balde só com cara de quebra feita.
-  const grupoPronto = porGrupo && aptRows.some((r) => r.grupo != null);
-  const aptGrupos = React.useMemo(() => {
-    if (!grupoPronto) return null;
-    const m = {};
-    aptRows.forEach((r) => { const g = (r.grupo == null) ? 'sem grupo' : String(r.grupo); (m[g] || (m[g] = [])).push(r); });
-    // 'sem grupo' no fim; o resto na ordem da escada (é ordinal, não ranking de volume).
-    return Object.keys(m)
-      .sort((a, b) => (a === 'sem grupo' ? 1 : b === 'sem grupo' ? -1 : (Number(a) - Number(b))))
-      .map((g) => {
-        const agg = aggBench_(m[g], { canals, scope, faixa, from, to: toEff });
-        return { key: g, label: grupoLabel_(g), agg, m: benchMetrics_(agg, mode) };
-      })
-      .filter((l) => l.agg.qtd > 0);
-  }, [grupoPronto, aptRows, canals, scope, faixa, from, toEff, mode]);
   const houses = houseOrder.map(h => {
     const agg = aggBench_(houseRowsMap[h], { canals, scope, faixa, from, to: toEff });
     return {
@@ -3038,18 +3008,6 @@ function BenchmarkView({ retencaoFaixa, benchmark, houseOrder, sameday, title, s
           </div>
         )}
         <div className="slicer-group">
-          <label style={lblStyle}>Ver por</label>
-          <div className="slicer-presets">
-            <button className={`preset-btn ${!porGrupo ? 'active' : ''}`} onClick={() => setPorGrupo(false)}
-                    title="Uma linha por casa (Apostou vs Lottu).">Casa</button>
-            <button className={`preset-btn ${porGrupo ? 'active' : ''}`} onClick={() => setPorGrupo(true)}
-                    title={'Quebra a APOSTOU em uma linha por grupo de risco (puxa &byGrupo=1 do BQ). '
-                         + '⚠️ A Lottu NÃO tem grupo de risco no benchmark — o dado dela é data × canal × faixa. '
-                         + 'Ela continua como uma linha só, servindo de régua house-level: a leitura é "qual grupo nosso chega perto da Lottu", '
-                         + 'não grupo contra grupo.'}>Grupo de risco</button>
-          </div>
-        </div>
-        <div className="slicer-group">
           <label style={lblStyle} title={`Uma janela só, aplicada igual a Apostou e ${housesLabel}.`}>Período</label>
           <input type="date" value={from || ''} min={houseMin || undefined} max={toEff || winMax || undefined} onChange={e => editFrom(e.target.value)} />
           <span className="slicer-arrow">→</span>
@@ -3059,18 +3017,12 @@ function BenchmarkView({ retencaoFaixa, benchmark, houseOrder, sameday, title, s
       </div>
 
       <div className="support">
-        <div className="support-title">Apostou{aptGrupos ? ' · por grupo de risco' : ''} · {dateRangeLabel_(from, toEff)}{cohort ? ' · coorte 30d (safras fechadas)' : ''} · {canalLabel} · {faixa === 'all' ? 'todas as faixas' : fxLabel_(faixa)}{aptFetch.loading ? ' · carregando BQ…' : ''}{aptFetch.error ? ' · erro (usando janela global)' : ''}</div>
+        <div className="support-title">Apostou · {dateRangeLabel_(from, toEff)}{cohort ? ' · coorte 30d (safras fechadas)' : ''} · {canalLabel} · {faixa === 'all' ? 'todas as faixas' : fxLabel_(faixa)}{aptFetch.loading ? ' · carregando BQ…' : ''}{aptFetch.error ? ' · erro (usando janela global)' : ''}</div>
         <div className="table-scroll"><table className="ch-table">
           {tableHead}
           <tbody>
-            {aptGrupos && aptGrupos.map((g) => (
-              <tr key={g.key}>
-                <td className="ch-name">{g.label}</td>
-                {netMode ? netRowCells(g.agg) : benchRowCells(g.m)}
-              </tr>
-            ))}
             <tr>
-              <td className="ch-name">{aptGrupos ? 'Apostou · total' : 'Apostou'}</td>
+              <td className="ch-name">Apostou</td>
               {aptCells}
             </tr>
           </tbody>
@@ -3078,7 +3030,7 @@ function BenchmarkView({ retencaoFaixa, benchmark, houseOrder, sameday, title, s
       </div>
 
       <div className="support">
-        <div className="support-title">{housesLabel}{aptGrupos ? ' · sem quebra por grupo (a fonte dela não tem)' : ''} · {dateRangeLabel_(from, toEff)}{cohort ? ' · coorte 30d (safras fechadas)' : ''} · {canalLabel} · {faixa === 'all' ? 'todas as faixas' : fxLabel_(faixa)}</div>
+        <div className="support-title">{housesLabel} · {dateRangeLabel_(from, toEff)}{cohort ? ' · coorte 30d (safras fechadas)' : ''} · {canalLabel} · {faixa === 'all' ? 'todas as faixas' : fxLabel_(faixa)}</div>
         <div className="table-scroll"><table className="ch-table">
           {tableHead}
           <tbody>
@@ -3091,12 +3043,6 @@ function BenchmarkView({ retencaoFaixa, benchmark, houseOrder, sameday, title, s
           </tbody>
         </table></div>
         <div className="ch-note">
-          {aptGrupos && (
-            <div style={{ color: 'var(--accent-yellow)', marginBottom: 6 }}
-                 title="O benchmark da Lottu tem grão data × canal × faixa — não há categoria de risco nele. Existe um risk_lottu_scoring_snapshot no Databricks (categorias 1..5, 181 snapshots diários) e o user_id casa com o do ClickHouse, mas o comportamental dela está no ClickHouse e o risco no Databricks: bancos diferentes, sem join possível pela API. Além disso a escala de lá tem 94% dos usuários na categoria 1, enquanto a nossa é uma escada de recência — não são a mesma coisa.">
-              ⚠ A <strong>Lottu não se quebra por grupo</strong>: o benchmark dela é data × canal × faixa. Ela fica como <strong>régua house-level</strong> — a leitura é “qual grupo nosso chega perto da Lottu”, não grupo contra grupo.
-            </div>
-          )}
           {netMode ? (
             <React.Fragment>
               <strong>Modo LÍQUIDO (caixa da safra).</strong> <strong>Depósito</strong> = Σ depósito da safra · <strong>Net</strong> = depósito − saque (net_cash) = dinheiro que ficou · <strong>Net/FTD</strong> = net ÷ nº de FTDs · <strong>Mult Net/FTD$</strong> = net ÷ valor depositado no FTD · <strong style={{ background: 'rgba(248,113,113,0.25)', padding: '0 4px', borderRadius: '3px' }}>Saque %</strong> = saque ÷ depósito.
