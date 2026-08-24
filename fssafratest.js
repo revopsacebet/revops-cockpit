@@ -61,12 +61,35 @@ t('REGRESSÃO: ref não é fs/GGR líquido = 60k/400k (infla)', !near(f.fsDep_m0
 t('refLabel = do GGR Bruto', f.fsDep_m0.refLabel==='do GGR Bruto');
 t('refM1 M0 = 54k/(370k+54k)', near(f.fsDep_m0.refM1, 54000/424000));
 
+// ---- irmao /Turnover: mesmo numerador, denominador TURNOVER ---------------
+// M0: 60k / (10M+5M) = 0,40%  ·  M1: 30k/9M = 0,333%  ·  M2: 8k/2M = 0,40%  ·  M3+: 2k/1M = 0,20%
+t('existem os 4 buckets de /Turnover', ['fsTurn_m0','fsTurn_m1','fsTurn_m2','fsTurn_m3plus'].every(k=>!!f[k]));
+t('label = FreeSpins/Turnover M0', f.fsTurn_m0.label==='FreeSpins/Turnover M0');
+t('M0 = 60k/15M = 0,40% (Sigma/Sigma)', near(f.fsTurn_m0.act, 0.004));
+t('M1 = 30k/9M', near(f.fsTurn_m1.act, 30000/9e6));
+t('M2 = 8k/2M = 0,40%', near(f.fsTurn_m2.act, 0.004));
+t('M3+ = 2k/1M = 0,20%', near(f.fsTurn_m3plus.act, 0.002));
+t('M-1 do M0 = 54k/13,5M', near(f.fsTurn_m0.m1, 54000/13.5e6));
+t('REGRESSAO: denominador e TURNOVER, nao deposito (M0 /Dep = 2,0% e /Turn = 0,40%)',
+  !near(f.fsTurn_m0.act, f.fsDep_m0.act));
+t('bate com o card da casa: mesma familia FreeSpins/Turnover', f.freespinTurnover.label==='FreeSpins / Turnover');
+t('menor=melhor (e custo)', f.fsTurn_m0.lowerBetter===true);
+t('SEM BP (o card da casa /Turnover tambem nao tem)',
+  [f.fsTurn_m0,f.fsTurn_m1,f.fsTurn_m2,f.fsTurn_m3plus].every(c=>c.bp==null) && f.freespinTurnover.bp==null);
+t('SEM ref — a linha do GGR Bruto vive no card /Dep, nao se repete aqui', f.fsTurn_m0.ref==null);
+t('share = o MESMO do /Dep (a participacao segue o NUMERADOR, que e o freespin nos dois)',
+  near(f.fsTurn_m0.share, f.fsDep_m0.share) && f.fsTurn_m0.shareUnit==='freespin');
+t('as 4 safras somam 100% do freespin',
+  near(f.fsTurn_m0.share+f.fsTurn_m1.share+f.fsTurn_m2.share+f.fsTurn_m3plus.share, 1));
+
 // ---- backend velho (sem a coluna freespin no ggrSafra) --------------------
 const semFs={m0:[{channel:'Meta',ggr:300000,ggrM1:280000,dep:2000000,depM1:1800000,turnover:1e7,turnoverM1:9e6}]};
 const fOld=ctx.buildFarolMetrics_(M,null,[],ggrCh,null,null,semFs);
 t('backend < v71 → card fica null (freespin AUSENTE ≠ freespin ZERO)', fOld.fsDep_m0.act==null);
-const gOld=ctx.buildFarolGroups_({},fOld,{from:'2026-08-01',to:'2026-08-19'},false).find(x=>x.title==='Freespin por safra');
-t('backend < v71 → seção inteira some (sem título órfão)', !gOld);
+t('backend < v71 → o /Turnover tambem fica null', fOld.fsTurn_m0.act==null);
+const gsOld=ctx.buildFarolGroups_({},fOld,{from:'2026-08-01',to:'2026-08-19'},false);
+t('backend < v71 → seção inteira some (sem título órfão)',
+  !gsOld.find(x=>x.title==='Freespin por safra') && !gsOld.find(x=>x.title==='Freespin / Turnover por safra'));
 
 // ---- grupo na tela ---------------------------------------------------------
 const groups=ctx.buildFarolGroups_({},f,{from:'2026-08-01',to:'2026-08-19'},false);
@@ -80,9 +103,18 @@ t('fica LOGO DEPOIS de "Rollover por safra"',
 t('REGRESSÃO: as seções de cima não mudaram',
   ['GGR por safra','Hold por safra','Rollover por safra'].every(x=>titles.indexOf(x)>=0));
 
+const gT=groups.find(x=>x.title==='Freespin / Turnover por safra');
+t('seção "Freespin / Turnover por safra" existe', !!gT);
+t('4 cards na ordem M0→M1→M2→M3+',
+  (gT.cards||[]).map(c=>c.label).join('|')==='FreeSpins/Turnover M0|FreeSpins/Turnover M1|FreeSpins/Turnover M2|FreeSpins/Turnover M3+');
+t('fica LOGO DEPOIS de "Freespin por safra"',
+  titles.indexOf('Freespin / Turnover por safra')===titles.indexOf('Freespin por safra')+1);
+
 // ---- export do Excel -------------------------------------------------------
 const ex=ctx.buildFarolExportGroups_({},f,null,[],null,{from:'2026-08-01',to:'2026-08-19'},false);
 const ge=ex.find(x=>x.title==='Freespin por safra');
 t('export .xlsx leva a seção com os 4 cards', !!ge && ge.cards.length===4);
+const geT=ex.find(x=>x.title==='Freespin / Turnover por safra');
+t('export .xlsx leva o /Turnover tambem', !!geT && geT.cards.length===4);
 
 console.log('\n'+ok+' pass · '+fail+' fail');process.exit(fail?1:0);

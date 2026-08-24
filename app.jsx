@@ -3280,6 +3280,9 @@ function buildFarolGroups_(MM, f, range, useYtd, sparkByKey) {
     { title: 'Freespin por safra', cards: [
       dressPlain(f.fsDep_m0), dressPlain(f.fsDep_m1), dressPlain(f.fsDep_m2), dressPlain(f.fsDep_m3plus),
     ].filter(c => c && c.act != null) },
+    { title: 'Freespin / Turnover por safra', cards: [
+      dressPlain(f.fsTurn_m0), dressPlain(f.fsTurn_m1), dressPlain(f.fsTurn_m2), dressPlain(f.fsTurn_m3plus),
+    ].filter(c => c && c.act != null) },
   ].map(g => ({ ...g, cards: (g.cards || []).filter(Boolean) }))   // card ausente (backend velho) não vira buraco
    .filter(g => g.cards.length);                                    // grupo sem nenhum card não renderiza título órfão
 }
@@ -3724,7 +3727,7 @@ function buildFarolExportGroups_(MM, f, monthlyClose, channels, chFilter, range,
   const G = {}; groups.forEach(g => { G[g.title] = {}; (g.cards || []).forEach(c => { if (c) G[g.title][c.label] = c; }); });
   // buildFarolGroups_ agora PODE omitir um grupo inteiro (todos os cards null) — garante o bucket
   // pra os lookups G['...']['...'] abaixo não estourarem em backend antigo/mock.
-  ['Aquisição', 'Depósito M0', 'Volume & GGR', 'Retenção', 'GGR por safra', 'Hold por safra', 'Rollover por safra', 'Freespin por safra'].forEach(t => { if (!G[t]) G[t] = {}; });
+  ['Aquisição', 'Depósito M0', 'Volume & GGR', 'Retenção', 'GGR por safra', 'Hold por safra', 'Rollover por safra', 'Freespin por safra', 'Freespin / Turnover por safra'].forEach(t => { if (!G[t]) G[t] = {}; });
   const relabel = (m, label) => m ? { ...m, label } : null;
 
   // Canais no escopo atual — mesma regra do filterByChannel do App (seleção explícita > growth-scope > todos).
@@ -3780,6 +3783,7 @@ function buildFarolExportGroups_(MM, f, monthlyClose, channels, chFilter, range,
     { title: 'Hold por safra', cards: (groups.find(g => g.title === 'Hold por safra') || {}).cards || [] },
     { title: 'Rollover por safra', cards: (groups.find(g => g.title === 'Rollover por safra') || {}).cards || [] },
     { title: 'Freespin por safra', cards: (groups.find(g => g.title === 'Freespin por safra') || {}).cards || [] },
+    { title: 'Freespin / Turnover por safra', cards: (groups.find(g => g.title === 'Freespin / Turnover por safra') || {}).cards || [] },
   ].map(g => ({ ...g, cards: (g.cards || []).filter(Boolean) })).filter(g => g.cards.length);
 }
 
@@ -8652,6 +8656,13 @@ function buildFarolMetrics_(M, comp, channels, ggrChannels, bp, filter, ggrSafra
     safraMargem['fsDep_' + bk] = Object.assign(
       wShare(mk(`FreeSpins/Dep ${lbl}`, 'pct', (on && hasFs) ? div(fsp, dep) : null, null, (on && hasFs) ? div(fspL, depL) : null, true), shareF, shareFL, 'freespin'),
       { ref: (on && hasFs) ? divPos(fsp, ggr + fsp) : null, refM1: (on && hasFs) ? divPos(fspL, ggrL + fspL) : null, refLabel: 'do GGR Bruto' });
+    // MESMO card, denominador TURNOVER (pedido do Luis, 24/08): o freespin medido contra o que a safra
+    // GIROU, não contra o que ela depositou. Par exato dos cards FreeSpins/Dep e FreeSpins/Turnover da
+    // casa, recortado por idade de coorte. SEM `ref`: o de /Dep já carrega a linha do GGR Bruto e o card
+    // da casa /Turnover também não tem — repetir aqui seria a mesma conta duas vezes na tela.
+    // Share = o MESMO shareF: a participação segue o NUMERADOR, e o numerador dos dois cards é o
+    // freespin. Trocar o denominador muda a leitura do card, não de quem veio o incentivo.
+    safraMargem['fsTurn_' + bk] = wShare(mk(`FreeSpins/Turnover ${lbl}`, 'pct', (on && hasFs) ? div(fsp, turn) : null, null, (on && hasFs) ? div(fspL, turnL) : null, true), shareF, shareFL, 'freespin');
   });
 
   const bpM = (bp && bp.month) || null;
