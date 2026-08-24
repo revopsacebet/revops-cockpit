@@ -174,27 +174,27 @@ const MOCK_GGR_CHANNELS = [
 
 // Mock — GGR por safra (M0/M1/M2/M3+) (modo dev). Live vem de payload.ggrSafra.
 // Existe SÓ pra o toggle de safra (Todas/M0/M1/M2/M3+) aparecer durante o load, igual todas as
-// outras dimensões já têm mock — senão ele some no 1º acesso (mock não tinha safra). {ggr,ggrM1,dep,depM1}.
+// outras dimensões já têm mock — senão ele some no 1º acesso (mock não tinha safra). {ggr,ggrM1,dep,depM1,freespin,freespinM1}.
 const MOCK_GGR_SAFRA = {
   m0: [
-    { channel: 'Meta',   ggr: 235800, ggrM1: 218400, dep: 1680000, depM1: 1510000 },
-    { channel: 'Google', ggr: 188100, ggrM1: 172300, dep: 1240000, depM1: 1180000 },
-    { channel: 'TikTok', ggr: 62800,  ggrM1: 58200,  dep: 448000,  depM1: 420000 },
-    { channel: 'Kwai',   ggr: -4400,  ggrM1: -3900,  dep: 96000,   depM1: 88000 },
+    { channel: 'Meta',   ggr: 235800, ggrM1: 218400, dep: 1680000, depM1: 1510000, freespin: 33600, freespinM1: 31700 },
+    { channel: 'Google', ggr: 188100, ggrM1: 172300, dep: 1240000, depM1: 1180000, freespin: 22300, freespinM1: 21200 },
+    { channel: 'TikTok', ggr: 62800,  ggrM1: 58200,  dep: 448000,  depM1: 420000, freespin: 10800, freespinM1: 10100 },
+    { channel: 'Kwai',   ggr: -4400,  ggrM1: -3900,  dep: 96000,   depM1: 88000, freespin: 3100,  freespinM1: 2900 },
   ],
   m1: [
-    { channel: 'Meta',   ggr: 168400, ggrM1: 154200, dep: 980000, depM1: 910000 },
-    { channel: 'Google', ggr: 132900, ggrM1: 121800, dep: 720000, depM1: 690000 },
-    { channel: 'TikTok', ggr: 41200,  ggrM1: 38900,  dep: 262000, depM1: 248000 },
+    { channel: 'Meta',   ggr: 168400, ggrM1: 154200, dep: 980000, depM1: 910000, freespin: 17600, freespinM1: 16400 },
+    { channel: 'Google', ggr: 132900, ggrM1: 121800, dep: 720000, depM1: 690000, freespin: 11500, freespinM1: 11000 },
+    { channel: 'TikTok', ggr: 41200,  ggrM1: 38900,  dep: 262000, depM1: 248000, freespin: 5200,  freespinM1: 4900 },
   ],
   m2: [
-    { channel: 'Meta',   ggr: 121600, ggrM1: 118300, dep: 640000, depM1: 620000 },
-    { channel: 'Google', ggr: 98700,  ggrM1: 94100,  dep: 470000, depM1: 452000 },
-    { channel: 'TikTok', ggr: 28900,  ggrM1: 27400,  dep: 175000, depM1: 168000 },
+    { channel: 'Meta',   ggr: 121600, ggrM1: 118300, dep: 640000, depM1: 620000, freespin: 9800,  freespinM1: 9500 },
+    { channel: 'Google', ggr: 98700,  ggrM1: 94100,  dep: 470000, depM1: 452000, freespin: 6900,  freespinM1: 6600 },
+    { channel: 'TikTok', ggr: 28900,  ggrM1: 27400,  dep: 175000, depM1: 168000, freespin: 2600,  freespinM1: 2500 },
   ],
   m3plus: [
-    { channel: 'Meta',   ggr: 86600, ggrM1: 82100, dep: 410000, depM1: 396000 },
-    { channel: 'Google', ggr: 68400, ggrM1: 65200, dep: 350000, depM1: 338000 },
+    { channel: 'Meta',   ggr: 86600, ggrM1: 82100, dep: 410000, depM1: 396000, freespin: 5100,  freespinM1: 4800 },
+    { channel: 'Google', ggr: 68400, ggrM1: 65200, dep: 350000, depM1: 338000, freespin: 3900,  freespinM1: 3700 },
   ],
 };
 
@@ -3274,6 +3274,12 @@ function buildFarolGroups_(MM, f, range, useYtd, sparkByKey) {
     { title: 'Rollover por safra', cards: [
       dressPlain(f.roll_m0), dressPlain(f.roll_m1), dressPlain(f.roll_m2), dressPlain(f.roll_m3plus),
     ].filter(c => c && c.act != null) },
+    // Freespin por safra (pedido do Luis, 24/08): irmão dos três de cima, com o numerador CUSTO em vez
+    // de receita — quanto do freespin concedido foi pra cada idade de coorte (share) e quanto ele pesa
+    // no depósito daquela safra (o card). Sem freespin no ggrSafra (backend < v71) o grupo inteiro some.
+    { title: 'Freespin por safra', cards: [
+      dressPlain(f.fsDep_m0), dressPlain(f.fsDep_m1), dressPlain(f.fsDep_m2), dressPlain(f.fsDep_m3plus),
+    ].filter(c => c && c.act != null) },
   ].map(g => ({ ...g, cards: (g.cards || []).filter(Boolean) }))   // card ausente (backend velho) não vira buraco
    .filter(g => g.cards.length);                                    // grupo sem nenhum card não renderiza título órfão
 }
@@ -3718,7 +3724,7 @@ function buildFarolExportGroups_(MM, f, monthlyClose, channels, chFilter, range,
   const G = {}; groups.forEach(g => { G[g.title] = {}; (g.cards || []).forEach(c => { if (c) G[g.title][c.label] = c; }); });
   // buildFarolGroups_ agora PODE omitir um grupo inteiro (todos os cards null) — garante o bucket
   // pra os lookups G['...']['...'] abaixo não estourarem em backend antigo/mock.
-  ['Aquisição', 'Depósito M0', 'Volume & GGR', 'Retenção', 'GGR por safra', 'Hold por safra', 'Rollover por safra'].forEach(t => { if (!G[t]) G[t] = {}; });
+  ['Aquisição', 'Depósito M0', 'Volume & GGR', 'Retenção', 'GGR por safra', 'Hold por safra', 'Rollover por safra', 'Freespin por safra'].forEach(t => { if (!G[t]) G[t] = {}; });
   const relabel = (m, label) => m ? { ...m, label } : null;
 
   // Canais no escopo atual — mesma regra do filterByChannel do App (seleção explícita > growth-scope > todos).
@@ -3773,6 +3779,7 @@ function buildFarolExportGroups_(MM, f, monthlyClose, channels, chFilter, range,
     { title: 'GGR por safra', cards: (groups.find(g => g.title === 'GGR por safra') || {}).cards || [] },
     { title: 'Hold por safra', cards: (groups.find(g => g.title === 'Hold por safra') || {}).cards || [] },
     { title: 'Rollover por safra', cards: (groups.find(g => g.title === 'Rollover por safra') || {}).cards || [] },
+    { title: 'Freespin por safra', cards: (groups.find(g => g.title === 'Freespin por safra') || {}).cards || [] },
   ].map(g => ({ ...g, cards: (g.cards || []).filter(Boolean) })).filter(g => g.cards.length);
 }
 
@@ -8593,7 +8600,7 @@ function buildFarolMetrics_(M, comp, channels, ggrChannels, bp, filter, ggrSafra
   // composição do GGR. Rollover tem turnover em cima → composição do TURNOVER. Assim o share sempre
   // responde "quanto deste numerador vem desta safra", em vez de misturar duas grandezas no mesmo card.
   const SAFRA_BK = [['m0', 'M0'], ['m1', 'M1'], ['m2', 'M2'], ['m3plus', 'M3+']];
-  const bkArr = {}; let ggrAll = 0, ggrAllL = 0, turnAll = 0, turnAllL = 0;
+  const bkArr = {}; let ggrAll = 0, ggrAllL = 0, turnAll = 0, turnAllL = 0, fsAll = 0, fsAllL = 0;
   SAFRA_BK.forEach(([bk]) => {
     const arr = filterChannelList_((ggrSafra && ggrSafra[bk]) || [], filter);
     bkArr[bk] = arr;
@@ -8601,6 +8608,8 @@ function buildFarolMetrics_(M, comp, channels, ggrChannels, bp, filter, ggrSafra
     ggrAllL  += arr.reduce((a, c) => a + (c.ggrM1 || 0), 0);
     turnAll  += arr.reduce((a, c) => a + (c.turnover || 0), 0);
     turnAllL += arr.reduce((a, c) => a + (c.turnoverM1 || 0), 0);
+    fsAll    += arr.reduce((a, c) => a + (c.freespin || 0), 0);
+    fsAllL   += arr.reduce((a, c) => a + (c.freespinM1 || 0), 0);
   });
   // ROAS GGR M0 = GGR da safra M0 (mesma janela) ÷ Investimento. Irmão do ROAS Dep M0, trocando o
   // numerador DEPÓSITO por RECEITA — responde "cada real de mídia deste mês virou quanto de GGR de
@@ -8615,8 +8624,12 @@ function buildFarolMetrics_(M, comp, channels, ggrChannels, bp, filter, ggrSafra
     const arr = bkArr[bk];
     const S = (k) => arr.reduce((a, c) => a + (c[k] || 0), 0);
     const on = arr.length > 0;
-    const ggr = S('ggr'), dep = S('dep'), turn = S('turnover');
-    const ggrL = S('ggrM1'), depL = S('depM1'), turnL = S('turnoverM1');
+    const ggr = S('ggr'), dep = S('dep'), turn = S('turnover'), fsp = S('freespin');
+    const ggrL = S('ggrM1'), depL = S('depM1'), turnL = S('turnoverM1'), fspL = S('freespinM1');
+    // hasFs = o bucket TROUXE a coluna freespin (backend < v71 nao manda) — sem ela o card nao pode
+    // virar 0%: freespin ZERO e freespin AUSENTE sao coisas diferentes, e um 0% mudo leria como
+    // 'nao deu freespin nenhum pra essa safra'.
+    const hasFs = arr.some(c => c.freespin != null);
     const shareG  = (on && ggrAll   > 0) ? ggr / ggrAll    : null;
     const shareGL = (on && ggrAllL  > 0) ? ggrL / ggrAllL  : null;
     const shareT  = (on && turnAll  > 0) ? turn / turnAll  : null;
@@ -8627,6 +8640,18 @@ function buildFarolMetrics_(M, comp, channels, ggrChannels, bp, filter, ggrSafra
     // Rollover da safra = turnover ÷ depósito (mesma definição do card da casa, recortada por idade).
     // Share = composição do TURNOVER (o numerador daqui), não do GGR.
     safraMargem['roll_' + bk]   = wShare(mk(`Rollover ${lbl}`, 'multiple', on ? div(turn, dep) : null, null, on ? div(turnL, depL) : null), shareT, shareTL, 'turnover');
+    // FREESPIN DA SAFRA = freespin ÷ depósito, a MESMA conta do card FreeSpins/Dep da casa recortada
+    // por idade de coorte (custo → menor=melhor). SEM BP de propósito: a meta de 2% do plano é do
+    // BLEND da casa — cobrá-la de uma safra isolada seria comparar contra outra coisa (mesma regra
+    // dos cards de GGR/Dep e Hold por safra). `ref` = o mesmo numerador sobre o GGR BRUTO da safra
+    // (GGR + freespin, porque o ngr_total já subtraiu o freespin ganho) — leitura de margem comida,
+    // igual ao card da casa. Share = composição do FREESPIN (o numerador daqui): quanto do incentivo
+    // concedido no período foi pra esta safra; as 4 somam 100%.
+    const shareF  = (on && fsAll  > 0) ? fsp  / fsAll  : null;
+    const shareFL = (on && fsAllL > 0) ? fspL / fsAllL : null;
+    safraMargem['fsDep_' + bk] = Object.assign(
+      wShare(mk(`FreeSpins/Dep ${lbl}`, 'pct', (on && hasFs) ? div(fsp, dep) : null, null, (on && hasFs) ? div(fspL, depL) : null, true), shareF, shareFL, 'freespin'),
+      { ref: (on && hasFs) ? divPos(fsp, ggr + fsp) : null, refM1: (on && hasFs) ? divPos(fspL, ggrL + fspL) : null, refLabel: 'do GGR Bruto' });
   });
 
   const bpM = (bp && bp.month) || null;
