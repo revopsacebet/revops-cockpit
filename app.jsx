@@ -8239,8 +8239,8 @@ function TabEscadaMensal({ chFilter, meta, metric }) {
                   <div style={{ fontSize: 10.5, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: .4 }}>
                     {k === 3 ? 'M3+' : 'M' + k}
                   </div>
-                  <div style={{ fontSize: 20, fontWeight: 600, lineHeight: 1.2 }}>{fmtPct(p, 1)}</div>
-                  <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>{fmtBRL(v)}</div>
+                  <div style={{ fontSize: 20, fontWeight: 600, lineHeight: 1.2 }}>{M.fmtV(v)}</div>
+                  <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>{fmtPct(p, 1)} do mês</div>
                   <div style={{ height: 4, background: 'rgba(255,255,255,.08)', borderRadius: 2, marginTop: 6 }}>
                     <div style={{ height: '100%', width: Math.max(1, p * 100) + '%', background: 'var(--accent-yellow)', borderRadius: 2 }} />
                   </div>
