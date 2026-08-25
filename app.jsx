@@ -9499,12 +9499,15 @@ function App({ user, onLogout, config }) {
   const fChannels = filterByChannel(state.channels, c => c.spend != null);
   const fGgrChannels = filterByChannel(state.ggrChannels, c => c.spend != null);
   // GGR por safra: filtra cada bucket pelos mesmos canais (client-side), igual às outras tabelas.
-  const fGgrSafra = state.ggrSafra
-    ? Object.keys(state.ggrSafra).reduce((o, b) => { o[b] = filterByChannel(state.ggrSafra[b], null); return o; }, {})
+  // ⚠️ NEM TODA chave do ggrSafra é lista de canal: o backend v88 passou a mandar junto o `medScope`
+  // (medianas prontas por escopo — um objeto {m0:{all,growth},…}). Sem o guard de array, o filtro de
+  // canal chamava .filter() nesse objeto e derrubava o app inteiro — e só COM canal ou Growth
+  // selecionado, porque no Total a função devolve a lista sem tocar. Chave não-lista passa intacta.
+  const filterBuckets = (src) => src
+    ? Object.keys(src).reduce((o, b) => { o[b] = Array.isArray(src[b]) ? filterByChannel(src[b], null) : src[b]; return o; }, {})
     : null;
-  const fGgrSafraRoas = state.ggrSafraRoas
-    ? Object.keys(state.ggrSafraRoas).reduce((o, b) => { o[b] = filterByChannel(state.ggrSafraRoas[b], null); return o; }, {})
-    : null;
+  const fGgrSafra = filterBuckets(state.ggrSafra);
+  const fGgrSafraRoas = filterBuckets(state.ggrSafraRoas);
   // Depósitos do mês por canal (qtd + valor) — derivado do componentsByChannel (player_metrics).
 
   // Opções do dropdown: nomes dos canais presentes no dado (sem filtro aplicado)
