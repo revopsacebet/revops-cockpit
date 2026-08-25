@@ -485,6 +485,12 @@ function Hero({ metric, variant }) {
                 <span className="share-val">{fmtPct(metric.share, 0)}</span>{' '}do {metric.shareUnit || 'GGR'}
               </div>
             )}
+            {/* Linha livre: o DENOMINADOR de um card de razão, escrito por extenso. Hoje só o ticket
+                médio por safra usa (quantos depositantes entraram na conta) — sem ela o card seria uma
+                razão que ninguém consegue auditar na tela. Card que não seta `note` não muda em nada. */}
+            {metric.note && (
+              <div className="hf-m1" title={metric.noteTitle || undefined}>{metric.note}</div>
+            )}
           </div>
         </div>
         {metric.spark ? <Sparkline values={metric.spark} weeks={metric.sparkWeeks} fmt={metric.fmt} /> : null}
@@ -3279,6 +3285,12 @@ function buildFarolGroups_(MM, f, range, useYtd, sparkByKey) {
     // Mesma fonte/janela dos outros cards por safra (payload.ggrSafra, MTD, segue o filtro de canal).
     { title: 'Depósito por safra (R$)', cards: [
       dressPlain(f.depSafra_m0), dressPlain(f.depSafra_m1), dressPlain(f.depSafra_m2), dressPlain(f.depSafra_m3plus),
+    ].filter(c => c && c.act != null) },
+    // Ticket médio de depósito por safra = o R$ da seção acima ÷ os depositantes daquela safra. Seção
+    // própria (e não uma linha no card de R$) porque é outra métrica: o card de cima é TAMANHO, este é
+    // INTENSIDADE por cabeça — e as duas se movem em direções opostas quando o mix de ticket muda.
+    { title: 'Ticket médio de depósito por safra', cards: [
+      dressPlain(f.tktSafra_m0), dressPlain(f.tktSafra_m1), dressPlain(f.tktSafra_m2), dressPlain(f.tktSafra_m3plus),
     ].filter(c => c && c.act != null) },
     // Margem por safra em DUAS seções (GGR e Hold separados, pedido do Luis) — qualidade de monetização
     // por IDADE DE COORTE, não é retenção; janela MTD. Cada card carrega o `share` (peso da safra no GGR).
@@ -8732,6 +8744,21 @@ function buildFarolMetrics_(M, comp, channels, ggrChannels, bp, filter, ggrSafra
     const shareD  = (on && depAll  > 0) ? dep  / depAll  : null;
     const shareDL = (on && depAllL > 0) ? depL / depAllL : null;
     safraMargem['depSafra_' + bk] = wShare(mk(`Depósito ${lbl}`, 'brl', on ? dep : null, null, on ? depL : null), shareD, shareDL, 'depósito');
+    // TICKET MÉDIO DE DEPÓSITO da safra = depósito TOTAL ÷ DEPOSITANTES do período (pedido do Luis, 24/08).
+    // Fecha o trio da seção: o % diz a passagem, o R$ diz o tamanho, o ticket diz de quanto em quanto.
+    // ⚠️ denominador é DEPOSITANTE (conta com depósito > 0), não FTD nem jogador ativo — quem só apostou
+    // não entra, senão o ticket viria diluído por gente que não pôs dinheiro. `hasJog` distingue "safra
+    // sem depositante" de "backend < v87 não manda a coluna": sem a coluna o card nem existe, porque um
+    // ticket calculado sobre denominador ausente sairia infinito ou vazio com cara de dado real.
+    const jog = S('jog'), jogL = S('jogM1');
+    const hasJog = arr.some((c) => c.jog != null);
+    safraMargem['tktSafra_' + bk] = Object.assign(
+      wShare(mk(`Ticket médio ${lbl}`, 'brl', (on && hasJog) ? divPos(dep, jog) : null, null, (on && hasJog) ? divPos(depL, jogL) : null), shareD, shareDL, 'depósito'),
+      { note: (on && hasJog && jog) ? (fmtQty(jog) + ' depositantes') : null,
+        noteTitle: (on && hasJog && jog)
+          ? ('Denominador do ticket: contas DISTINTAS desta safra com depósito > 0 no período (quem só apostou não entra). '
+             + 'Depósito do período: ' + fmtBRL(dep) + '.' + (jogL ? ' Mesma janela do mês anterior: ' + fmtQty(jogL) + ' depositantes.' : ''))
+          : null });
   });
 
   const bpM = (bp && bp.month) || null;
