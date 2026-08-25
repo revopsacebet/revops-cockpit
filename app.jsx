@@ -8262,6 +8262,12 @@ function TabEscadaMensal({ chFilter, meta, metric, lottuEscada }) {
               ⚠ grupo e campanha não existem do lado da <strong>lottu</strong> — essas colunas ignoram esses dois recortes
             </span>
           )}
+          {temLottu && lottuEscada && lottuEscada.dataMax && (
+            <span style={{ color: 'var(--text-muted)' }}
+                  title="Data do último depósito que entrou no lottu_escada.json. O arquivo é estático (gerado por tools/lottu-escada/build.js): se esta data ficar atrás do dado da Apostou, as colunas da Lottu estão medindo uma janela mais curta e o mês corrente sai menor do que é.">
+              lottu: dado até <strong>{fmtBR_(lottuEscada.dataMax)}</strong>
+            </span>
+          )}
           {temLottu && chList_(chFilter).length > 0 && (
             <span style={{ color: 'var(--text-muted)' }}
                   title="A atribuição da Lottu sai da vw_usuarios_registro: conta de mídia (afiliado) primeiro, utm depois — a mesma cascata que usamos aqui, com o de-para dos 17 afiliados dela medido pela assinatura de utm. Meta, Google, TikTok e Kwai casam bem. O balde ORGÂNICO dela é bem maior que o nosso (≈34% dos FTDs de 2026 não têm afiliado, utm nem ngx), então comparar orgânico com orgânico não vale — parte daquilo é mídia sem tag.">
@@ -9563,6 +9569,13 @@ function App({ user, onLogout, config }) {
 
   useEffect(() => { loadData(); }, [loadData]);
 
+  // ⚠️ CACHE-BUSTER dos JSONs estáticos (25/08): `cache:'no-cache'` revalida, mas o browser ainda
+  // servia o par index.html+JSON antigo do cache — e o cockpit mostrou a escada da Lottu de ANTES da
+  // correção do FINAL sem nada na tela dizendo que era dado velho. O build.js troca cada
+  // __V_<ARQUIVO>__ pelo hash do arquivo, então todo deploy muda a URL e o dado velho não sobrevive.
+  // Ver [[feedback-data-tool-freshness]]: fix não acaba até PROPAGAR.
+  const ASSET_VER = { 'benchmark_net.json': '__V_BENCHMARK_NET__', 'lottu_escada.json': '__V_LOTTU_ESCADA__' };
+  const assetUrl_ = (f) => f + '?v=' + (ASSET_VER[f] || 'dev');
   // Benchmark das casas concorrentes — arquivo estático servido ao lado do index.html.
   // 2026-08-05: `benchmark.json` (3 casas, ~828 KB) e `benchmark_sameday.json` (~201 KB) deixaram de ser
   // baixados junto com a remoção da aba Benchmark — ficaram sem consumidor. Os arquivos seguem no repo
@@ -9570,13 +9583,13 @@ function App({ user, onLogout, config }) {
   useEffect(() => {
     // cache:'no-cache' = revalida sempre (304 se igual) — evita date bounds/casas estagnados de versão antiga do JSON.
     const opt = { cache: 'no-cache' };
-    fetch('benchmark_net.json', opt)
+    fetch(assetUrl_('benchmark_net.json'), opt)
       .then(r => r.ok ? r.json() : null)
       .then(j => { if (j) setState(prev => ({ ...prev, benchmarkNet: j })); })
       .catch(() => {});
     // Escada mensal da Lottu (tools/lottu-escada/build.js). Mesmo contrato de coorte do only=escada,
     // então a Pirâmide Mensal roda a MESMA escRet_ nos dois lados. Ausente = a seção some, não quebra.
-    fetch('lottu_escada.json', opt)
+    fetch(assetUrl_('lottu_escada.json'), opt)
       .then(r => r.ok ? r.json() : null)
       .then(j => { if (j && j.coortes) setState(prev => ({ ...prev, lottuEscada: j })); })
       .catch(() => {});
