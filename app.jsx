@@ -8354,6 +8354,9 @@ function TabEscadaMensal({ chFilter, meta, metric, lottuEscada }) {
               {' '}<strong>Seção “lottu”.</strong> As três últimas colunas são a <strong>mesma régua</strong> (mesmo mês de
               referência, mesma idade de safra, mesmo toggle de base e de “sem reativados”) medida na <strong>Lottu</strong>,
               a partir do <code>lottu_escada.json</code> — depósitos pagos do ClickHouse dela, safra = mês do 1º depósito, fuso BR.
+              {' '}<strong>Reconciliado com o Metabase deles</strong> (card 2698): nos meses fechados bate a <strong>0,00%</strong>, célula por célula.
+              {' '}⚠️ A régua <em>deles</em> é outra — o card divide sempre pelo <strong>M0 da safra</strong> (M2/M0 fica em 52–59%), e a linha lá é a
+              safra, não o mês de referência. Só a coluna <code>M1/M0</code> é a mesma conta nos dois lados.
               {lottuEscada && lottuEscada.dataMax ? <span> Dado da Lottu até <strong>{fmtBR_(lottuEscada.dataMax)}</strong>.</span> : null}
               {' '}<strong>Elas seguem o slicer de canal e o filtro de faixa</strong>: o canal da Lottu sai da cascata
               afiliado→utm dela (de-para dos 17 afiliados medido pela assinatura de utm; <code>PMAX_CASSINO</code> → Google,
