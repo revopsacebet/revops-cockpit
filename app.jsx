@@ -3286,12 +3286,14 @@ function buildFarolGroups_(MM, f, range, useYtd, sparkByKey) {
     { title: 'Depósito por safra (R$)', cards: [
       dressPlain(f.depSafra_m0), dressPlain(f.depSafra_m1), dressPlain(f.depSafra_m2), dressPlain(f.depSafra_m3plus),
     ].filter(c => c && c.act != null) },
-    // Ticket médio de depósito por safra = o R$ da seção acima ÷ os depositantes daquela safra. Seção
-    // própria (e não uma linha no card de R$) porque é outra métrica: o card de cima é TAMANHO, este é
-    // INTENSIDADE por cabeça — e as duas se movem em direções opostas quando o mix de ticket muda.
-    { title: 'Ticket médio de depósito por safra', cards: [
+    // Mediana do depósito por conta em cada safra. Seção própria (e não uma linha no card de R$) porque
+    // é outra métrica: o card de cima é TAMANHO, este é o jogador TÍPICO — e os dois se movem em
+    // direções opostas quando o mix de ticket muda.
+    // ⚠️ o filtro aceita card sem `act` quando ele traz `note`: é o caso de 2+ canais selecionados, em
+    // que a mediana não existe. Some a seção inteira sem explicação é pior do que dizer por que sumiu.
+    { title: 'Mediana de depósito por safra', cards: [
       dressPlain(f.tktSafra_m0), dressPlain(f.tktSafra_m1), dressPlain(f.tktSafra_m2), dressPlain(f.tktSafra_m3plus),
-    ].filter(c => c && c.act != null) },
+    ].filter(c => c && (c.act != null || c.note)) },
     // Margem por safra em DUAS seções (GGR e Hold separados, pedido do Luis) — qualidade de monetização
     // por IDADE DE COORTE, não é retenção; janela MTD. Cada card carrega o `share` (peso da safra no GGR).
     // Só entra card com valor: bucket sem safra no período sai da tela em vez de virar um "—" mudo
@@ -8744,20 +8746,36 @@ function buildFarolMetrics_(M, comp, channels, ggrChannels, bp, filter, ggrSafra
     const shareD  = (on && depAll  > 0) ? dep  / depAll  : null;
     const shareDL = (on && depAllL > 0) ? depL / depAllL : null;
     safraMargem['depSafra_' + bk] = wShare(mk(`Depósito ${lbl}`, 'brl', on ? dep : null, null, on ? depL : null), shareD, shareDL, 'depósito');
-    // TICKET MÉDIO DE DEPÓSITO da safra = depósito TOTAL ÷ DEPOSITANTES do período (pedido do Luis, 24/08).
-    // Fecha o trio da seção: o % diz a passagem, o R$ diz o tamanho, o ticket diz de quanto em quanto.
-    // ⚠️ denominador é DEPOSITANTE (conta com depósito > 0), não FTD nem jogador ativo — quem só apostou
-    // não entra, senão o ticket viria diluído por gente que não pôs dinheiro. `hasJog` distingue "safra
-    // sem depositante" de "backend < v87 não manda a coluna": sem a coluna o card nem existe, porque um
-    // ticket calculado sobre denominador ausente sairia infinito ou vazio com cara de dado real.
+    // MEDIANA DO DEPÓSITO POR CONTA na safra (pedido do Luis, 24/08 — trocou a média pela mediana).
+    // Fecha o trio da seção: o % diz a passagem, o R$ diz o tamanho, a mediana diz quanto o jogador
+    // TÍPICO depositou. Aqui a diferença não é cosmética: em ago/26 a média do M0 é R$ 172 e a mediana
+    // R$ 30 — a média está medindo baleia, não jogador. Por isso a média continua na tela, mas embaixo.
+    // ⚠️ MEDIANA NÃO SOMA. Não dá pra juntar a de cada canal, então o backend manda 3 níveis prontos
+    // (por canal, todos, growth) e aqui só se ESCOLHE qual serve ao escopo. Com 2+ canais selecionados
+    // nenhum serve: o card fica vazio DIZENDO por quê, em vez de mostrar uma média de medianas.
     const jog = S('jog'), jogL = S('jogM1');
     const hasJog = arr.some((c) => c.jog != null);
+    const msc = (ggrSafra && ggrSafra.medScope && ggrSafra.medScope[bk]) || null;
+    const selN = chList_(filter).length;
+    const escopoMed = !msc ? null : (selN === 0 ? ((filter && filter.scope === 'growth') ? msc.growth : msc.all) : null);
+    const med   = selN === 1 ? (arr[0] && arr[0].med)   : (escopoMed && escopoMed.med);
+    const medL  = selN === 1 ? (arr[0] && arr[0].medM1) : (escopoMed && escopoMed.medM1);
+    const temMed = on && (med != null);
+    const multiCanal = on && hasJog && selN > 1;
     safraMargem['tktSafra_' + bk] = Object.assign(
-      wShare(mk(`Ticket médio ${lbl}`, 'brl', (on && hasJog) ? divPos(dep, jog) : null, null, (on && hasJog) ? divPos(depL, jogL) : null), shareD, shareDL, 'depósito'),
-      { note: (on && hasJog && jog) ? (fmtQty(jog) + ' depositantes') : null,
-        noteTitle: (on && hasJog && jog)
-          ? ('Denominador do ticket: contas DISTINTAS desta safra com depósito > 0 no período (quem só apostou não entra). '
-             + 'Depósito do período: ' + fmtBRL(dep) + '.' + (jogL ? ' Mesma janela do mês anterior: ' + fmtQty(jogL) + ' depositantes.' : ''))
+      wShare(mk(`Mediana ${lbl}`, 'brl', temMed ? med : null, null, temMed ? (medL != null ? medL : null) : null), temMed ? shareD : null, shareDL, 'depósito'),
+      { note: multiCanal ? 'mediana não soma entre canais — escolha 1 canal ou volte pro Total'
+            : (temMed && jog) ? (fmtQty(jog) + ' depositantes · média ' + fmtBRL(divPos(dep, jog)))
+            : null,
+        noteTitle: multiCanal
+          ? ('A mediana de um grupo não é obtida somando as medianas das partes — precisaria da distribuição inteira. '
+             + 'O backend manda a mediana pronta por CANAL e para os escopos Total da Casa e Growth; qualquer combinação '
+             + 'diferente disso teria que ser calculada no BigQuery. Os cards de Depósito por safra (R$), acima, continuam válidos.')
+          : (temMed && jog)
+          ? ('Mediana = depósito da conta do MEIO entre os depositantes desta safra no período (contas com depósito > 0; '
+             + 'quem só apostou não entra). Depositantes: ' + fmtQty(jog) + '. Depósito do período: ' + fmtBRL(dep) + '. '
+             + 'A média (' + fmtBRL(divPos(dep, jog)) + ') é o mesmo depósito dividido pelos depositantes — a distância entre as duas mede o peso das baleias.'
+             + (jogL ? ' Mesma janela do mês anterior: ' + fmtQty(jogL) + ' depositantes.' : ''))
           : null });
   });
 
