@@ -7294,7 +7294,53 @@ const ESC_COLS_GGR_FULL = ESC_COLS_GGR.concat(ESC_COLS.filter((c) => c.blk === '
 // `corDe` = usa a rampa de cor da coluna equivalente da Apostou, pra que a mesma tonalidade signifique
 // o mesmo número dos dois lados da tabela (rampa própria por coluna faria verde-escuro comparar com
 // verde-escuro em réguas diferentes, que é exatamente a leitura errada).
+// ============================================================
+// RÉGUA CORRIDA — D60/D30 e D90/D60 (pedido do Luis, 2026-08-25)
+// ============================================================
+// O toggle "Régua" troca o BLOCO DE RETENÇÃO INTEIRO (nosso lado e o da Lottu) entre duas leituras que
+// respondem à mesma pergunta em eixos de tempo diferentes:
+//
+//   MENSAL  (default) — M1/M0, M2/M1, M3+ : mês-CALENDÁRIO, régua do Farol/BP. A linha é o MÊS DE
+//                       REFERÊNCIA e a coluna é a idade da safra medida (ver escRet_).
+//   CORRIDA           — D60/D30, D90/D60 : blocos de 30 dias contados do DIA DO FTD de cada conta.
+//                       A linha volta a ser a SAFRA (é propriedade da coorte, como o multiplicador).
+//
+// ⚠️⚠️ AS DUAS NÃO SÃO O MESMO NÚMERO EM ESCALA DIFERENTE, E A DIFERENÇA É GRANDE. O M0 do calendário é
+// uma janela CURTA e desigual (a conta que fez FTD dia 28 vive 3 dias de M0; a do dia 1º vive 30), então
+// o M1/M0 divide um mês cheio por um pedaço de mês e sai INFLADO. A janela corrida compara 30 dias com
+// 30 dias. Medido na casa (safras jan–mai/26, R$): M1/M0 32–76% contra D60/D30 13–43% — mesma casa,
+// mesmo dinheiro. O número corrido é a decadência real; o mensal é o que o BP e a Lottu cobram.
+// Por isso as DUAS ficam na tela, num toggle, e nenhuma "corrige" a outra.
+//
+// ⚠️ D60/D30 = (dias 30..59) ÷ (dias 0..29), NÃO acumulado ÷ acumulado. É o análogo direto de M1/M0
+// (que também é bloco ÷ bloco, dep[1]÷dep[0]) e é o que se lê como "retenção". Se um dia a leitura
+// pedida for a razão dos ACUMULADOS, é só 1 + este número.
+//
+// ⚠️ MATURAÇÃO POR DIAS, não por mês: a janela k de uma safra só fechou quando o ÚLTIMO FTD do mês já
+// viveu 30k+29 dias. Com "só safras maduras" ligado, safra que não fechou fica FORA do cálculo (não
+// entra "por baixo" puxando a média). Ver escJanFechada_.
+//
+// ⚠️ SEM COLUNA DE REATIVADO: reativado é "2+ MESES secos" e não tem tradução em janela de 30 dias. Na
+// régua corrida o toggle de reativados fica escondido em vez de mentir aplicando um corte que não existe.
+const ESC_JAN_DIAS = 30;                 // tamanho do bloco
+const ESC_COLS_RET_DIA = [
+  { key: 'w1', lb: 'D60/D30', blk: 'ret', jan: 1,
+    tip: 'JANELA CORRIDA: o depositado nos dias 30–59 desde o FTD da própria conta ÷ o depositado nos dias 0–29 (o dia do FTD inclusive). '
+       + 'A linha é a SAFRA que está sendo medida — diferente da régua mensal, onde a linha é o mês de referência. '
+       + '⚠️ Costuma dar BEM MENOS que o M1/M0 e isso não é queda: o M0 do calendário é uma janela curta (a conta que fez FTD dia 28 '
+       + 'vive 3 dias de M0), então o M1/M0 divide um mês cheio por um pedaço de mês. Aqui são 30 dias contra 30 dias.' },
+  { key: 'w2', lb: 'D90/D60', blk: 'ret', jan: 2,
+    tip: 'JANELA CORRIDA: dias 60–89 desde o FTD ÷ dias 30–59. É o 2º degrau da mesma escada — mede se quem sobreviveu ao 1º mês '
+       + 'continua depositando no mesmo ritmo. Valores perto de 100% dizem que a base que ficou é estável; o buraco está no degrau anterior.' },
+];
 const ESC_LOTTU_TIP = 'Mesma régua da seção de retenção ao lado (mês de referência × idade da safra), medida na LOTTU. ';
+const ESC_LOTTU_TIP_D = 'Mesma janela corrida da seção ao lado (blocos de 30 dias desde o FTD de cada conta), medida na LOTTU. ';
+const ESC_COLS_LOTTU_DIA = [
+  { key: 'lw1', lb: 'D60/D30', blk: 'lottu', jan: 1, lottu: true, corDe: 'w1',
+    tip: ESC_LOTTU_TIP_D + 'Dias 30–59 das safras dela ÷ dias 0–29. Sai do lottu_escada.json (grade `dw`, gerada pelo janelas.sql).' },
+  { key: 'lw2', lb: 'D90/D60', blk: 'lottu', jan: 2, lottu: true, corDe: 'w2',
+    tip: ESC_LOTTU_TIP_D + 'Dias 60–89 ÷ dias 30–59.' },
+];
 const ESC_COLS_LOTTU = [
   { key: 'l1', lb: 'M1/M0', blk: 'lottu', ref: 1,   lottu: true, corDe: 'r1',
     tip: ESC_LOTTU_TIP + 'No mês da linha, o depósito das safras Lottu de idade 1 ÷ o que elas depositaram no mês anterior.' },
@@ -7306,9 +7352,13 @@ const ESC_COLS_LOTTU = [
 // `temLottu` só entra no modo DEPÓSITO ou na base JOGADORES: no modo GGR o nosso lado da tabela é GGR
 // e o lado da Lottu continuaria sendo depósito — duas grandezas diferentes na mesma linha, que é pior
 // que não ter a coluna. Em base JOGADORES é contagem de depositantes dos dois lados, então vale sempre.
-function escCols_(metric, temLottu) {
+// `regua` = 'mes' (a de sempre) | 'dia' (janelas corridas). Na corrida o bloco de retenção INTEIRO é
+// trocado — inclusive o da Lottu, senão a tabela mostraria dois eixos de tempo lado a lado.
+function escCols_(metric, temLottu, regua) {
+  const dia = regua === 'dia';
   const base = (metric === 'ggr') ? ESC_COLS_GGR_FULL : ESC_COLS;
-  return temLottu ? base.concat(ESC_COLS_LOTTU) : base;
+  const sem = dia ? base.filter((c) => c.blk !== 'ret').concat(ESC_COLS_RET_DIA) : base;
+  return temLottu ? sem.concat(dia ? ESC_COLS_LOTTU_DIA : ESC_COLS_LOTTU) : sem;
 }
 // Rótulos que mudam com a métrica. Tudo o que é texto de tela sai daqui, pra não haver uma aba
 // dizendo "depósito" com GGR na célula.
@@ -7418,6 +7468,40 @@ function escRet_(coortes, col, mesesRef, ultFech, soMaduras, baseRet, semReat) {
   if (!temR) return null;
   return { num: cortaReat ? (num - reat) : num, den: den, aberta: aberta, reat: reat, numBruto: num };
 }
+// ============================================================
+// MATURAÇÃO DA JANELA CORRIDA
+// ============================================================
+// A janela `k` cobre os dias 30k..30k+29 desde o FTD DE CADA CONTA. Uma safra mensal só tem essa janela
+// COMPLETA quando a conta que fez FTD no ÚLTIMO dia do mês já viveu 30k+29 dias — é o mesmo critério
+// conservador do "mês fechado" da grade mensal (a safra fecha junto, não conta por conta).
+// ⚠️ Sem isto, a safra do mês corrente apareceria com D60/D30 ≈ 0% e a leitura "a retenção desabou"
+// seria puro artefato de calendário — exatamente o erro que o toggle de meses fechados existe pra evitar.
+function escJanFechada_(safra, k, diaOk) {
+  if (!diaOk) return false;
+  return isoAddDays_(pirFimDoMes_(safra + '-01'), ESC_JAN_DIAS * k + (ESC_JAN_DIAS - 1)) <= diaOk;
+}
+// Retenção CORRIDA de um conjunto de unidades de safra (as mesmas do multiplicador: `row.un`).
+// Soma numeradores e denominadores e divide no fim — nunca média de razões.
+// ⚠️ `!nv && !dv` = a safra não tem nada nas duas janelas → não entra em nenhum dos dois lados. Já
+// `dv > 0` com `nv = 0` É DADO (a base parou de depositar) e conta.
+function escRetDia_(uns, col, diaOk, soMaduras, baseRet) {
+  const k = col.jan;
+  let num = 0, den = 0, n = 0, nUso = 0, aberta = false;
+  (uns || []).forEach((u) => {
+    n++;
+    const arr = ((baseRet === 'jog') ? u.jdw : u.dw) || [];
+    if (!arr.length) return;                       // payload sem a grade corrida
+    const nv = (k < arr.length) ? (arr[k] || 0) : 0;
+    const dv = ((k - 1) < arr.length) ? (arr[k - 1] || 0) : 0;
+    if (!nv && !dv) return;
+    const fech = escJanFechada_(u.safra, k, diaOk);
+    if (soMaduras && !fech) return;
+    num += nv; den += dv; nUso++;
+    if (!fech) aberta = true;
+  });
+  if (!nUso) return null;
+  return { num: num, den: den, aberta: aberta, n: n, nUso: nUso };
+}
 // Célula da LINHA = soma os numeradores e os denominadores das safras que a compõem e só então divide
 // (nunca média de razões — mesma regra do "Realizado" das outras abas).
 // `nUso`/`n` alimentam o tooltip: numa linha de canal, saber que 3 de 20 safras entraram na coluna M3
@@ -7438,6 +7522,30 @@ function escCel_(row, col, ctx) {
     // Sem JSON → vazia.
     const porMes = ctx.porSafra && !row._tot;
     if (!coos.length) return { vazia: true, v: null, n: 0, nUso: 0, aberta: false };
+    // ---- RÉGUA CORRIDA da Lottu: a linha é a SAFRA (propriedade da coorte), então o recorte é o mesmo
+    // do multiplicador — safra da linha no eixo de safra, todas as safras da janela nos outros eixos.
+    if (col.jan != null) {
+      const campoD = ctx.porSafra ? null : (ctx.eixo === 'canal') ? 'canal' : (ctx.eixo === 'faixa') ? 'faixa' : null;
+      let usarD = coos;
+      if (!row._tot) {
+        if (porMes) usarD = coos.filter((c) => c.safra === row.key);
+        else if (!campoD) return { vazia: true, v: null, n: 0, nUso: 0, aberta: false, semEixo: true };
+        else {
+          usarD = coos.filter((c) => c[campoD] === row.key);
+          if (!usarD.length) return { vazia: true, v: null, n: 0, nUso: 0, aberta: false, semLinha: true };
+        }
+      }
+      // O recorte de PERÍODO vale aqui (diferente da régua mensal, que precisa das safras velhas pro M3+).
+      if (!porMes && ctx.mesesJan) usarD = usarD.filter((c) => ctx.mesesJan[c.safra]);
+      // Sem a grade `dw` no JSON (build antigo) → vazia com motivo, nunca número da grade errada.
+      if (!usarD.some((c) => Array.isArray(c.dw) && c.dw.length)) {
+        return { vazia: true, v: null, n: 0, nUso: 0, aberta: false, semDw: true };
+      }
+      const r = escRetDia_(escUnidades_(usarD), col, ctx.diaOk, ctx.soMaduras, ctx.baseRet);
+      if (!r) return { vazia: true, v: null, n: 0, nUso: 0, aberta: false };
+      return { vazia: false, v: (r.den > 0) ? r.num / r.den : null, n: r.n, nUso: r.nUso,
+               aberta: r.aberta, num: r.num, den: r.den };
+    }
     let usar = coos;
     if (!porMes && !row._tot) {
       // Eixo de dimensão. CANAL e FAIXA existem dos dois lados (a Lottu tem a atribuição dela e o valor
@@ -7454,6 +7562,19 @@ function escCel_(row, col, ctx) {
     if (!r) return { vazia: true, v: null, n: 0, nUso: 0, aberta: false };
     return { vazia: false, v: (r.den > 0) ? r.num / r.den : null, n: meses.length, nUso: meses.length,
              aberta: r.aberta, num: r.num, den: r.den, reat: r.reat, numBruto: r.numBruto };
+  }
+  // ---- RÉGUA CORRIDA (nosso lado). Sai de `row.un` — as MESMAS unidades de safra do multiplicador,
+  // porque a janela corrida é propriedade da COORTE, não do mês de referência. Consequência boa e que
+  // está escrita na tela: na régua corrida a linha volta a falar da safra dela, e as duas metades da
+  // tabela passam a ter o mesmo eixo (na mensal, não têm).
+  if (col.jan != null) {
+    if (!(row.un || []).some((u) => (u.dw || []).length)) {
+      return { vazia: true, v: null, n: (row.un || []).length, nUso: 0, aberta: false, semDw: true };
+    }
+    const r = escRetDia_(row.un, col, ctx.diaOk, ctx.soMaduras, ctx.baseRet);
+    if (!r) return { vazia: true, v: null, n: (row.un || []).length, nUso: 0, aberta: false };
+    return { vazia: false, v: (r.den > 0) ? r.num / r.den : null, n: r.n, nUso: r.nUso,
+             aberta: r.aberta, num: r.num, den: r.den };
   }
   if (col.blk === 'ret') {
     // Eixo de safra: o mês de referência é o da própria linha, e as safras medidas são TODAS as do
@@ -7519,13 +7640,18 @@ function escEscala_(linhas, col, ctx) {
 function escUnidades_(coortes) {
   const m = {};
   (coortes || []).forEach((c) => {
-    const u = m[c.safra] || (m[c.safra] = { safra: c.safra, qtd: 0, ftd: 0, inv: 0, dep: [], jog: [] });
+    const u = m[c.safra] || (m[c.safra] = { safra: c.safra, qtd: 0, ftd: 0, inv: 0, dep: [], jog: [], dw: [], jdw: [] });
     u.qtd += c.qtd || 0;
     u.ftd += c.ftd || 0;
     // `inv` só vem no payload da métrica GGR (backend v84). No de depósito é sempre 0 e ninguém lê.
     u.inv += c.inv || 0;
     (c.dep || []).forEach((v, i) => { u.dep[i] = (u.dep[i] || 0) + (v || 0); });
     (c.jog || []).forEach((v, i) => { u.jog[i] = (u.jog[i] || 0) + (v || 0); });
+    // `dw`/`jdw` = a grade CORRIDA (backend v90 / lottu build de 25/08). Somar entre coortes é exato
+    // pelo mesmo argumento do `jog`: cada conta tem UM canal e UMA faixa, então as coortes de uma safra
+    // são uma partição — nenhum jogador é contado duas vezes.
+    (c.dw || []).forEach((v, i) => { u.dw[i] = (u.dw[i] || 0) + (v || 0); });
+    (c.jdw || []).forEach((v, i) => { u.jdw[i] = (u.jdw[i] || 0) + (v || 0); });
   });
   return Object.keys(m).sort().map((k) => m[k]);
 }
@@ -7620,6 +7746,10 @@ function TabEscadaMensal({ chFilter, meta, metric, lottuEscada }) {
   // razão de CONTAGEM de depositantes (não é transição por jogador — ver o tooltip); é o lado que
   // separa "% que volta" de "quanto deposita quem volta".
   const [baseRet, setBaseRet] = usePersistedState(pk('BaseRet'), 'rs');
+  // RÉGUA do bloco de retenção: 'mes' = mês-calendário (Farol/BP, o default) · 'dia' = janelas corridas
+  // de 30 dias (D60/D30, D90/D60). Ver o bloco ESC_COLS_RET_DIA: não é a mesma conta em outra escala.
+  // Default 'mes' de propósito — é a régua que o BP, o Farol e a meta da Lottu falam.
+  const [regua, setRegua] = usePersistedState(pk('Regua'), 'mes');
   // Período: preset de janela ou 'm:YYYY-MM'. Default 'all' de propósito: nada some sem alguém mandar.
   // ⚠️ DEFAULT DIFERENTE POR MÉTRICA. Em depósito é 'all' (nada some sem alguém mandar). Em GGR a
   // verba rastreada só existe de ~mar/2026 pra frente, e antes disso sobram coortes de 1 conta de
@@ -7897,7 +8027,11 @@ function TabEscadaMensal({ chFilter, meta, metric, lottuEscada }) {
     return arr;
   }, [lottuEscada, chFilter, faixaSel]);
   const temLottu = !!(lottuCoo && lottuCoo.length) && (met === 'dep' || baseRet === 'jog');
-  const cols = escCols_(met, temLottu);
+  // A régua vale nas DUAS abas: o `dw` do payload carrega a métrica da aba (depósito ou GGR), igual ao
+  // `dep` — então na aba GGR a régua corrida lê "retenção de GGR em janelas de 30 dias", do mesmo jeito
+  // que a mensal já lê retenção de GGR. O aviso de "GGR pode ser negativo" continua valendo pras duas.
+  const porDia = regua === 'dia';
+  const cols = escCols_(met, temLottu, regua);
   const sepCls = pirSepCls_(cols);
   const eixoDef = ESC_EIXOS.find((e) => e.k === eixo) || ESC_EIXOS[0];
   const porSafra = eixo === 'safra';
@@ -7921,8 +8055,14 @@ function TabEscadaMensal({ chFilter, meta, metric, lottuEscada }) {
   // SILÊNCIO mostrando o número cheio sob um rótulo que diz "sem reativados". Detecta e avisa.
   const temReat = React.useMemo(() => coortes.some((c) => Array.isArray(c.reat)), [coortes]);
   const semReatOn = !!(semReat && temReat);
+  // ⚠️ MESMA lógica do temReat, e pelo mesmo motivo: backend sem os vetores `dw` (deploy não propagado)
+  // não pode devolver tabela vazia com cara de "não houve safra" — nem, pior, cair calado na grade mensal.
+  const temDw = React.useMemo(() => coortes.some((c) => Array.isArray(c.dw) && c.dw.length), [coortes]);
+  const temDwLottu = !!(lottuCoo && lottuCoo.some((c) => Array.isArray(c.dw) && c.dw.length));
+  // `diaOk` e `mesesJan` entram no ctx por causa da RÉGUA CORRIDA: a maturação dela é em DIAS (não em
+  // meses fechados) e o recorte de período vale nela (diferente da mensal, que precisa das safras velhas).
   const ctx = { coortes: coortes, meses: mesesRef, ultFech: ultFech, soMaduras: soMaduras, baseRet: baseRet, porSafra: porSafra, semReat: semReatOn,
-                lottu: temLottu ? lottuCoo : null, eixo: eixo };
+                lottu: temLottu ? lottuCoo : null, eixo: eixo, diaOk: diaOk, mesesJan: mesesJan };
   const escalas = {};
   cols.forEach((c) => { if (!c.plain && !c.semCor && !c.corDe) escalas[c.key] = escEscala_(linhas, c, ctx); });
   // ⚠️ 2ª passada: as colunas da Lottu PEGAM EMPRESTADA a rampa da coluna equivalente da Apostou
@@ -7959,12 +8099,20 @@ function TabEscadaMensal({ chFilter, meta, metric, lottuEscada }) {
     if (cel.vazia) {
       return (
         <td key={c.key} className={sep || undefined}>
-          <span className="pir-v pir-excl" title={c.lottu
+          <span className="pir-v pir-excl" title={cel.semDw
+            ? (c.lottu
+              ? 'O lottu_escada.json em uso não tem a grade de janelas corridas — rode tools/lottu-escada/build.js (ele gera as duas grades). Melhor vazio que o número da grade mensal debaixo de um rótulo D60/D30.'
+              : 'O backend em produção ainda não manda as janelas corridas (dw) — falta propagar o deploy do only=escada. A régua mensal continua funcionando.')
+            : c.lottu
             ? (cel.semEixo
               ? 'Este eixo não existe do lado da Lottu: grupo de risco e campanha são recortes só nossos. Canal e faixa de FTD, sim — ela tem a atribuição dela e o valor do 1º depósito.'
               : cel.semLinha
               ? 'A Lottu não tem essa linha: nenhuma coorte dela caiu neste canal/faixa (ex.: um canal que só nós temos).'
               : 'Sem dado da Lottu para este mês (o histórico dela começa em ago/2025).')
+            : (c.jan != null)
+            ? ('Nenhuma safra desta linha completou a janela de ' + (ESC_JAN_DIAS * (c.jan + 1)) + ' dias. '
+               + 'A janela só conta quando o ÚLTIMO FTD do mês já viveu ' + (ESC_JAN_DIAS * c.jan + ESC_JAN_DIAS - 1) + ' dias — '
+               + 'desligue "só safras maduras" para ver o parcial (que é piso).')
             : (c.blk === 'ret')
             ? (porSafra
               ? 'Neste mês não existe safra da idade desta coluna (ou o mês ainda não fechou). No começo da série é o esperado: em dez/2023 não havia safra de idade 1.'
@@ -7985,15 +8133,25 @@ function TabEscadaMensal({ chFilter, meta, metric, lottuEscada }) {
     }
     // O bloco da Lottu é retenção pra todos os efeitos de leitura — mesmo eixo, mesma unidade.
     const ehRet = (c.blk === 'ret' || c.blk === 'lottu');
-    const nS = ehRet
+    // ⚠️ A régua CORRIDA tem outro eixo: a linha é a SAFRA MEDIDA, não o mês de referência. Reaproveitar
+    // o texto do mensal aqui diria "mede as safras de idade undefined" e, pior, mentiria sobre quem está
+    // sendo medido — que é justamente a diferença entre as duas réguas.
+    const nS = (c.jan != null)
+      ? (' · janela CORRIDA: dias ' + (ESC_JAN_DIAS * c.jan) + '–' + (ESC_JAN_DIAS * (c.jan + 1) - 1)
+         + ' ÷ dias ' + (ESC_JAN_DIAS * (c.jan - 1)) + '–' + (ESC_JAN_DIAS * c.jan - 1) + ' desde o FTD de cada conta'
+         + ((porSafra && !l._tot) ? ' · mede a safra DESTA linha' : ' · ' + cel.nUso + ' de ' + cel.n + ' safras completaram a janela'))
+      : ehRet
       ? ((porSafra && !l._tot) ? ' · mês de referência ' + monthLabelPt_(l.key + '-01') + ' (mede as safras de idade '
                     + (c.ref === 'p' ? '≥3' : c.ref) + ', não a safra desta linha)'
                   : ' · pooled sobre ' + cel.n + ' meses de referência')
       : (porSafra ? '' : (' · ' + cel.nUso + ' de ' + cel.n + ' safras alcançaram este horizonte'));
     const dica = (cel.aberta
-      ? 'PARCIAL: o horizonte inclui ' + (ultFech ? monthLabelPt_(escMesAdd_(ultFech, 1) + '-01') : 'o mês corrente')
-        + ', que ainda não fechou' + (dataMax ? ' (dado até ' + fmtBR_(dataMax) + ')' : '')
-        + '. O valor é um PISO — só pode subir.'
+      ? (c.jan != null
+         ? 'PARCIAL: alguma safra ainda não completou os ' + (ESC_JAN_DIAS * (c.jan + 1)) + ' dias'
+           + (dataMax ? ' (dado até ' + fmtBR_(dataMax) + ')' : '') + '. O valor é um PISO — só pode subir.'
+         : 'PARCIAL: o horizonte inclui ' + (ultFech ? monthLabelPt_(escMesAdd_(ultFech, 1) + '-01') : 'o mês corrente')
+           + ', que ainda não fechou' + (dataMax ? ' (dado até ' + fmtBR_(dataMax) + ')' : '')
+           + '. O valor é um PISO — só pode subir.')
       : 'Fechado') + nS
       + (ehRet ? ' · ' + ((baseRet === 'jog') ? pirInt_(cel.num) + ' ÷ ' + pirInt_(cel.den) + ' depositantes' : fmtBRL(cel.num) + ' ÷ ' + fmtBRL(cel.den)) : '')
       + (c.lottu ? ' · LOTTU (casa inteira — não segue o filtro de canal/faixa)'
@@ -8050,8 +8208,11 @@ function TabEscadaMensal({ chFilter, meta, metric, lottuEscada }) {
             Grão de MÊS, e <strong>duas leituras na mesma linha</strong>: {met === 'ggr'
               ? <React.Fragment>o <strong>ROAS GGR acumulado</strong> é da safra que nasceu naquele mês (GGR dela ÷ investimento que a comprou)</React.Fragment>
               : <React.Fragment>os <strong>multiplicadores</strong> são da safra que nasceu naquele mês</React.Fragment>
-            }; a <strong>retenção</strong> é do mês como referência, na régua do Farol
-            (quem entrou em janeiro e {M.vlb === 'GGR' ? 'gerou GGR' : 'depositou'} em julho conta no M3+ de julho). Cobre todo o histórico e
+            }; a <strong>retenção</strong> {porDia
+              ? <React.Fragment>está na régua <strong>corrida</strong>: blocos de 30 dias desde o FTD de cada conta (D60/D30, D90/D60) — mesma safra da linha, sem o efeito de calendário</React.Fragment>
+              : <React.Fragment>é do mês como referência, na régua do Farol
+                (quem entrou em janeiro e {M.vlb === 'GGR' ? 'gerou GGR' : 'depositou'} em julho conta no M3+ de julho)</React.Fragment>
+            }. Cobre todo o histórico e
             <strong> não segue o slicer de data</strong> — o de canal e o de faixa valem.
             {met === 'ggr' && <React.Fragment>{' '}<strong style={{ color: 'var(--accent-yellow)' }}>ROAS 1,00x = payback</strong> — a célula fica marcada quando a safra devolveu a verba.</React.Fragment>}
           </div>
@@ -8102,6 +8263,23 @@ function TabEscadaMensal({ chFilter, meta, metric, lottuEscada }) {
           <option value="">{dadosCp.error ? 'campanhas indisponíveis' : !dadosCp.rows ? 'carregando…' : 'Todas'}</option>
           {topCamps.map((c) => <option key={c.campanha} value={c.campanha}>{escCampLbl_(c.campanha)}</option>)}
         </select>
+        {/* RÉGUA DO BLOCO DE RETENÇÃO — mês-calendário × janela corrida de 30 dias. Fica ANTES do
+            "Retenção sobre" de propósito: os dois falam do mesmo bloco, e a régua é a escolha mais
+            estruturante das duas (ela troca as colunas, não só o denominador). */}
+        <span style={{ fontSize: '11px', color: 'var(--text-muted)', marginLeft: '10px' }}>Régua da retenção</span>
+        <div className="slicer-presets" style={{ marginLeft: 6 }}>
+          <button className={`preset-btn ${!porDia ? 'active' : ''}`} onClick={() => setRegua('mes')}
+                  title={'MENSAL (M1/M0, M2/M1, M3+) — mês-CALENDÁRIO, a régua do Farol e do BP (as metas 75/72/88 falam desta). '
+                       + 'A linha é o MÊS DE REFERÊNCIA e a coluna é a idade da safra medida: na linha de julho, o M1/M0 mede a safra de JUNHO.'}>mensal</button>
+          <button className={`preset-btn ${porDia ? 'active' : ''}`} onClick={() => setRegua('dia')}
+                  title={'CORRIDA (D60/D30, D90/D60) — blocos de 30 dias contados do DIA DO FTD de cada conta, não do começo do mês. '
+                       + 'A linha volta a ser a SAFRA (é propriedade da coorte, como o multiplicador). '
+                       + '⚠️ Dá bem MENOS que o M1/M0 e não é a mesma conta em outra escala: o M0 do calendário é uma janela curta e desigual '
+                       + '(quem fez FTD dia 28 vive 3 dias de M0, quem fez dia 1º vive 30), então o M1/M0 divide um mês cheio por um pedaço de mês. '
+                       + 'Aqui são 30 dias contra 30 dias — é a decadência real, sem o efeito de calendário. '
+                       + 'Medido na casa (safras jan–mai/26): M1/M0 32–76% contra D60/D30 13–43%. '
+                       + '⚠️ Não tem M3+ nem reativados: a régua para no D90 e "reativado" é definido em MESES secos.'}>corrida (30d)</button>
+        </div>
         <span style={{ fontSize: '11px', color: 'var(--text-muted)', marginLeft: '10px' }}>Retenção sobre</span>
         <div className="slicer-presets" style={{ marginLeft: 6 }}>
           <button className={`preset-btn ${baseRet === 'rs' ? 'active' : ''}`} onClick={() => setBaseRet('rs')}
@@ -8109,6 +8287,10 @@ function TabEscadaMensal({ chFilter, meta, metric, lottuEscada }) {
           <button className={`preset-btn ${baseRet === 'jog' ? 'active' : ''}`} onClick={() => setBaseRet('jog')}
                   title="Razão entre a CONTAGEM de depositantes de um mês e a do mês anterior. ⚠️ Não é transição por jogador (os dois conjuntos não são os mesmos): é quanto a base de depositantes daquela safra encolheu. Serve pra separar “% que volta” de “quanto deposita quem volta”.">jogadores</button>
         </div>
+        {/* ⚠️ ESCONDIDO na régua corrida, não desabilitado: um checkbox marcado que não faz nada é pior
+            que nenhum. Reativado é "2+ MESES secos" e não existe dentro de uma janela de 30 dias — o
+            estado do toggle fica guardado e volta intacto quando a régua voltar pra mensal. */}
+        {!porDia && (
         <label className={'pir-tgl' + (semReat && !temReat ? ' pir-tgl-warn' : '')} style={{ marginLeft: '12px' }}
                title={'REATIVADO = FTD que volta a depositar depois de 2 meses inativo (o depósito anterior dele foi há 3+ meses). '
                     + 'Ligado, o R$ desses caras sai do NUMERADOR do M3+. O denominador não muda — o reativado, por definição, '
@@ -8119,11 +8301,13 @@ function TabEscadaMensal({ chFilter, meta, metric, lottuEscada }) {
           <input type="checkbox" checked={!!semReat} onChange={(e) => setSemReat(e.target.checked)} />
           M3+ sem reativados <span style={{ opacity: .6 }}>{temReat ? '(volta depois de 2+ meses secos)' : '(indisponível neste payload)'}</span>
         </label>
+        )}
         <label className="pir-tgl" style={{ marginLeft: '12px' }}
                title={'Tira do CÁLCULO todo mês que ainda não fechou. Vem LIGADO porque o mês corrente é o M0 da safra deste mês e o M1 da safra do mês passado — desligado, a diagonal mais nova aparece cortada no dia de hoje e "a retenção caiu" vira artefato de calendário. Desligado, o parcial aparece hachurado e é sempre um PISO.'
-                    + (ultFech ? ' Último mês fechado: ' + monthLabelPt_(ultFech + '-01') + '.' : '')}>
+                    + (ultFech ? ' Último mês fechado: ' + monthLabelPt_(ultFech + '-01') + '.' : '')
+                    + (porDia ? ' ⚠️ NA RÉGUA CORRIDA o mesmo toggle vale em DIAS: a coluna D60/D30 de uma safra só entra quando o ÚLTIMO FTD daquele mês já viveu 59 dias (89 no D90/D60). Por isso as safras mais novas ficam vazias nas colunas corridas mesmo tendo mês fechado.' : '')}>
           <input type="checkbox" checked={!!soMaduras} onChange={(e) => setSoMaduras(e.target.checked)} />
-          Só meses fechados <span style={{ opacity: .6 }}>{ultFech ? '(até ' + monthLabelPt_(ultFech + '-01') + ')' : ''}</span>
+          {porDia ? 'Só safras maduras' : 'Só meses fechados'} <span style={{ opacity: .6 }}>{porDia ? '(janela de 30d completa)' : (ultFech ? '(até ' + monthLabelPt_(ultFech + '-01') + ')' : '')}</span>
         </label>
       </div>
 
@@ -8131,16 +8315,28 @@ function TabEscadaMensal({ chFilter, meta, metric, lottuEscada }) {
         <div className="support-title">
           {porSafra ? ('Safra mensal · ' + linhas.length + ' safras') : ('Por ' + eixoDef.col.toLowerCase() + ' · ' + linhas.length + ' linha' + (linhas.length === 1 ? '' : 's'))}
           {mesSel ? ' · ' + monthLabelPt_(mesSel + '-01') : janN ? ' · últimos ' + janN + ' meses' : ''}
-          {' · '}{chLbl} · {faixaLbl}{grupoLbl ? ' · ' + grupoLbl : ''}{campOn ? ' · campanha ' + escCampLbl_(camp) : ''} · retenção sobre {baseRet === 'rs' ? 'R$' : 'jogadores'}
-          {soMaduras ? ' · só meses fechados' : ' · ⚠ INCLUINDO o mês corrente (parcial)'}
+          {' · '}{chLbl} · {faixaLbl}{grupoLbl ? ' · ' + grupoLbl : ''}{campOn ? ' · campanha ' + escCampLbl_(camp) : ''} · retenção {porDia ? 'CORRIDA (30d)' : 'mensal'} sobre {baseRet === 'rs' ? 'R$' : 'jogadores'}
+          {soMaduras ? (porDia ? ' · só safras maduras' : ' · só meses fechados') : ' · ⚠ INCLUINDO o mês corrente (parcial)'}
           {diaOk ? ' · último dia fechado ' + fmtBR_(diaOk) : ''}
         </div>
         <div className="pir-legend">
           <span>Escala <i className="pir-ramp">{PIR_RAMP.map((v) => <i key={v} style={{ background: 'var(' + v + ')' }} />)}</i> pior → melhor</span>
           <span><i className="pir-sw pir-sw-open" /> mês em aberto (valor é piso)</span>
-          {semReat && !temReat && (
+          {!porDia && semReat && !temReat && (
             <span style={{ color: 'var(--negative)' }}>
               ⚠ “M3+ sem reativados” está LIGADO mas o payload não traz a marcação — o número na tela AINDA inclui os reativados (falta propagar o deploy do backend).
+            </span>
+          )}
+          {/* Pendências da RÉGUA CORRIDA. Ficam FORA do accordion (com a rampa e os erros de payload) de
+              propósito: não são didática, são "o número que você está vendo não existe". */}
+          {porDia && !temDw && (
+            <span style={{ color: 'var(--negative)' }}>
+              ⚠ a régua CORRIDA está selecionada mas o backend em produção não manda as janelas de 30 dias (<code>dw</code>) — as colunas D60/D30 e D90/D60 ficam vazias até o deploy do <code>only=escada</code> propagar.
+            </span>
+          )}
+          {porDia && temLottu && !temDwLottu && (
+            <span style={{ color: 'var(--negative)' }}>
+              ⚠ o <code>lottu_escada.json</code> em uso é anterior à grade corrida — as colunas <em>lottu</em> ficam vazias nesta régua. Rode <code>tools/lottu-escada/build.js</code>.
             </span>
           )}
           {grPend && (
@@ -8179,6 +8375,31 @@ function TabEscadaMensal({ chFilter, meta, metric, lottuEscada }) {
           </span>
           {/* Os dois blocos têm EIXOS diferentes e isso tem que estar na tela, não só no tooltip: foi
               exatamente a confusão que o Luis levantou ("pq não tem M3+ pra julho?"). */}
+          {porDia && (
+            <span style={{ color: 'var(--accent-yellow)' }}
+                  title={'D60/D30 = o depositado nos dias 30–59 desde o FTD de cada conta ÷ o depositado nos dias 0–29. É bloco ÷ bloco, '
+                       + 'igual ao M1/M0 (que é dep[1]÷dep[0]) — não é acumulado ÷ acumulado. Se a leitura que você quer é a dos ACUMULADOS, '
+                       + 'é 1 + este número. E ela dá bem menos que o M1/M0 porque o M0 do calendário é uma janela curta e desigual: quem fez '
+                       + 'FTD no dia 28 vive 3 dias de M0, então o M1/M0 divide um mês cheio por um pedaço de mês. Medido na casa (safras '
+                       + 'jan–mai/26): M1/M0 32–76% contra D60/D30 13–43% — mesmo dinheiro, réguas diferentes.'}>
+              ⚠ régua <strong>corrida</strong>: 30 dias contra 30 dias — dá <strong>menos</strong> que o M1/M0 e isso é a assimetria do mês-calendário saindo, não queda
+            </span>
+          )}
+          {porDia && (
+            <span title={'Na régua corrida as duas metades da tabela têm o MESMO eixo: multiplicador e retenção são as duas propriedades da '
+                       + 'safra da linha. Na régua mensal não é assim — lá a retenção é do MÊS de referência e mede as safras mais velhas. '
+                       + 'É a diferença que responde "por que julho tem M3+ mas não tem Mult M3+".'}>
+              nesta régua, <strong>as duas metades falam da MESMA safra</strong> (na mensal, a retenção fala do mês)
+            </span>
+          )}
+          {porDia && (
+            <span title={'A régua corrida para no D90 e não tem M3+ nem coluna de Reativados: "reativado" é definido por 2+ MESES secos e não '
+                       + 'tem tradução dentro de uma janela de 30 dias. Para a leitura de base instalada (M3+) e para a decomposição '
+                       + 'ficou/voltou, troque para a régua mensal.'}>
+              sem <strong>M3+</strong> e sem <strong>Reativados</strong> nesta régua — eles são definidos em meses
+            </span>
+          )}
+          {!porDia && (
           <span style={{ color: 'var(--accent-yellow)' }}
                 title={'MULTIPLICADOR: propriedade da safra que nasceu no mês da linha (acumulado dela ÷ FTD$ dela). '
                      + 'RETENÇÃO: propriedade do MÊS da linha, régua do Farol — na linha de jul/26 o M1/M0 mede a safra de JUNHO, o M2/M1 mede a de MAIO, '
@@ -8186,6 +8407,7 @@ function TabEscadaMensal({ chFilter, meta, metric, lottuEscada }) {
                      + 'É o mesmo par que o Farol já mostra lado a lado: o Mult M0 dele é da safra do mês, o M0→M1 é da safra anterior.'}>
             ⚠ na linha, <strong>multiplicador é da safra</strong> · <strong>retenção é do mês</strong> (régua do Farol — mede as safras mais velhas)
           </span>
+          )}
           {!porSafra && (
             <span style={{ color: 'var(--negative)' }}
                   title="Neste eixo cada linha cobre TODAS as safras. Com “só meses fechados” ligado, cada coluna usa apenas as safras que alcançaram aquele horizonte — o tooltip da célula diz quantas de quantas entraram.">
@@ -8195,13 +8417,13 @@ function TabEscadaMensal({ chFilter, meta, metric, lottuEscada }) {
           {!soMaduras && (
             <span style={{ color: 'var(--negative)' }}>⚠ o mês corrente está DENTRO do cálculo e ele é parcial — as células hachuradas são piso, não resultado</span>
           )}
-          {semReatOn && (
+          {semReatOn && !porDia && (
             <span style={{ color: 'var(--accent-yellow)' }}
                   title="Reativado = voltou a depositar depois de 2 meses sem depósito nenhum. Ele entra no numerador do M3+ mas não no denominador (não depositou no mês anterior), então infla a retenção. As duas colunas dividem pelo MESMO denominador, então a soma delas é o M3+ bruto — a decomposição é exata, nada fica de fora.">
               <strong>M3+ + Reativados = M3+ bruto</strong> — a primeira é quem FICOU, a segunda é quem VOLTOU
             </span>
           )}
-          {!semReatOn && temReat && (
+          {!semReatOn && temReat && !porDia && (
             <span title="Com o corte desligado, o M3+ é o bruto e a coluna Reativados mostra que fatia dele veio de quem voltou depois de 2+ meses secos (ela está DENTRO do M3+, não ao lado).">
               coluna <strong>Reativados</strong> = a fatia do M3+ que veio de quem voltou (o corte está desligado)
             </span>
@@ -8339,7 +8561,20 @@ function TabEscadaMensal({ chFilter, meta, metric, lottuEscada }) {
             {' '}⚠️ <strong><code>Mult M3+</code> é vida toda e NÃO compara entre linhas</strong>: a safra de jan/25 tem
             19 meses de vida e a de abr/26 tem 4 — o número maior ali é idade. Para rankear safras use
             <strong> Mult M3</strong>, que tem o mesmo horizonte em todas.
-            {' '}<strong>Retenção — atenção, o eixo é OUTRO.</strong> Aqui a linha é o <strong>mês de
+            {' '}<strong>Duas réguas de retenção, no toggle “Régua da retenção”.</strong> A <strong>mensal</strong> (default)
+            é mês-CALENDÁRIO — a régua do Farol e do BP, e a que a meta da Lottu fala. A <strong>corrida</strong> conta
+            blocos de <strong>30 dias desde o dia do FTD de cada conta</strong>: <code>D60/D30</code> = dias 30–59 ÷ dias 0–29,
+            <code> D90/D60</code> = dias 60–89 ÷ dias 30–59 (bloco ÷ bloco, igual ao M1/M0 que é <code>dep[1]÷dep[0]</code>;
+            se a leitura que você quer é a razão dos ACUMULADOS, é 1 + este número).
+            {' '}⚠️ <strong>A corrida dá bem menos que a mensal, e as duas estão certas.</strong> O M0 do calendário é uma
+            janela curta e desigual — quem fez FTD no dia 28 vive 3 dias de M0, quem fez no dia 1º vive 30 —, então o
+            M1/M0 divide um mês cheio por um pedaço de mês. Medido na casa (safras jan–mai/26): <strong>M1/M0 32–76%
+            contra D60/D30 13–43%</strong>. A corrida é a decadência real, sem efeito de calendário; a mensal é o que o
+            plano cobra. Na régua corrida a linha volta a ser a <strong>safra</strong> (as duas metades da tabela passam a ter
+            o mesmo eixo), a maturação passa a ser em <strong>dias</strong> — a coluna <code>D60/D30</code> só conta a safra
+            cujo <em>último</em> FTD já viveu 59 dias, e o <code>D90/D60</code>, 89 — e <strong>não existem M3+ nem
+            Reativados</strong>: os dois são definidos em meses secos e não têm tradução numa janela de 30 dias.
+            {' '}<strong>Retenção mensal — atenção, o eixo é OUTRO.</strong> Aqui a linha é o <strong>mês de
             referência</strong>, não a safra: é a régua do Farol. Na linha de <em>julho/2026</em>, <code>M1/M0</code> mede
             a safra de <strong>junho</strong> (o que ela depositou em julho ÷ o que depositou em junho), <code>M2/M1</code>
             mede a de <strong>maio</strong>, e <code>M3+</code> mede <strong>tudo que tinha mais de 3 meses em julho</strong> —
@@ -8357,9 +8592,13 @@ function TabEscadaMensal({ chFilter, meta, metric, lottuEscada }) {
             do dia 1º vive 30. É a mesma régua do BP e da Lottu — e é por isso que <strong>valores acima de 100% na
             retenção são normais</strong> em mês de crescimento forte (o M0 é uma janela curta).
             {temLottu && (<span>
-              {' '}<strong>Seção “lottu”.</strong> As três últimas colunas são a <strong>mesma régua</strong> (mesmo mês de
-              referência, mesma idade de safra, mesmo toggle de base e de “sem reativados”) medida na <strong>Lottu</strong>,
-              a partir do <code>lottu_escada.json</code> — depósitos pagos do ClickHouse dela, safra = mês do 1º depósito, fuso BR.
+              {' '}<strong>Seção “lottu”.</strong> As últimas colunas são a <strong>mesma régua</strong> medida na
+              <strong> Lottu</strong> — e elas <strong>seguem o toggle de régua</strong>: na mensal são M1/M0, M2/M1 e M3+
+              (mesmo mês de referência, mesma idade de safra, mesmo toggle de base e de “sem reativados”); na corrida são
+              D60/D30 e D90/D60, dos mesmos blocos de 30 dias contados do FTD de cada conta dela. Saem do
+              <code> lottu_escada.json</code> — depósitos pagos do ClickHouse dela, safra = mês do 1º depósito, fuso BR
+              (a grade mensal vem do <code>escada.sql</code>, a corrida do <code>janelas.sql</code>, com o mesmo <code>FINAL</code>,
+              a mesma cascata de canal e a mesma faixa de FTD).
               {' '}<strong>Reconciliado com o Metabase deles</strong> (card 2698): nos meses fechados bate a <strong>0,00%</strong>, célula por célula.
               {' '}⚠️ A régua <em>deles</em> é outra — o card divide sempre pelo <strong>M0 da safra</strong> (M2/M0 fica em 52–59%), e a linha lá é a
               safra, não o mês de referência. Só a coluna <code>M1/M0</code> é a mesma conta nos dois lados.
