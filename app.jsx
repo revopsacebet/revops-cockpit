@@ -8726,7 +8726,7 @@ function TabCampanhas({ meta, lottuCampanhas }) {
         // ⚠️ Backend antigo (deploy não propagado) responde 200 com o payload INTEIRO do cockpit e sem
         // `campBench`. Sem esta guarda a aba mostraria duas tabelas vazias com cara de "não teve campanha".
         if (!j.campBench) throw new Error('o backend em produção ainda não tem o endpoint only=campbench — falta propagar o deploy');
-        setDados({ rows: j.campBench, loading: false, error: null });
+        setDados({ rows: j.campBench, cob: j.campBenchCob || null, loading: false, error: null });
       })
       .catch((e) => { if (vivo) setDados({ rows: null, loading: false, error: String(e.message || e) }); });
     return () => { vivo = false; };
@@ -8757,6 +8757,15 @@ function TabCampanhas({ meta, lottuCampanhas }) {
   }, [apo.rows, lot.rows, diaOk, soMaduras]);
 
   const temLottu = !!(lottuCampanhas && lottuCampanhas.linhas && lottuCampanhas.linhas.length);
+  // Nota do cabeçalho de cada tabela. ⚠️ A COBERTURA DE UTM não sai do mesmo lugar nas duas casas:
+  // o JSON da Lottu TEM a linha '(sem campanha)' (é o maior balde dela), e o payload da Apostou NÃO
+  // (o servidor só manda as campanhas do top) — lá o número vem do `campBenchCob`, calculado sobre
+  // TODOS os FTDs da janela. Sem esse campo a nota diz "não medido", nunca 0%: escrever 0% seria
+  // afirmar cobertura total de utm quando o que houve foi payload sem o dado.
+  const nota_ = (info, semPct) => !info.nCamp ? '' : (info.nCamp + ' campanhas no período · '
+    + (semPct == null ? 'cobertura de utm não medida neste payload' : fmtPct(semPct, 0) + ' dos FTDs sem utm de campanha (fora da lista)'));
+  const apoSemPct = (dados.cob && dados.cob.qtdTotal) ? (dados.cob.qtdSemCamp / dados.cob.qtdTotal) : null;
+  const lotSemPct = lot.total ? (lot.semCamp / lot.total) : null;
   const perLb = (mesIni && mesFim)
     ? (mesIni === mesFim ? monthLabelPt_(mesIni + '-01') : monthLabelPt_(mesIni + '-01') + ' → ' + monthLabelPt_(mesFim + '-01'))
     : 'todas as safras';
@@ -8917,11 +8926,9 @@ function TabCampanhas({ meta, lottuCampanhas }) {
       )}
 
       <div className="support">
-        {tabela('APOSTOU', CB_APO, apo,
-           apo.nCamp ? (apo.nCamp + ' campanhas no período · ' + (apo.total ? fmtPct(apo.semCamp / apo.total, 0) : '—') + ' dos FTDs sem utm de campanha (fora da lista)') : '')}
+        {tabela('APOSTOU', CB_APO, apo, nota_(apo, apoSemPct))}
         {temLottu ? (
-          tabela('LOTTU', CB_LOT, lot,
-            lot.nCamp ? (lot.nCamp + ' campanhas no período · ' + (lot.total ? fmtPct(lot.semCamp / lot.total, 0) : '—') + ' dos FTDs sem utm de campanha (fora da lista)') : '')
+          tabela('LOTTU', CB_LOT, lot, nota_(lot, lotSemPct))
         ) : (
           <div style={{ marginTop: 18, color: 'var(--text-muted)', fontSize: 13 }}>
             lado LOTTU indisponível — o <code>lottu_campanhas.json</code> não carregou. Rodar
