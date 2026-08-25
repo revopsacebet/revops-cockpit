@@ -20,7 +20,7 @@ const { code } = Babel.transform(jsx, { presets: [['react', { runtime: 'classic'
 // aconteceu em 25/08 com a escada da Lottu (mostrou a versão de antes da correção do FINAL).
 // Arquivo ausente → 'na' (a query string sobra inofensiva e o fetch segue igual).
 let bundle = code;
-for (const f of ['benchmark_net.json', 'lottu_escada.json']) {
+for (const f of ['benchmark_net.json', 'lottu_escada.json', 'lottu_campanhas.json']) {
   const ph = '__V_' + f.replace(/.json$/, '').toUpperCase().replace(/[^A-Z0-9]/g, '_') + '__';
   let v = 'na';
   try { v = require('crypto').createHash('md5').update(fs.readFileSync(path.join(DIR, f))).digest('hex').slice(0, 10); } catch {}

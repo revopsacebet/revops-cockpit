@@ -8508,6 +8508,454 @@ function TabEscadaMensal({ chFilter, meta, metric, lottuEscada }) {
 }
 
 function TabEscadaGgr(p) { return <TabEscadaMensal {...p} metric="ggr" />; }
+// ============================================================
+// ABA CAMPANHAS — as maiores campanhas da APOSTOU × as maiores da LOTTU (pedido do Luis, 25/08/2026)
+// ============================================================
+// Duas tabelas com as MESMAS colunas e a MESMA janela de safra: multiplicador por janela de dias
+// (D0/D1/D7/D30) + M0, retorno por janela (Ret D1/D7/D30) e a RETENÇÃO MENSAL de coorte (M1/M0, M2/M1,
+// M3+). Apostou vem do BQ ao vivo (`only=campbench`); Lottu do `lottu_campanhas.json`
+// (tools/lottu-campanhas) — os dois lados saem do MESMO contrato de linha (safra × campanha com
+// janelas + dep[]/jog[] por idade), então este arquivo tem UM renderizador para as duas casas.
+//
+// ⚠️ A RETENÇÃO AQUI É DE COORTE, NÃO A RÉGUA DO FAROL. Na Pirâmide Mensal, M1/M0 é propriedade do MÊS
+// da linha (mede a safra do mês anterior). Aqui a linha é uma CAMPANHA, então só existe a leitura de
+// coorte: das safras DELA, quanto do depósito do mês 0 voltou no mês 1. É a pergunta que a aba responde
+// ("esta campanha retém?") e a única comparável entre campanhas — mas NÃO é o mesmo número do Farol.
+//
+// ⚠️ AS DUAS CASAS NÃO DEFINEM CAMPANHA DO MESMO JEITO, e isso não é ajustável do meu lado:
+// Apostou = `utm_ftd_campaign` (a campanha no momento do FTD) · Lottu = `utm_campaign` do REGISTRO (é o
+// que existe no ClickHouse dela). Para quem registra e deposita na mesma campanha dá no mesmo; para quem
+// volta por outra mídia, não. Está escrito na nota da aba.
+//
+// ⚠️ CANAL VEM DO SLUG, não da atribuição por conta. O mesmo utm_ftd_campaign cai em canais diferentes
+// conforme o jogador (a atribuição é de CONTA), e foi assim que num estudo anterior o `ga-aq-branding`
+// de R$1,22M virou "Social" e desapareceu do Google. O prefixo do slug (fb-/ga-/tk-/kw-) e o prefixo do
+// ID de mídia (120…=Meta · 23/24…=Google · 186/187…=TikTok) são a plataforma de verdade; o canal modal
+// da atribuição fica só como último recurso.
+const CB_APO = '#f97316';   // laranja Apostou (mesma cor do BenchMultChart)
+const CB_LOT = '#60a5fa';   // azul Lottu (idem)
+// Piso de amostra da ESCALA DE COR — o valor continua na tabela, só sai da rampa. Sem isso uma campanha
+// de 30 FTDs com Mult D30 de 40x estica a rampa e pinta todas as outras de branco (a cor passaria a
+// medir tamanho de amostra). Mesmo princípio do ESC_MIN_QTD/PIR_EIXO_MIN_QTD.
+const CB_MIN_QTD = 150;
+
+// Rótulo legível. Slug de campanha é comprido (`fb-aq-mae-ftd-v02---120248459188640441`) → encurta no
+// MEIO, que é onde está o id. Quando o utm é só um ID numérico (a Lottu manda muito assim), usa o
+// campaign_name do de-para que viaja no JSON — senão a linha vira um número sem significado na tela.
+function cbLabel_(camp, nomes) {
+  const t = String(camp || '');
+  if (/^\d{8,}$/.test(t) && nomes && nomes[t] && nomes[t].n) return nomes[t].n;
+  return t.length <= 46 ? t : t.slice(0, 32) + '…' + t.slice(-12);
+}
+function cbCanal_(camp, fallback) {
+  const s = String(camp || '').toLowerCase();
+  if (/^fb-/.test(s)) return 'Meta';
+  if (/^ga-/.test(s)) return 'Google';
+  if (/^(tk|fk)-/.test(s)) return 'TikTok';
+  if (/^kw-/.test(s)) return 'Kwai';
+  const id = (s.match(/\d{8,}/) || [])[0];
+  if (id) {
+    if (/^120/.test(id)) return 'Meta';
+    if (/^2[34]/.test(id)) return 'Google';
+    if (/^18[67]/.test(id)) return 'TikTok';
+  }
+  return fallback || '—';
+}
+// Fim do mês da safra + N dias <= último dia fechado? É o que decide se a janela D1/D7/D30 daquela
+// safra já FECHOU. Ancorado no fim do mês (não no dia do FTD) porque a linha é a safra inteira: a conta
+// que fez FTD no dia 31 é a última a completar 30 dias.
+function cbFimMes_(safra) { return pirFimDoMes_(safra + '-01'); }
+const CB_JANELA_DIAS = { d0: 0, m0: 0, d1: 1, d7: 7, d30: 30 };
+function cbJanelaFechada_(safra, mat, diaOk) {
+  if (!diaOk) return false;
+  return isoAddDays_(cbFimMes_(safra), CB_JANELA_DIAS[mat] || 0) <= diaOk;
+}
+// O mês de IDADE `a` da safra já fechou? (mesma régua do soMaduras da Pirâmide Mensal)
+function cbMesFechado_(safra, a, diaOk) {
+  if (!diaOk) return false;
+  return cbFimMes_(escMesAdd_(safra, a)) <= diaOk;
+}
+const CB_ZERO = { qtd: 0, ftd: 0, d0: 0, cd1: 0, vd1: 0, cw1: 0, vw1: 0, cd30: 0, vd30: 0, cm0: 0, vm0: 0 };
+function cbSoma_(a, l) {
+  Object.keys(CB_ZERO).forEach((k) => { a[k] = (a[k] || 0) + (l[k] || 0); });
+  return a;
+}
+const CB_COLS = [
+  { k: 'qtd', lb: 'Qtd FTD', plain: true, fmt: fmtQty, of: (a) => a.qtd || null,
+    tip: 'FTDs da campanha somados em TODAS as safras do período. É por esta coluna que a lista é rankeada — "maior campanha" = mais gente comprada.' },
+  { k: 'tkt', lb: 'FTD $$', plain: true, fmt: fmtBRL, of: (a) => a.qtd ? a.ftd / a.qtd : null,
+    tip: 'Ticket do 1º depósito: FTD$ ÷ nº de FTDs. Entra aqui porque multiplicador é razão SOBRE o FTD$ — ticket alto derruba o multiplicador sem que a campanha esteja pior.' },
+  { k: 'ftd', lb: 'FTD total', plain: true, fmt: fmtBRL, of: (a) => a.ftd || null,
+    tip: 'Σ do valor do 1º depósito — o denominador de todos os multiplicadores desta linha.' },
+  { k: 'mD0', lb: 'Mult D0', mat: 'd0', fmt: fmtMultiple, of: (a) => a.ftd ? a.d0 / a.ftd : null,
+    tip: 'Depósito do DIA do FTD (inclui o próprio FTD e os top-ups do dia) ÷ FTD$.' },
+  { k: 'mD1', lb: 'Mult D1', mat: 'd1', fmt: fmtMultiple, of: (a) => a.ftd ? (a.d0 + a.vd1) / a.ftd : null,
+    tip: '(D0 + o depositado no dia 1) ÷ FTD$.' },
+  { k: 'mD7', lb: 'Mult D7', mat: 'd7', fmt: fmtMultiple, of: (a) => a.ftd ? (a.d0 + a.vw1) / a.ftd : null,
+    tip: '(D0 + dias 1–7) ÷ FTD$.' },
+  { k: 'mD30', lb: 'Mult D30', mat: 'd30', fmt: fmtMultiple, of: (a) => a.ftd ? (a.d0 + a.vd30) / a.ftd : null,
+    tip: '(D0 + dias 1–30) ÷ FTD$. Janela FIXA de 30 dias — é a coluna comparável entre campanhas, porque não depende do dia do mês em que a safra nasceu.' },
+  { k: 'mM0', lb: 'Mult M0', mat: 'm0', fmt: fmtMultiple, of: (a) => a.ftd ? (a.d0 + a.vm0) / a.ftd : null,
+    tip: 'Depósito do MÊS-CALENDÁRIO do FTD ÷ FTD$ — a definição de "Dep M0/FTD" do Farol e do BP. ⚠️ É janela de tamanho VARIÁVEL: a safra do dia 1º vive 30 dias de M0 e a do dia 28 vive 3. Para comparar campanhas use o Mult D30.' },
+  { k: 'rD1', lb: 'Ret D1', mat: 'd1', ret: true, fmt: (v) => fmtPct(v, 1), of: (a) => a.qtd ? a.cd1 / a.qtd : null,
+    tip: '% dos FTDs que voltou a depositar no dia 1. Jogador ÚNICO, não depositante-dia.' },
+  { k: 'rD7', lb: 'Ret D7', mat: 'd7', ret: true, fmt: (v) => fmtPct(v, 1), of: (a) => a.qtd ? a.cw1 / a.qtd : null,
+    tip: '% dos FTDs que voltou a depositar ao menos 1× nos dias 1–7.' },
+  { k: 'rD30', lb: 'Ret D30', mat: 'd30', ret: true, fmt: (v) => fmtPct(v, 1), of: (a) => a.qtd ? a.cd30 / a.qtd : null,
+    tip: '% dos FTDs que voltou a depositar ao menos 1× nos dias 1–30.' },
+  { k: 'r10', lb: 'M1/M0', mes: 1, ret: true, mens: true, fmt: (v) => fmtPct(v, 1),
+    tip: 'RETENÇÃO MENSAL DE COORTE: o depositado pelas safras DESTA campanha no mês 1 ÷ o que elas depositaram no mês 0. '
+       + '⚠️ Não é a régua do Farol (lá o M1/M0 é propriedade do mês da linha, medindo a safra anterior) — aqui a linha é uma campanha e só a leitura de coorte existe. '
+       + '⚠️ O M0 é janela curta e variável, então esta razão sobe quando a safra nasceu no fim do mês.' },
+  { k: 'r21', lb: 'M2/M1', mes: 2, ret: true, mens: true, fmt: (v) => fmtPct(v, 1),
+    tip: 'Depositado no mês 2 ÷ depositado no mês 1, pelas safras desta campanha. É o primeiro par de meses INTEIROS — o mais limpo dos três.' },
+  { k: 'r3p', lb: 'M3+', mes: 'p', ret: true, mens: true, fmt: (v) => fmtPct(v, 1),
+    tip: 'Pooled: Σ do depositado em todas as idades ≥3 ÷ Σ do que as MESMAS coortes depositaram na idade anterior. Mesma fórmula das linhas por canal do Farol, aplicada às safras da campanha.' },
+];
+// Uma célula. `linhas` = as linhas safra × campanha da campanha (ou de todas, no Total). O corte de
+// maturidade é POR COLUNA: a safra de julho já fechou o M1/M0 mas não o D30, e usar o mesmo corte pra
+// tudo jogaria fora meio período de graça.
+function cbCel_(linhas, col, ctx) {
+  const diaOk = ctx.diaOk, mad = ctx.soMaduras;
+  if (col.mes != null) {
+    let num = 0, den = 0, nUso = 0, aberta = false;
+    linhas.forEach((l) => {
+      const dep = l.dep || [];
+      if (col.mes === 'p') {
+        let n = 0, d = 0, tem = false;
+        for (let a = 3; a < dep.length; a++) {
+          if (!cbMesFechado_(l.safra, a, diaOk)) { if (mad) continue; aberta = true; }
+          n += dep[a] || 0; d += dep[a - 1] || 0; tem = true;
+        }
+        if (tem) { num += n; den += d; nUso++; }
+      } else {
+        const a = col.mes;
+        if (a >= dep.length) return;
+        if (!cbMesFechado_(l.safra, a, diaOk)) { if (mad) return; aberta = true; }
+        num += dep[a] || 0; den += dep[a - 1] || 0; nUso++;
+      }
+    });
+    return { v: den > 0 ? num / den : null, nUso: nUso, n: linhas.length, aberta: aberta, num: num, den: den };
+  }
+  const ag = Object.assign({}, CB_ZERO);
+  let nUso = 0, aberta = false;
+  linhas.forEach((l) => {
+    if (!cbJanelaFechada_(l.safra, col.mat, diaOk)) { if (mad) return; aberta = true; }
+    cbSoma_(ag, l); nUso++;
+  });
+  if (!nUso) return { v: null, nUso: 0, n: linhas.length, aberta: aberta };
+  return { v: col.of(ag), nUso: nUso, n: linhas.length, aberta: aberta, ag: ag };
+}
+// Escala de cor por coluna, calculada sobre AS DUAS CASAS JUNTAS — é o que faz o mesmo tom significar o
+// mesmo número nos dois lados. Rampa robusta p10–p90 (uma campanha fora da curva satura a cor em vez de
+// achatar todas as outras) e só sobre células fechadas de linhas com amostra.
+function cbEscala_(todas, col, ctx) {
+  if (col.plain) return null;
+  const grossas = todas.filter((r) => (r.qtd || 0) >= CB_MIN_QTD);
+  const alvo = grossas.length ? grossas : todas;
+  const vs = [];
+  alvo.forEach((r) => {
+    const c = cbCel_(r.linhas, col, ctx);
+    if (c.v != null && isFinite(c.v) && !c.aberta) vs.push(c.v);
+  });
+  if (vs.length < 3) return null;
+  vs.sort((a, b) => a - b);
+  return { min: escPctl_(vs, 0.10), max: escPctl_(vs, 0.90) };
+}
+// Agrupa as linhas safra × campanha do payload em UMA linha por campanha, rankeia por FTD e corta no
+// top N. `(sem campanha)` sai fora de propósito: é o balde de quem não tem utm (orgânico/app/afiliado
+// sem tag) e não é uma campanha — deixá-lo em 1º lugar seria dizer que a maior campanha da casa é
+// "nenhuma". O peso dele aparece na nota, não na lista.
+function cbRows_(linhas, nomes, topN) {
+  const by = {};
+  let semCamp = 0, total = 0;
+  (linhas || []).forEach((l) => {
+    total += l.qtd || 0;
+    if (!l.camp || l.camp === '(sem campanha)') { semCamp += l.qtd || 0; return; }
+    const o = by[l.camp] || (by[l.camp] = { camp: l.camp, canais: {}, linhas: [], qtd: 0, ftd: 0 });
+    o.linhas.push(l); o.qtd += l.qtd || 0; o.ftd += l.ftd || 0;
+    o.canais[l.canal] = (o.canais[l.canal] || 0) + (l.qtd || 0);
+  });
+  const arr = Object.keys(by).map((k) => by[k]);
+  arr.forEach((o) => {
+    const dom = Object.keys(o.canais).sort((a, b) => o.canais[b] - o.canais[a])[0];
+    o.canal = cbCanal_(o.camp, dom);
+    o.label = cbLabel_(o.camp, nomes);
+  });
+  arr.sort((a, b) => (b.qtd - a.qtd) || (b.ftd - a.ftd));
+  return { rows: arr.slice(0, topN), nCamp: arr.length, semCamp: semCamp, total: total };
+}
+const CB_PERIODOS = [
+  { k: '1', lb: '1 mês', n: 1, tip: 'Só a safra do último mês fechado nos DOIS lados.' },
+  { k: '3', lb: '3 meses', n: 3, tip: 'As 3 últimas safras fechadas. Default: dá amostra sem misturar campanha morta com campanha viva (Meta e TikTok rotacionam criativo a cada 3–4 semanas).' },
+  { k: '6', lb: '6 meses', n: 6, tip: 'As 6 últimas safras fechadas — é onde as colunas M2/M1 e M3+ começam a ter linhas suficientes.' },
+  { k: 'all', lb: 'Tudo', n: 0, tip: 'Todas as safras que os dois lados têm. ⚠️ Mistura safras de idades muito diferentes: bom pra M3+, ruim pra rankear campanha (a lista enche de campanha que já morreu).' },
+];
+function TabCampanhas({ meta, lottuCampanhas }) {
+  const pk = (n) => 'rvops:camp' + n;
+  const [periodo, setPeriodo] = usePersistedState(pk('Periodo'), '3');
+  const [topN, setTopN] = usePersistedState(pk('TopN'), 15);
+  // Default LIGADO: sem isso a safra do mês corrente entra no Mult D30 com meia janela e a campanha
+  // nova aparece pior do que é — o número cairia por CALENDÁRIO, não por performance.
+  const [soMaduras, setSoMaduras] = usePersistedState(pk('Maduras'), true);
+  const [dados, setDados] = React.useState({ rows: null, loading: true, error: null });
+
+  // ---- ÂNCORA DE DATA ÚNICA PROS DOIS LADOS ----
+  // O lado Lottu é um JSON estático e o da Apostou é BQ ao vivo. Se cada um usar o seu próprio último
+  // dia, a Lottu parada faz a coluna dela repetir a medição da semana passada em silêncio enquanto a
+  // nossa anda. Então o corte é o MENOR dos dois: min(último dia fechado da Apostou, idem Lottu).
+  const apoOk = ultimoDiaFechado_(meta && meta.dataMaxDate);
+  const lotOk = (lottuCampanhas && lottuCampanhas.dataMax) ? isoAddDays_(lottuCampanhas.dataMax, -1) : null;
+  const diaOk = (apoOk && lotOk) ? (apoOk < lotOk ? apoOk : lotOk) : (apoOk || lotOk);
+  const mesFim = escUltMesFechado_(diaOk);
+  const perDef = CB_PERIODOS.filter((p) => p.k === periodo)[0] || CB_PERIODOS[1];
+  const mesIni = (mesFim && perDef.n) ? escMesAdd_(mesFim, -(perDef.n - 1)) : null;
+  const from = mesIni ? (mesIni + '-01') : (lottuCampanhas && lottuCampanhas.safraMin ? lottuCampanhas.safraMin + '-01' : '2025-10-01');
+  const to = mesFim ? cbFimMes_(mesFim) : (diaOk || '');
+
+  React.useEffect(() => {
+    if (!ENDPOINT_URL) { setDados({ rows: null, loading: false, error: 'sem endpoint' }); return; }
+    if (!to) return;
+    let vivo = true;
+    setDados((s) => ({ ...s, loading: true, error: null }));
+    fetch(`${ENDPOINT_URL}?${authParam_()}&only=campbench&from=${from}&to=${to}`)
+      .then((r) => r.ok ? r.json() : Promise.reject(new Error('HTTP ' + r.status)))
+      .then((j) => {
+        if (!vivo) return;
+        if (j.error) throw new Error(j.error);
+        // ⚠️ Backend antigo (deploy não propagado) responde 200 com o payload INTEIRO do cockpit e sem
+        // `campBench`. Sem esta guarda a aba mostraria duas tabelas vazias com cara de "não teve campanha".
+        if (!j.campBench) throw new Error('o backend em produção ainda não tem o endpoint only=campbench — falta propagar o deploy');
+        setDados({ rows: j.campBench, loading: false, error: null });
+      })
+      .catch((e) => { if (vivo) setDados({ rows: null, loading: false, error: String(e.message || e) }); });
+    return () => { vivo = false; };
+  }, [from, to]);
+
+  const ctx = { diaOk: diaOk, soMaduras: soMaduras };
+  const mesesOk = React.useMemo(() => {
+    if (!mesIni || !mesFim) return null;
+    const m = {};
+    for (let i = escIdx_(mesIni); i <= escIdx_(mesFim); i++) m[escFromIdx_(i)] = 1;
+    return m;
+  }, [mesIni, mesFim]);
+  // A Apostou já vem recortada pelo from/to do fetch; a Lottu é o JSON inteiro → recorta aqui, com o
+  // MESMO conjunto de meses, senão as duas tabelas falam de períodos diferentes.
+  const lotLinhas = React.useMemo(() => {
+    const src = (lottuCampanhas && Array.isArray(lottuCampanhas.linhas)) ? lottuCampanhas.linhas : [];
+    return mesesOk ? src.filter((l) => mesesOk[l.safra]) : src;
+  }, [lottuCampanhas, mesesOk]);
+
+  const apo = React.useMemo(() => cbRows_(dados.rows, null, topN), [dados.rows, topN]);
+  const lot = React.useMemo(() => cbRows_(lotLinhas, lottuCampanhas && lottuCampanhas.nomes, topN), [lotLinhas, lottuCampanhas, topN]);
+  // Escala compartilhada pelas duas casas (ver cbEscala_).
+  const escalas = React.useMemo(() => {
+    const todas = apo.rows.concat(lot.rows);
+    const e = {};
+    if (todas.length) CB_COLS.forEach((c) => { e[c.k] = cbEscala_(todas, c, ctx); });
+    return e;
+  }, [apo.rows, lot.rows, diaOk, soMaduras]);
+
+  const temLottu = !!(lottuCampanhas && lottuCampanhas.linhas && lottuCampanhas.linhas.length);
+  const perLb = (mesIni && mesFim)
+    ? (mesIni === mesFim ? monthLabelPt_(mesIni + '-01') : monthLabelPt_(mesIni + '-01') + ' → ' + monthLabelPt_(mesFim + '-01'))
+    : 'todas as safras';
+
+  // ⚠️ FUNÇÃO DE RENDER, não componente: sem hooks aqui, e o QA headless (camptest.js) para de
+  // descer a árvore quando o `type` do nó é uma função — como <Tabela/> as duas tabelas ficavam
+  // invisíveis pro teste e ele "passava" olhando uma tela sem tabela nenhuma.
+  function tabela(casa, cor, info, nota) {
+    const rows = info.rows;
+    const todas = [];
+    rows.forEach((r) => { r.linhas.forEach((l) => todas.push(l)); });
+    const totalRow = { camp: '__total__', label: 'Total (top ' + rows.length + ')', canal: '', linhas: todas, qtd: rows.reduce((s, r) => s + r.qtd, 0), ftd: rows.reduce((s, r) => s + r.ftd, 0) };
+    const cel = (r, c) => {
+      const x = cbCel_(r.linhas, c, ctx);
+      const esc = escalas[c.k];
+      const bg = (!c.plain && esc && x.v != null && !x.aberta) ? heatBg_(x.v, esc.min, esc.max) : undefined;
+      const st = { background: bg };
+      if (x.aberta) { st.opacity = 0.55; st.fontStyle = 'italic'; }
+      if (c.ret) st.borderLeft = c.k === 'rD1' || c.k === 'r10' ? '2px solid rgba(250,204,21,0.45)' : undefined;
+      const tt = c.mes != null
+        ? (x.nUso + ' de ' + x.n + ' safra(s) entraram · num R$ ' + Math.round(x.num || 0).toLocaleString('pt-BR') + ' ÷ den R$ ' + Math.round(x.den || 0).toLocaleString('pt-BR'))
+        : (x.nUso + ' de ' + x.n + ' safra(s) entraram nesta coluna' + (x.aberta ? ' · inclui safra com a janela AINDA ABERTA (piso, não resultado)' : ''));
+      return <td key={c.k} style={st} title={tt}>{x.v == null ? '—' : c.fmt(x.v)}</td>;
+    };
+    return (
+      <div style={{ marginTop: 18 }}>
+        <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, marginBottom: 6 }}>
+          <span style={{ fontWeight: 700, color: cor, fontSize: 15, letterSpacing: 0.3 }}>{casa}</span>
+          <span style={{ color: 'var(--text-muted)', fontSize: 12 }}>{nota}</span>
+        </div>
+        <div className="table-scroll tall"><table className="ch-table">
+          <thead><tr>
+            <th style={{ minWidth: 260 }}>Campanha</th><th>Canal</th>
+            {CB_COLS.map((c) => (
+              <th key={c.k} title={c.tip}
+                  style={c.ret ? { background: 'linear-gradient(rgba(250,204,21,0.20),rgba(250,204,21,0.20)), var(--surface-2)' } : undefined}>{c.lb}</th>
+            ))}
+          </tr></thead>
+          <tbody>
+            {rows.length ? rows.map((r, i) => (
+              <tr key={r.camp}>
+                <td className="ch-name" title={r.camp}>{(i + 1) + '. ' + r.label}</td>
+                <td>{r.canal}</td>
+                {CB_COLS.map((c) => cel(r, c))}
+              </tr>
+            )) : (
+              <tr><td colSpan={2 + CB_COLS.length} style={{ color: 'var(--text-muted)' }}>
+                {dados.loading ? 'carregando…' : (dados.error ? 'erro: ' + dados.error : 'nenhuma campanha no período')}
+              </td></tr>
+            )}
+          </tbody>
+          {rows.length ? (
+            <tfoot><tr>
+              <td title="Soma das campanhas listadas acima — NÃO é o total da casa: a cauda e o balde sem utm ficam fora.">{totalRow.label}</td>
+              <td>—</td>
+              {CB_COLS.map((c) => cel(totalRow, c))}
+            </tr></tfoot>
+          ) : null}
+        </table></div>
+      </div>
+    );
+  }
+
+  // Comparação direta dos dois Totais — o "veredito" da aba. Só as 4 colunas em que a régua é a mesma
+  // dos dois lados (ticket, D30, M0 e M1/M0); Ret D1/D7 entram porque também são janela fixa.
+  const h2h = React.useMemo(() => {
+    if (!temLottu || !apo.rows.length || !lot.rows.length) return null;
+    const mk = (info) => {
+      const todas = [];
+      info.rows.forEach((r) => r.linhas.forEach((l) => todas.push(l)));
+      return todas;
+    };
+    const a = mk(apo), l = mk(lot);
+    return ['tkt', 'mD30', 'mM0', 'rD30', 'r10'].map((k) => {
+      const c = CB_COLS.filter((x) => x.k === k)[0];
+      const va = cbCel_(a, c, ctx).v, vl = cbCel_(l, c, ctx).v;
+      return { lb: c.lb, fmt: c.fmt, va: va, vl: vl, raz: (va != null && vl) ? va / vl : null };
+    });
+  }, [apo.rows, lot.rows, diaOk, soMaduras, temLottu]);
+
+  return (
+    <React.Fragment>
+      <div className="tab-header">
+        <div>
+          <h1>Campanhas</h1>
+          <div className="subtitle">
+            As {topN} maiores campanhas de cada casa, mesmas colunas e mesma janela de safra —
+            multiplicador por janela de dias, retorno por janela e retenção mensal de coorte.
+          </div>
+        </div>
+      </div>
+      <div className="support">
+        <div className="support-title">Recorte</div>
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 14, alignItems: 'center', marginBottom: 4 }}>
+          <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+            <span style={{ color: 'var(--text-muted)', fontSize: 12 }}>Safra:</span>
+            {CB_PERIODOS.map((p) => (
+              <button key={p.k} className={'preset-btn ' + (periodo === p.k ? 'active' : '')} title={p.tip}
+                      onClick={() => setPeriodo(p.k)}>{p.lb}</button>
+            ))}
+          </div>
+          <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+            <span style={{ color: 'var(--text-muted)', fontSize: 12 }}>Top:</span>
+            {[10, 15, 20, 30].map((n) => (
+              <button key={n} className={'preset-btn ' + (topN === n ? 'active' : '')} onClick={() => setTopN(n)}>{n}</button>
+            ))}
+          </div>
+          <label style={{ display: 'flex', gap: 6, alignItems: 'center', fontSize: 12, cursor: 'pointer' }}
+                 title="Cada coluna usa só as safras que já FECHARAM o horizonte dela (D30 pede 30 dias depois do fim do mês; M1/M0 pede o mês 1 inteiro). Desligado, as safras abertas entram e a célula aparece em itálico esmaecido — é piso, não resultado.">
+            <input type="checkbox" checked={soMaduras} onChange={(e) => setSoMaduras(e.target.checked)} />
+            só safras maduras (por coluna)
+          </label>
+          <span style={{ color: 'var(--text-muted)', fontSize: 12 }}>
+            safra <strong>{perLb}</strong> · corte de maturação em <strong>{diaOk ? fmtBR_(diaOk) : '—'}</strong>
+          </span>
+        </div>
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 12, fontSize: 12, color: 'var(--text-muted)', marginTop: 6 }}>
+          <span style={{ color: 'var(--accent-yellow)' }}
+                title="Na Pirâmide Mensal, M1/M0 é propriedade do MÊS da linha (régua do Farol: mede a safra do mês anterior). Aqui a linha é uma CAMPANHA, então a única leitura possível é de coorte — das safras dela, quanto do mês 0 voltou no mês 1. Os dois números respondem perguntas diferentes e não têm que bater.">
+            ⚠ a retenção mensal aqui é de <strong>coorte da campanha</strong>, não a régua do Farol da Pirâmide Mensal
+          </span>
+          <span style={{ color: 'var(--negative)' }}
+                title="Apostou = utm_ftd_campaign (campanha no momento do FTD). Lottu = utm_campaign do REGISTRO — é o que o ClickHouse dela tem, não existe utm de FTD lá. Para quem registra e deposita na mesma campanha dá no mesmo; para quem volta por outra mídia, não.">
+            ⚠ campanha da Apostou é a do <strong>FTD</strong>; da Lottu é a do <strong>registro</strong> — a régua não é idêntica
+          </span>
+          <span title="O prefixo do slug (fb-/ga-/tk-/kw-) e o prefixo do ID de mídia (120…=Meta, 23/24…=Google, 186/187…=TikTok) são a plataforma de verdade. O canal da atribuição é de CONTA e o mesmo utm cai em canais diferentes conforme o jogador — usá-lo faria campanha inteira mudar de canal.">
+            canal vem do <strong>slug</strong> da campanha (atribuição por conta só como fallback)
+          </span>
+          {temLottu && lottuCampanhas.dataMax && (
+            <span title="Data do último depósito que entrou no lottu_campanhas.json. O arquivo é estático (tools/lottu-campanhas/build.js): se ficar atrás do dado da Apostou, a âncora de maturação desce pra data DELE — as duas casas sempre no mesmo corte.">
+              lottu: dado até <strong>{fmtBR_(lottuCampanhas.dataMax)}</strong>
+            </span>
+          )}
+        </div>
+      </div>
+
+      {h2h && (
+        <div className="support">
+          <div className="support-title">Head-to-head — os dois Totais top {topN}</div>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 18 }}>
+            {h2h.map((m) => (
+              <div key={m.lb} style={{ minWidth: 150 }}>
+                <div style={{ fontSize: 11, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: 0.5 }}>{m.lb}</div>
+                <div style={{ fontSize: 18, fontWeight: 700, color: CB_APO }}>{m.va == null ? '—' : m.fmt(m.va)}</div>
+                <div style={{ fontSize: 14, color: CB_LOT }}>{m.vl == null ? '—' : m.fmt(m.vl)}</div>
+                <div style={{ fontSize: 11, color: 'var(--text-muted)' }}
+                     title="Apostou ÷ Lottu no mesmo período e no mesmo corte de maturação. Acima de 1,00x a Apostou está na frente nesta coluna.">
+                  {m.raz == null ? '—' : (m.raz.toFixed(2).replace('.', ',') + 'x')}
+                </div>
+              </div>
+            ))}
+          </div>
+          <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 8 }}>
+            Laranja = Apostou · azul = Lottu · a 3ª linha é a razão Apostou ÷ Lottu. São os Totais das
+            campanhas LISTADAS (top {topN} de cada casa), não o total das casas.
+          </div>
+        </div>
+      )}
+
+      <div className="support">
+        {tabela('APOSTOU', CB_APO, apo,
+           apo.nCamp ? (apo.nCamp + ' campanhas no período · ' + (apo.total ? fmtPct(apo.semCamp / apo.total, 0) : '—') + ' dos FTDs sem utm de campanha (fora da lista)') : '')}
+        {temLottu ? (
+          tabela('LOTTU', CB_LOT, lot,
+            lot.nCamp ? (lot.nCamp + ' campanhas no período · ' + (lot.total ? fmtPct(lot.semCamp / lot.total, 0) : '—') + ' dos FTDs sem utm de campanha (fora da lista)') : '')
+        ) : (
+          <div style={{ marginTop: 18, color: 'var(--text-muted)', fontSize: 13 }}>
+            lado LOTTU indisponível — o <code>lottu_campanhas.json</code> não carregou. Rodar
+            <code> tools/lottu-campanhas/build.js</code> e publicar o arquivo ao lado do index.html.
+          </div>
+        )}
+      </div>
+
+      <div className="support">
+        <div className="support-title">Como ler esta tabela</div>
+        <ul style={{ fontSize: 12.5, color: 'var(--text-secondary)', lineHeight: 1.7, marginLeft: 16 }}>
+          <li><strong>"Maior campanha" = mais FTD</strong>, não mais verba. A aba não traz investimento: CPA
+            e ROAS por campanha vivem na aba <em>Investimento por Campanha</em>, que junta spend à coorte.
+            Aqui a pergunta é o que o FTD comprado devolve em depósito.</li>
+          <li><strong>Multiplicador ÷ FTD$</strong> em todas as colunas de Mult. Campanha de ticket alto
+            começa com o denominador grande e aparece com multiplicador menor mesmo depositando mais por
+            cabeça — leia a coluna <em>FTD $$</em> junto.</li>
+          <li><strong>Mult D30 é a coluna comparável</strong>; Mult M0 é janela de tamanho variável (a
+            safra do dia 28 vive 3 dias de M0). Para rankear campanha, D30.</li>
+          <li><strong>Retenção mensal é de coorte da campanha</strong> (M1/M0 = mês 1 ÷ mês 0 das safras
+            dela). Não é a régua do Farol da Pirâmide Mensal, e os dois números não têm que bater.</li>
+          <li><strong>Cor:</strong> rampa p10–p90 da coluna, calculada com as DUAS casas juntas — o mesmo
+            tom quer dizer o mesmo número nos dois lados. Linha com menos de {CB_MIN_QTD} FTDs fica fora
+            do cálculo da escala (continua com o valor certo, só não estica a rampa).</li>
+          <li><strong>Célula em itálico esmaecido</strong> = safra com a janela ainda aberta entrou no
+            cálculo (só acontece com "só safras maduras" desligado). É piso, não resultado.</li>
+          <li><strong>O Total é das campanhas listadas</strong>, não da casa: a cauda e o balde sem utm
+            ficam fora de propósito. O % de FTD sem utm está no cabeçalho de cada tabela.</li>
+        </ul>
+      </div>
+    </React.Fragment>
+  );
+}
+
 const TABS = [
   { id: 'farol', label: 'Farol', component: TabFarol },
   { id: 'monthlyclose', label: 'Monthly Close', component: TabMonthlyClose },
@@ -8522,6 +8970,9 @@ const TABS = [
   { id: 'ativacao', label: 'Ativação D0', component: TabAtivacao },
   { id: 'cashflow', label: 'Daily Cashflow', component: TabDailyCashflow },
   { id: 'ggr', label: 'GGR', component: TabGgr },
+  // Campanhas fica ao lado da Benchmark Lottu de propósito: as duas são comparação com a concorrente,
+  // e quem abre uma normalmente quer a outra.
+  { id: 'campanhas', label: 'Campanhas', component: TabCampanhas },
   { id: 'sameday', label: 'Benchmark Lottu', component: NetBenchTab },
 ];
 
@@ -9510,6 +9961,7 @@ function App({ user, onLogout, config }) {
     retFaixaLive: false,   // o payload trouxe retencaoFaixa de verdade? false = tela mostrando MOCK
     benchmarkNet: null,        // benchmark_net.json (Apostou + Lottu, faixa_diaria com saque/net)
     lottuEscada: null,         // lottu_escada.json — matriz safra × idade da Lottu (seção LOTTU da Pirâmide Mensal)
+    lottuCampanhas: null,      // lottu_campanhas.json — safra × campanha da Lottu (lado LOTTU da aba Campanhas)
   });
 
   const loadData = React.useCallback((opts = {}) => {
@@ -9574,7 +10026,7 @@ function App({ user, onLogout, config }) {
   // correção do FINAL sem nada na tela dizendo que era dado velho. O build.js troca cada
   // __V_<ARQUIVO>__ pelo hash do arquivo, então todo deploy muda a URL e o dado velho não sobrevive.
   // Ver [[feedback-data-tool-freshness]]: fix não acaba até PROPAGAR.
-  const ASSET_VER = { 'benchmark_net.json': '__V_BENCHMARK_NET__', 'lottu_escada.json': '__V_LOTTU_ESCADA__' };
+  const ASSET_VER = { 'benchmark_net.json': '__V_BENCHMARK_NET__', 'lottu_escada.json': '__V_LOTTU_ESCADA__', 'lottu_campanhas.json': '__V_LOTTU_CAMPANHAS__' };
   const assetUrl_ = (f) => f + '?v=' + (ASSET_VER[f] || 'dev');
   // Benchmark das casas concorrentes — arquivo estático servido ao lado do index.html.
   // 2026-08-05: `benchmark.json` (3 casas, ~828 KB) e `benchmark_sameday.json` (~201 KB) deixaram de ser
@@ -9592,6 +10044,13 @@ function App({ user, onLogout, config }) {
     fetch(assetUrl_('lottu_escada.json'), opt)
       .then(r => r.ok ? r.json() : null)
       .then(j => { if (j && j.coortes) setState(prev => ({ ...prev, lottuEscada: j })); })
+      .catch(() => {});
+    // Campanhas da Lottu (tools/lottu-campanhas/build.js) — MESMO contrato de linha do only=campbench,
+    // então a aba Campanhas renderiza as duas casas com o mesmo código. Ausente = o lado LOTTU avisa
+    // na tela em vez de a aba quebrar.
+    fetch(assetUrl_('lottu_campanhas.json'), opt)
+      .then(r => r.ok ? r.json() : null)
+      .then(j => { if (j && j.linhas) setState(prev => ({ ...prev, lottuCampanhas: j })); })
       .catch(() => {});
   }, []);
 
@@ -9727,6 +10186,7 @@ function App({ user, onLogout, config }) {
     meta: state.meta,
     benchmarkNet: state.benchmarkNet, chFilter, range: appliedRange,
     lottuEscada: state.lottuEscada,   // benchmark da concorrente na Pirâmide Mensal (seção LOTTU)
+    lottuCampanhas: state.lottuCampanhas,   // benchmark da concorrente na aba Campanhas (lado LOTTU)
     isLive: state.isLive,
     monthlyClose: state.monthlyClose,   // aba Monthly Close (house-level, segue scope do backend)
     ftdByRegister: state.ftdByRegister,  // FTDs por canal por data de cadastro — toggle no Farol (Aquisição)
