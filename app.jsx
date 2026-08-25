@@ -7435,14 +7435,22 @@ function escCel_(row, col, ctx) {
   // dia o denominador do M3+ mudar, ele muda nos dois lados no mesmo commit.
   if (col.lottu) {
     const coos = ctx.lottu || [];
-    // Sem JSON → vazia. Fora do eixo de safra → vazia também, e de propósito: a Lottu não se recorta
-    // por canal/faixa/grupo/campanha da Apostou, então repetir o número da casa inteira em cada linha
-    // de canal leria como “a Lottu deste canal”, que não existe. No Total a linha é o pooled dos meses,
-    // que é exatamente o que o lado de lá também mede.
+    // Sem JSON → vazia.
     const porMes = ctx.porSafra && !row._tot;
-    if (!coos.length || (!porMes && !row._tot)) return { vazia: true, v: null, n: 0, nUso: 0, aberta: false, semEixo: !!coos.length };
+    if (!coos.length) return { vazia: true, v: null, n: 0, nUso: 0, aberta: false };
+    let usar = coos;
+    if (!porMes && !row._tot) {
+      // Eixo de dimensão. CANAL e FAIXA existem dos dois lados (a Lottu tem a atribuição dela e o valor
+      // do 1º depósito), e os rótulos são os mesmos — então a linha recorta a Lottu de verdade.
+      // GRUPO DE RISCO e CAMPANHA não têm equivalente lá: repetir a casa inteira em cada linha leria
+      // como “a Lottu deste grupo”, que não existe → vazia com o motivo no tooltip.
+      const campo = (ctx.eixo === 'canal') ? 'canal' : (ctx.eixo === 'faixa') ? 'faixa' : null;
+      if (!campo || !coos[0][campo]) return { vazia: true, v: null, n: 0, nUso: 0, aberta: false, semEixo: true };
+      usar = coos.filter((c) => c[campo] === row.key);
+      if (!usar.length) return { vazia: true, v: null, n: 0, nUso: 0, aberta: false, semLinha: true };
+    }
     const meses = porMes ? [row.key] : ctx.meses;
-    const r = escRet_(coos, col, meses, ctx.ultFech, ctx.soMaduras, ctx.baseRet, ctx.semReat);
+    const r = escRet_(usar, col, meses, ctx.ultFech, ctx.soMaduras, ctx.baseRet, ctx.semReat);
     if (!r) return { vazia: true, v: null, n: 0, nUso: 0, aberta: false };
     return { vazia: false, v: (r.den > 0) ? r.num / r.den : null, n: meses.length, nUso: meses.length,
              aberta: r.aberta, num: r.num, den: r.den, reat: r.reat, numBruto: r.numBruto };
@@ -7873,7 +7881,21 @@ function TabEscadaMensal({ chFilter, meta, metric, lottuEscada }) {
   const mixAberto = !!(mesRef && ultFech && mesRef > ultFech);
 
   // Coortes da Lottu (lottu_escada.json). No modo GGR só entram na base JOGADORES — ver escCols_.
-  const lottuCoo = (lottuEscada && Array.isArray(lottuEscada.coortes)) ? lottuEscada.coortes : null;
+  // ⚠️ Seguem o MESMO slicer de canal e o MESMO filtro de faixa da Apostou: os rótulos do JSON são os
+  // do normalizeChannel_ e da FAIXA_LIST, então o mesmo predicado recorta os dois lados. Sem isso a
+  // tabela compararia “Meta nosso × casa inteira dela” sem dizer.
+  const lottuCoo = React.useMemo(() => {
+    const src = (lottuEscada && Array.isArray(lottuEscada.coortes)) ? lottuEscada.coortes : null;
+    if (!src || !src.length) return null;
+    // JSON antigo (sem as colunas de quebra) → devolve inteiro em vez de filtrar tudo pra zero.
+    if (!src[0].canal) return src;
+    const sel = chList_(chFilter);
+    let arr = src;
+    if (sel.length) arr = arr.filter((c) => sel.indexOf(c.canal) >= 0);
+    else if (chFilter && chFilter.scope === 'growth') arr = arr.filter((c) => isGrowthCh_(c.canal));
+    if (faixaSel.length) arr = arr.filter((c) => faixaSel.indexOf(c.faixa) >= 0);
+    return arr;
+  }, [lottuEscada, chFilter, faixaSel]);
   const temLottu = !!(lottuCoo && lottuCoo.length) && (met === 'dep' || baseRet === 'jog');
   const cols = escCols_(met, temLottu);
   const sepCls = pirSepCls_(cols);
@@ -7900,7 +7922,7 @@ function TabEscadaMensal({ chFilter, meta, metric, lottuEscada }) {
   const temReat = React.useMemo(() => coortes.some((c) => Array.isArray(c.reat)), [coortes]);
   const semReatOn = !!(semReat && temReat);
   const ctx = { coortes: coortes, meses: mesesRef, ultFech: ultFech, soMaduras: soMaduras, baseRet: baseRet, porSafra: porSafra, semReat: semReatOn,
-                lottu: temLottu ? lottuCoo : null };
+                lottu: temLottu ? lottuCoo : null, eixo: eixo };
   const escalas = {};
   cols.forEach((c) => { if (!c.plain && !c.semCor && !c.corDe) escalas[c.key] = escEscala_(linhas, c, ctx); });
   // ⚠️ 2ª passada: as colunas da Lottu PEGAM EMPRESTADA a rampa da coluna equivalente da Apostou
@@ -7939,7 +7961,9 @@ function TabEscadaMensal({ chFilter, meta, metric, lottuEscada }) {
         <td key={c.key} className={sep || undefined}>
           <span className="pir-v pir-excl" title={c.lottu
             ? (cel.semEixo
-              ? 'A Lottu não se recorta por canal, faixa, grupo ou campanha da Apostou — só existe casa inteira. Volte ao eixo “safra (mês)” para ver a comparação mês a mês; a linha Total ao pé da tabela também traz o pooled.'
+              ? 'Este eixo não existe do lado da Lottu: grupo de risco e campanha são recortes só nossos. Canal e faixa de FTD, sim — ela tem a atribuição dela e o valor do 1º depósito.'
+              : cel.semLinha
+              ? 'A Lottu não tem essa linha: nenhuma coorte dela caiu neste canal/faixa (ex.: um canal que só nós temos).'
               : 'Sem dado da Lottu para este mês (o histórico dela começa em ago/2025).')
             : (c.blk === 'ret')
             ? (porSafra
@@ -8232,10 +8256,16 @@ function TabEscadaMensal({ chFilter, meta, metric, lottuEscada }) {
               † “jogadores” é razão de CONTAGEM de depositantes, não transição por jogador
             </span>
           )}
-          {temLottu && (chList_(chFilter).length > 0 || faixaSel.length > 0 || !!camp || grupoActive) && (
+          {temLottu && (!!camp || grupoActive) && (
             <span style={{ color: 'var(--accent-yellow)' }}
-                  title="O lottu_escada.json é a casa inteira da concorrente — não existe atribuição de canal/faixa/campanha nossa dentro do ClickHouse dela. Com um recorte ligado, as três colunas da direita continuam medindo a Lottu toda, então a comparação passa a ser 'um pedaço nosso × a casa inteira dela'. Para comparar como igual, tire o recorte.">
-              ⚠ as colunas <strong>lottu</strong> são sempre a casa inteira — o recorte atual vale só do nosso lado
+                  title="Canal e faixa recortam os dois lados (a Lottu tem atribuição própria e o valor do 1º depósito). Grupo de risco e campanha, não: são recortes só nossos. Com um deles ligado, as três colunas da direita continuam medindo a Lottu inteira do canal/faixa selecionados — a comparação vira 'um pedaço nosso × um pedaço maior dela'.">
+              ⚠ grupo e campanha não existem do lado da <strong>lottu</strong> — essas colunas ignoram esses dois recortes
+            </span>
+          )}
+          {temLottu && chList_(chFilter).length > 0 && (
+            <span style={{ color: 'var(--text-muted)' }}
+                  title="A atribuição da Lottu sai da vw_usuarios_registro: conta de mídia (afiliado) primeiro, utm depois — a mesma cascata que usamos aqui, com o de-para dos 17 afiliados dela medido pela assinatura de utm. Meta, Google, TikTok e Kwai casam bem. O balde ORGÂNICO dela é bem maior que o nosso (≈34% dos FTDs de 2026 não têm afiliado, utm nem ngx), então comparar orgânico com orgânico não vale — parte daquilo é mídia sem tag.">
+              ⓘ canal da Lottu = cascata afiliado→utm dela · o balde <em>Orgânico</em> dela é maior que o nosso
             </span>
           )}
             </div>
@@ -8325,6 +8355,12 @@ function TabEscadaMensal({ chFilter, meta, metric, lottuEscada }) {
               referência, mesma idade de safra, mesmo toggle de base e de “sem reativados”) medida na <strong>Lottu</strong>,
               a partir do <code>lottu_escada.json</code> — depósitos pagos do ClickHouse dela, safra = mês do 1º depósito, fuso BR.
               {lottuEscada && lottuEscada.dataMax ? <span> Dado da Lottu até <strong>{fmtBR_(lottuEscada.dataMax)}</strong>.</span> : null}
+              {' '}<strong>Elas seguem o slicer de canal e o filtro de faixa</strong>: o canal da Lottu sai da cascata
+              afiliado→utm dela (de-para dos 17 afiliados medido pela assinatura de utm; <code>PMAX_CASSINO</code> → Google,
+              <code>trafegodiretokwai</code> → Kwai) e a faixa, do valor do 1º depósito — mesmos rótulos dos dois lados.
+              {' '}⚠️ <strong>Orgânico não compara</strong>: ≈34% dos FTDs de 2026 da Lottu não têm afiliado, utm nem ngx e caem
+              nesse balde, contra ~15% do nosso — parte daquilo é mídia sem tag. Meta×Meta, Google×Google e TikTok×TikTok, sim.
+              {' '}<strong>Grupo de risco e campanha</strong> não existem do lado dela: nesses eixos as colunas ficam vazias.
               {' '}A cor delas usa a <strong>rampa da coluna equivalente da Apostou</strong>, então o mesmo tom quer dizer o
               mesmo número dos dois lados. ⚠️ São sempre a <strong>casa inteira</strong> da Lottu: ela não se recorta pelos
               nossos filtros de canal/faixa/campanha/grupo, e por isso ficam vazias fora do eixo de safra.
