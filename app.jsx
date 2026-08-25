@@ -7566,6 +7566,11 @@ function TabEscadaMensal({ chFilter, meta, metric }) {
   // em vários meses e o número deixa de significar retenção.
   const [semReat, setSemReat] = usePersistedState(pk('SemReat'), true);
   const [faixaSel, setFaixaSel] = React.useState([]);
+  // FILTRO por grupo de risco (pedido do Luis, 24/08) — irmão do de faixa, com um custo a mais: a faixa
+  // já vem no payload base e o grupo NÃO, então ligar o filtro obriga a aba a trocar de fonte pro payload
+  // `&byGrupo=1` (o mesmo do eixo). [] = todos. NÃO é persistido, pela mesma razão da campanha: filtro
+  // guardado faria a aba abrir mostrando uma fatia da base com cara de total.
+  const [grupoSel, setGrupoSel] = React.useState([]);
   const [mesMix, setMesMix] = React.useState(null);
 
   const [dados, setDados] = React.useState({ rows: null, loading: true, error: null });
@@ -7623,7 +7628,7 @@ function TabEscadaMensal({ chFilter, meta, metric }) {
   // ⚠️ DEGRADA SOZINHO com backend velho: sem entender `&camp=`, o v82 devolve o grão inteiro
   // campanha×grupo — pesado, mas o `.filter(campanha === camp)` da fonte entrega a mesma tabela.
   React.useEffect(() => {
-    if (eixo !== 'grupo' || !camp || !ENDPOINT_URL) return;
+    if (!(eixo === 'grupo' || grupoSel.length) || !camp || !ENDPOINT_URL) return;
     const st = dadosCpGr[camp];
     if (st && (st.rows || st.loading)) return;
     let vivo = true;
@@ -7638,11 +7643,11 @@ function TabEscadaMensal({ chFilter, meta, metric }) {
       })
       .catch((e) => { if (vivo) setDadosCpGr((s) => ({ ...s, [camp]: { rows: null, loading: false, error: String(e.message || e) } })); });
     return () => { vivo = false; };
-  }, [eixo, camp]);
+  }, [eixo, camp, grupoSel.length]);
   React.useEffect(() => {
     // ⚠️ `|| camp`: com campanha selecionada quem manda é o payload cruzado acima — buscar o de grupo
     // da casa aqui seria uma query de BigQuery pra um dado que a tela não vai usar. Limpa a campanha e vem.
-    if (eixo !== 'grupo' || camp || !ENDPOINT_URL || dadosGr.rows || dadosGr.loading) return;
+    if (!(eixo === 'grupo' || grupoSel.length) || camp || !ENDPOINT_URL || dadosGr.rows || dadosGr.loading) return;
     let vivo = true;
     setDadosGr({ rows: null, loading: true, error: null });
     fetch(`${ENDPOINT_URL}?${authParam_()}&only=escada${qMet}&byGrupo=1`)
@@ -7655,7 +7660,7 @@ function TabEscadaMensal({ chFilter, meta, metric }) {
       })
       .catch((e) => { if (vivo) setDadosGr({ rows: null, loading: false, error: String(e.message || e) }); });
     return () => { vivo = false; };
-  }, [eixo, camp]);
+  }, [eixo, camp, grupoSel.length]);
 
   const dataMax = meta && meta.dataMaxDate;
   const diaOk = ultimoDiaFechado_(dataMax);
@@ -7668,22 +7673,38 @@ function TabEscadaMensal({ chFilter, meta, metric }) {
   // reconciliam (mesmos 211.489 FTDs / R$122,58M), então trocar a fonte não move número nenhum; o que
   // não pode é misturar as duas listas, que dobraria cada coorte.
   const porGrupo = eixo === 'grupo';
+  // ⚠️ O filtro de grupo tem o MESMO efeito do eixo sobre a escolha de fonte: sem a coluna `grupo` na
+  // linha não há o que filtrar, e filtrar contra undefined descartaria tudo (foi o bug que zerou a tabela
+  // quando campanha e grupo se cruzaram em 22/08). Daí `usaGrupo`, que manda em fonte, pendência e mix.
+  const grupoActive = grupoSel.length > 0;
+  const usaGrupo = porGrupo || grupoActive;
+  const selGr = (g) => !grupoActive || grupoSel.includes(g == null ? 'sem grupo' : String(g));
+  // Opções do seletor: os grupos REAIS do payload quando ele já chegou, senão a lista default. Assim o
+  // dropdown existe (e é clicável) ANTES do primeiro fetch — é o clique nele que dispara a busca.
+  const grupoOptions = React.useMemo(() => {
+    const rs = dadosGr.rows;
+    if (!rs || !rs.length) return GRUPO_LIST;
+    const vis = {};
+    rs.forEach((c) => { vis[c.grupo == null ? 'sem grupo' : String(c.grupo)] = 1; });
+    const ks = Object.keys(vis);
+    return GRUPO_LIST.filter((g) => vis[g]).concat(ks.filter((g) => GRUPO_LIST.indexOf(g) < 0));
+  }, [dadosGr.rows]);
   // Estado do payload cruzado da campanha selecionada (só existe quando os dois filtros estão ativos).
   const cgSt = (camp && dadosCpGr[camp]) || null;
   // ⚠️ A pendência de grupo agora tem DUAS fontes possíveis: com campanha, quem tem que chegar é o
   // payload cruzado; sem campanha, o de grupo da casa. Antes isso olhava só o segundo, então com
   // campanha selecionada a tabela renderizava (do payload SEM grupo) e nada avisava — o número
   // aparecia certo na coluna errada.
-  const grPend = porGrupo && (camp ? !(cgSt && cgSt.rows && cgSt.rows.length) : !(dadosGr.rows && dadosGr.rows.length));
+  const grPend = usaGrupo && (camp ? !(cgSt && cgSt.rows && cgSt.rows.length) : !(dadosGr.rows && dadosGr.rows.length));
   // ⚠️ A fonte só troca pro payload de campanha quando UMA campanha está selecionada. Sem seleção
   // fica o base — porque o de campanha é recortado no top-20/safra e o Total dele NÃO é o da casa.
   const campOn = !!(camp && (dadosCp.rows && dadosCp.rows.length || (cgSt && cgSt.rows && cgSt.rows.length)));
   // ⚠️ ORDEM IMPORTA: campanha+grupo vem do payload cruzado, campanha sozinha do de campanha, grupo
   // sozinho do de grupo. O `.filter(campanha === camp)` fica nos dois casos de campanha de propósito —
   // é ele que faz a coisa funcionar mesmo se o backend ignorar o `&camp=` e devolver tudo.
-  const fonteBruta = (campOn && porGrupo) ? ((cgSt && cgSt.rows) || []).filter((c) => c.campanha === camp)
+  const fonteBruta = (campOn && usaGrupo) ? ((cgSt && cgSt.rows) || []).filter((c) => c.campanha === camp)
               : campOn ? dadosCp.rows.filter((c) => c.campanha === camp)
-              : porGrupo ? (dadosGr.rows || []) : (dados.rows || []);
+              : usaGrupo ? (dadosGr.rows || []) : (dados.rows || []);
   // ⚠️⚠️ NO MODO GGR SÓ ENTRA COORTE COM INVESTIMENTO RASTREADO, e isso NÃO é cosmético: sem o filtro
   // o numerador soma o GGR de coorte orgânica (que não tem verba) e o denominador soma só a verba que
   // existe. Medido antes do filtro: o Total da coluna ROAS M3 dava 12,42x, com a safra de out/25
@@ -7694,19 +7715,25 @@ function TabEscadaMensal({ chFilter, meta, metric }) {
   // Consequência aceita e escrita na tela: esta aba fala SÓ de mídia paga rastreada (≈ mar/2026 pra
   // frente). Orgânico, afiliados e safras antigas não aparecem — não há ROAS sem investimento.
   const fonte = (met === 'ggr') ? fonteBruta.filter((c) => (c.inv || 0) > 0) : fonteBruta;
+  const grKey = JSON.stringify(grupoSel);
   const coortes = React.useMemo(
-    () => fonte.filter((c) => selCh(c.canal) && selFx(c.faixa)),
-    [fonte, chKey, fxKey]);
+    () => fonte.filter((c) => selCh(c.canal) && selFx(c.faixa) && selGr(c.grupo)),
+    [fonte, chKey, fxKey, grKey]);
   // ⚠️ O BLOCO DE MIX USA SEMPRE O PAYLOAD BASE, nunca a fonte ativa. Ele responde "quanto % do
   // depósito do mês veio de cada safra" — se seguisse o filtro de campanha, os 100% passariam a ser
   // 100% DAQUELA CAMPANHA com cara de 100% da casa. (Com o payload de grupo daria no mesmo, porque
   // ele reconcilia; com o de campanha NÃO, que é recortado no top-20 por safra.)
   // ⚠️ No modo GGR o bloco de mix segue o MESMO universo pago da tabela — senão ele responderia
   // "de onde veio o GGR da casa" embaixo de uma tabela que só fala de mídia paga.
-  const fonteCasa = (met === 'ggr') ? (dados.rows || []).filter((c) => (c.inv || 0) > 0) : (dados.rows || []);
+  // ⚠️ Com FILTRO de grupo o mix TAMBÉM troca de fonte — diferente do filtro de campanha, que deixa o
+  // mix na casa de propósito. O motivo é que os dois payloads RECONCILIAM (mesmos FTDs e R$ no total),
+  // então "de onde veio o depósito" continua fechando 100% dentro do grupo escolhido; o de campanha é
+  // recortado no top-N por safra e não fecharia. Campanha selecionada continua mandando o mix pra casa.
+  const casaBruta = (grupoActive && !camp) ? (dadosGr.rows || []) : (dados.rows || []);
+  const fonteCasa = (met === 'ggr') ? casaBruta.filter((c) => (c.inv || 0) > 0) : casaBruta;
   const coortesCasa = React.useMemo(
-    () => fonteCasa.filter((c) => selCh(c.canal) && selFx(c.faixa)),
-    [fonteCasa, chKey, fxKey]);
+    () => fonteCasa.filter((c) => selCh(c.canal) && selFx(c.faixa) && selGr(c.grupo)),
+    [fonteCasa, chKey, fxKey, grKey]);
 
   // ⚠️ DUAS listas de propósito. `coortes` (todas as safras) é o que o bloco de MIX usa — recortar
   // safra velha lá quebraria o 100% do mês. `coortesTab` é a tabela da escada, que aceita o recorte.
@@ -7819,6 +7846,7 @@ function TabEscadaMensal({ chFilter, meta, metric }) {
   const fmtDe = (c) => c.plain ? c.fmt : (c.blk === 'ret' ? ESC_RET_FMT : fmtMultiple);
   const chLbl = chLabel_(chFilter);
   const faixaLbl = faixaSel.length === 0 ? 'todas as faixas' : (faixaSel.length <= 2 ? faixaSel.map(fxLabel_).join(' + ') : faixaSel.length + ' faixas');
+  const grupoLbl = !grupoActive ? '' : (grupoSel.length <= 2 ? grupoSel.map(grupoLabel_).join(' + ') : grupoSel.length + ' grupos');
 
   const celula = (l, c, sep) => {
     if (c.plain) {
@@ -7943,6 +7971,11 @@ function TabEscadaMensal({ chFilter, meta, metric }) {
         </div>
         <label style={{ fontSize: '11px', color: 'var(--text-muted)', marginLeft: '10px' }}>Faixa FTD</label>
         <ChannelMultiSelect options={FAIXA_LIST} selected={faixaSel} onChange={setFaixaSel} labelOf={fxLabel_} allLabel="Todas" countNoun="faixas" />
+        <label style={{ fontSize: '11px', color: 'var(--text-muted)', marginLeft: '10px' }}
+               title={'Recorta a tabela INTEIRA num grupo de risco (o eixo continua sendo o que estiver escolhido em "Ver por"). '
+                    + 'Ligar o filtro troca a fonte da aba pelo payload com quebra de grupo — a primeira vez consulta o BigQuery e demora alguns segundos. '
+                    + '⚠️ grupo é SNAPSHOT DE HOJE aplicado retroativamente à safra, não o grupo que o jogador tinha quando fez o FTD.'}>Grupo de risco</label>
+        <ChannelMultiSelect options={grupoOptions} selected={grupoSel} onChange={setGrupoSel} labelOf={grupoLabel_} allLabel="Todos" countNoun="grupos" />
         <span style={{ fontSize: '11px', color: 'var(--text-muted)', marginLeft: '10px' }}>Período</span>
         <div className="slicer-presets" style={{ marginLeft: 6 }}>
           {ESC_JANELAS.map((j) => (
@@ -8002,7 +8035,7 @@ function TabEscadaMensal({ chFilter, meta, metric }) {
         <div className="support-title">
           {porSafra ? ('Safra mensal · ' + linhas.length + ' safras') : ('Por ' + eixoDef.col.toLowerCase() + ' · ' + linhas.length + ' linha' + (linhas.length === 1 ? '' : 's'))}
           {mesSel ? ' · ' + monthLabelPt_(mesSel + '-01') : janN ? ' · últimos ' + janN + ' meses' : ''}
-          {' · '}{chLbl} · {faixaLbl}{campOn ? ' · campanha ' + escCampLbl_(camp) : ''} · retenção sobre {baseRet === 'rs' ? 'R$' : 'jogadores'}
+          {' · '}{chLbl} · {faixaLbl}{grupoLbl ? ' · ' + grupoLbl : ''}{campOn ? ' · campanha ' + escCampLbl_(camp) : ''} · retenção sobre {baseRet === 'rs' ? 'R$' : 'jogadores'}
           {soMaduras ? ' · só meses fechados' : ' · ⚠ INCLUINDO o mês corrente (parcial)'}
           {diaOk ? ' · último dia fechado ' + fmtBR_(diaOk) : ''}
         </div>
