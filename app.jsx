@@ -7284,7 +7284,32 @@ const ESC_COLS = [
 // da safra medida) não depende de a métrica ser depósito ou GGR. Concatenar em vez de repetir é o que
 // garante que mexer na régua valha nas duas de uma vez.
 const ESC_COLS_GGR_FULL = ESC_COLS_GGR.concat(ESC_COLS.filter((c) => c.blk === 'ret'));
-function escCols_(metric) { return (metric === 'ggr') ? ESC_COLS_GGR_FULL : ESC_COLS; }
+// ---- LOTTU: a MESMA régua, medida na concorrente (lottu_escada.json) ----
+// Três colunas só — M1/M0, M2/M1, M3+ — porque é o que dá pra comparar honestamente: o resto da
+// tabela (multiplicador, FTD$, reativados) depende de FTD$ e de recortes que não existem do lado de lá.
+// ⚠️ A Lottu é SEMPRE a casa inteira: ela não segue o filtro de canal/faixa/campanha da Apostou (não
+// há atribuição nossa lá dentro). Por isso as colunas só têm valor no eixo de SAFRA e no Total, onde
+// a linha é um MÊS — nos eixos de canal/faixa/grupo a mesma Lottu apareceria repetida em toda linha
+// fingindo ser o recorte daquela linha. Ver escCel_.
+// `corDe` = usa a rampa de cor da coluna equivalente da Apostou, pra que a mesma tonalidade signifique
+// o mesmo número dos dois lados da tabela (rampa própria por coluna faria verde-escuro comparar com
+// verde-escuro em réguas diferentes, que é exatamente a leitura errada).
+const ESC_LOTTU_TIP = 'Mesma régua da seção de retenção ao lado (mês de referência × idade da safra), medida na LOTTU. ';
+const ESC_COLS_LOTTU = [
+  { key: 'l1', lb: 'M1/M0', blk: 'lottu', ref: 1,   lottu: true, corDe: 'r1',
+    tip: ESC_LOTTU_TIP + 'No mês da linha, o depósito das safras Lottu de idade 1 ÷ o que elas depositaram no mês anterior.' },
+  { key: 'l2', lb: 'M2/M1', blk: 'lottu', ref: 2,   lottu: true, corDe: 'r2',
+    tip: ESC_LOTTU_TIP + 'Idade 2 no mês da linha ÷ as mesmas safras no mês anterior.' },
+  { key: 'lp', lb: 'M3+',   blk: 'lottu', ref: 'p', lottu: true, corDe: 'rp',
+    tip: ESC_LOTTU_TIP + 'Tudo que tem 3+ meses no mês da linha ÷ o que esse mesmo pool depositou no mês anterior. Segue o toggle “sem reativados”.' },
+];
+// `temLottu` só entra no modo DEPÓSITO ou na base JOGADORES: no modo GGR o nosso lado da tabela é GGR
+// e o lado da Lottu continuaria sendo depósito — duas grandezas diferentes na mesma linha, que é pior
+// que não ter a coluna. Em base JOGADORES é contagem de depositantes dos dois lados, então vale sempre.
+function escCols_(metric, temLottu) {
+  const base = (metric === 'ggr') ? ESC_COLS_GGR_FULL : ESC_COLS;
+  return temLottu ? base.concat(ESC_COLS_LOTTU) : base;
+}
 // Rótulos que mudam com a métrica. Tudo o que é texto de tela sai daqui, pra não haver uma aba
 // dizendo "depósito" com GGR na célula.
 const ESC_MET = {
@@ -7405,6 +7430,23 @@ function escRet_(coortes, col, mesesRef, ultFech, soMaduras, baseRet, semReat) {
 // `ctx` = { coortes (todas as do recorte de canal/faixa), meses (todos os meses de referência),
 //           ultFech, soMaduras, baseRet, porSafra }.
 function escCel_(row, col, ctx) {
+  // LOTTU: a MESMÍSSIMA escRet_, só que sobre as coortes da concorrente. Reusar a função (em vez de
+  // uma segunda régua) é o que garante que a comparação seja de fato métrica contra métrica: se um
+  // dia o denominador do M3+ mudar, ele muda nos dois lados no mesmo commit.
+  if (col.lottu) {
+    const coos = ctx.lottu || [];
+    // Sem JSON → vazia. Fora do eixo de safra → vazia também, e de propósito: a Lottu não se recorta
+    // por canal/faixa/grupo/campanha da Apostou, então repetir o número da casa inteira em cada linha
+    // de canal leria como “a Lottu deste canal”, que não existe. No Total a linha é o pooled dos meses,
+    // que é exatamente o que o lado de lá também mede.
+    const porMes = ctx.porSafra && !row._tot;
+    if (!coos.length || (!porMes && !row._tot)) return { vazia: true, v: null, n: 0, nUso: 0, aberta: false, semEixo: !!coos.length };
+    const meses = porMes ? [row.key] : ctx.meses;
+    const r = escRet_(coos, col, meses, ctx.ultFech, ctx.soMaduras, ctx.baseRet, ctx.semReat);
+    if (!r) return { vazia: true, v: null, n: 0, nUso: 0, aberta: false };
+    return { vazia: false, v: (r.den > 0) ? r.num / r.den : null, n: meses.length, nUso: meses.length,
+             aberta: r.aberta, num: r.num, den: r.den, reat: r.reat, numBruto: r.numBruto };
+  }
   if (col.blk === 'ret') {
     // Eixo de safra: o mês de referência é o da própria linha, e as safras medidas são TODAS as do
     // recorte. Eixo de canal/faixa: não há "o mês da linha" → pooled sobre todos os meses, mas só
@@ -7556,7 +7598,7 @@ const ESC_SELECT_ST = {
 // (escCols_), o `&metric=` dos fetches e os rótulos (ESC_MET).
 // ⚠️ As chaves de localStorage levam prefixo por métrica: os toggles das duas abas são INDEPENDENTES.
 // Compartilhar faria mexer no eixo de uma reordenar a outra pelas costas.
-function TabEscadaMensal({ chFilter, meta, metric }) {
+function TabEscadaMensal({ chFilter, meta, metric, lottuEscada }) {
   const met = (metric === 'ggr') ? 'ggr' : 'dep';
   const M = ESC_MET[met];
   const pk = (n) => 'rvops:esc' + (met === 'ggr' ? 'G' : '') + n;
@@ -7830,7 +7872,10 @@ function TabEscadaMensal({ chFilter, meta, metric }) {
   const mix = React.useMemo(() => mesRef ? escMix_(coortesCasa, mesRef) : null, [coortesCasa, mesRef]);
   const mixAberto = !!(mesRef && ultFech && mesRef > ultFech);
 
-  const cols = escCols_(met);
+  // Coortes da Lottu (lottu_escada.json). No modo GGR só entram na base JOGADORES — ver escCols_.
+  const lottuCoo = (lottuEscada && Array.isArray(lottuEscada.coortes)) ? lottuEscada.coortes : null;
+  const temLottu = !!(lottuCoo && lottuCoo.length) && (met === 'dep' || baseRet === 'jog');
+  const cols = escCols_(met, temLottu);
   const sepCls = pirSepCls_(cols);
   const eixoDef = ESC_EIXOS.find((e) => e.k === eixo) || ESC_EIXOS[0];
   const porSafra = eixo === 'safra';
@@ -7854,10 +7899,15 @@ function TabEscadaMensal({ chFilter, meta, metric }) {
   // SILÊNCIO mostrando o número cheio sob um rótulo que diz "sem reativados". Detecta e avisa.
   const temReat = React.useMemo(() => coortes.some((c) => Array.isArray(c.reat)), [coortes]);
   const semReatOn = !!(semReat && temReat);
-  const ctx = { coortes: coortes, meses: mesesRef, ultFech: ultFech, soMaduras: soMaduras, baseRet: baseRet, porSafra: porSafra, semReat: semReatOn };
+  const ctx = { coortes: coortes, meses: mesesRef, ultFech: ultFech, soMaduras: soMaduras, baseRet: baseRet, porSafra: porSafra, semReat: semReatOn,
+                lottu: temLottu ? lottuCoo : null };
   const escalas = {};
-  cols.forEach((c) => { if (!c.plain && !c.semCor) escalas[c.key] = escEscala_(linhas, c, ctx); });
-  const fmtDe = (c) => c.plain ? c.fmt : (c.blk === 'ret' ? ESC_RET_FMT : fmtMultiple);
+  cols.forEach((c) => { if (!c.plain && !c.semCor && !c.corDe) escalas[c.key] = escEscala_(linhas, c, ctx); });
+  // ⚠️ 2ª passada: as colunas da Lottu PEGAM EMPRESTADA a rampa da coluna equivalente da Apostou
+  // (`corDe`). Se cada uma calculasse a sua, o verde-escuro de um lado e o do outro estariam em réguas
+  // diferentes e a comparação visual — que é o motivo da seção existir — diria o oposto do número.
+  cols.forEach((c) => { if (c.corDe) escalas[c.key] = escalas[c.corDe] || escEscala_(linhas, c, ctx); });
+  const fmtDe = (c) => c.plain ? c.fmt : ((c.blk === 'ret' || c.blk === 'lottu') ? ESC_RET_FMT : fmtMultiple);
   const chLbl = chLabel_(chFilter);
   const faixaLbl = faixaSel.length === 0 ? 'todas as faixas' : (faixaSel.length <= 2 ? faixaSel.map(fxLabel_).join(' + ') : faixaSel.length + ' faixas');
   const grupoLbl = !grupoActive ? '' : (grupoSel.length <= 2 ? grupoSel.map(grupoLabel_).join(' + ') : grupoSel.length + ' grupos');
@@ -7887,7 +7937,11 @@ function TabEscadaMensal({ chFilter, meta, metric }) {
     if (cel.vazia) {
       return (
         <td key={c.key} className={sep || undefined}>
-          <span className="pir-v pir-excl" title={(c.blk === 'ret')
+          <span className="pir-v pir-excl" title={c.lottu
+            ? (cel.semEixo
+              ? 'A Lottu não se recorta por canal, faixa, grupo ou campanha da Apostou — só existe casa inteira. Volte ao eixo “safra (mês)” para ver a comparação mês a mês; a linha Total ao pé da tabela também traz o pooled.'
+              : 'Sem dado da Lottu para este mês (o histórico dela começa em ago/2025).')
+            : (c.blk === 'ret')
             ? (porSafra
               ? 'Neste mês não existe safra da idade desta coluna (ou o mês ainda não fechou). No começo da série é o esperado: em dez/2023 não havia safra de idade 1.'
               : 'Nenhum mês de referência fechado tem safra da idade desta coluna nesta linha.')
@@ -7905,7 +7959,9 @@ function TabEscadaMensal({ chFilter, meta, metric }) {
       const i = Math.min(5, Math.max(0, Math.round(t * 5)));
       st = { background: 'var(' + PIR_RAMP[i] + ')', color: 'var(' + PIR_INK[i] + ')' };
     }
-    const nS = (c.blk === 'ret')
+    // O bloco da Lottu é retenção pra todos os efeitos de leitura — mesmo eixo, mesma unidade.
+    const ehRet = (c.blk === 'ret' || c.blk === 'lottu');
+    const nS = ehRet
       ? ((porSafra && !l._tot) ? ' · mês de referência ' + monthLabelPt_(l.key + '-01') + ' (mede as safras de idade '
                     + (c.ref === 'p' ? '≥3' : c.ref) + ', não a safra desta linha)'
                   : ' · pooled sobre ' + cel.n + ' meses de referência')
@@ -7915,7 +7971,9 @@ function TabEscadaMensal({ chFilter, meta, metric }) {
         + ', que ainda não fechou' + (dataMax ? ' (dado até ' + fmtBR_(dataMax) + ')' : '')
         + '. O valor é um PISO — só pode subir.'
       : 'Fechado') + nS
-      + (c.blk === 'ret' ? ' · ' + ((baseRet === 'jog') ? pirInt_(cel.num) + ' ÷ ' + pirInt_(cel.den) + ' depositantes' : fmtBRL(cel.num) + ' ÷ ' + fmtBRL(cel.den)) : '')
+      + (ehRet ? ' · ' + ((baseRet === 'jog') ? pirInt_(cel.num) + ' ÷ ' + pirInt_(cel.den) + ' depositantes' : fmtBRL(cel.num) + ' ÷ ' + fmtBRL(cel.den)) : '')
+      + (c.lottu ? ' · LOTTU (casa inteira — não segue o filtro de canal/faixa)'
+                   + (lottuEscada && lottuEscada.dataMax ? ' · dado até ' + fmtBR_(lottuEscada.dataMax) : '') : '')
       + (c.reatCol
          ? ' · ' + ((baseRet === 'jog') ? pirInt_(cel.reat) + ' contas voltaram' : fmtBRL(cel.reat) + ' voltou')
            + ' depois de 2+ meses secos'
@@ -8174,6 +8232,12 @@ function TabEscadaMensal({ chFilter, meta, metric }) {
               † “jogadores” é razão de CONTAGEM de depositantes, não transição por jogador
             </span>
           )}
+          {temLottu && (chList_(chFilter).length > 0 || faixaSel.length > 0 || !!camp || grupoActive) && (
+            <span style={{ color: 'var(--accent-yellow)' }}
+                  title="O lottu_escada.json é a casa inteira da concorrente — não existe atribuição de canal/faixa/campanha nossa dentro do ClickHouse dela. Com um recorte ligado, as três colunas da direita continuam medindo a Lottu toda, então a comparação passa a ser 'um pedaço nosso × a casa inteira dela'. Para comparar como igual, tire o recorte.">
+              ⚠ as colunas <strong>lottu</strong> são sempre a casa inteira — o recorte atual vale só do nosso lado
+            </span>
+          )}
             </div>
           </details>
         </div>
@@ -8184,7 +8248,9 @@ function TabEscadaMensal({ chFilter, meta, metric }) {
                 <th>{eixoDef.col}</th>
                 {cols.map((c, i) => (
                   <th key={c.key} className={sepCls[i] || undefined} title={c.tip || undefined}>
-                    {c.lb}{c.blk === 'ret' && baseRet === 'jog' ? <i style={{ opacity: .55, fontWeight: 400 }}> jog</i> : ''}
+                    {c.lb}
+                    {c.lottu ? <i style={{ opacity: .75, fontWeight: 400, color: 'var(--accent-yellow)' }}> lottu</i> : ''}
+                    {(c.blk === 'ret' || c.lottu) && baseRet === 'jog' ? <i style={{ opacity: .55, fontWeight: 400 }}> jog</i> : ''}
                   </th>
                 ))}
               </tr>
@@ -8254,6 +8320,16 @@ function TabEscadaMensal({ chFilter, meta, metric }) {
             {' '}<strong>Idade é mês-calendário</strong>, não janela de 30 dias: a safra do dia 28 vive 3 dias de M0 e a
             do dia 1º vive 30. É a mesma régua do BP e da Lottu — e é por isso que <strong>valores acima de 100% na
             retenção são normais</strong> em mês de crescimento forte (o M0 é uma janela curta).
+            {temLottu && (<span>
+              {' '}<strong>Seção “lottu”.</strong> As três últimas colunas são a <strong>mesma régua</strong> (mesmo mês de
+              referência, mesma idade de safra, mesmo toggle de base e de “sem reativados”) medida na <strong>Lottu</strong>,
+              a partir do <code>lottu_escada.json</code> — depósitos pagos do ClickHouse dela, safra = mês do 1º depósito, fuso BR.
+              {lottuEscada && lottuEscada.dataMax ? <span> Dado da Lottu até <strong>{fmtBR_(lottuEscada.dataMax)}</strong>.</span> : null}
+              {' '}A cor delas usa a <strong>rampa da coluna equivalente da Apostou</strong>, então o mesmo tom quer dizer o
+              mesmo número dos dois lados. ⚠️ São sempre a <strong>casa inteira</strong> da Lottu: ela não se recorta pelos
+              nossos filtros de canal/faixa/campanha/grupo, e por isso ficam vazias fora do eixo de safra.
+              {' '}⚠️ O histórico da Lottu <strong>começa em ago/2025</strong> — meses anteriores ficam vazios do lado dela.
+            </span>)}
             {' '}<strong>“Só meses fechados” vem ligado</strong> e mexe no cálculo, não só na tela: o mês corrente é
             simultaneamente o M0 da safra deste mês e o M1 da safra do mês passado, então desligado a diagonal mais
             nova aparece cortada no dia de hoje e a leitura “a retenção caiu” vira artefato de calendário. Desligado,
@@ -9388,6 +9464,7 @@ function App({ user, onLogout, config }) {
     isLive: false,
     retFaixaLive: false,   // o payload trouxe retencaoFaixa de verdade? false = tela mostrando MOCK
     benchmarkNet: null,        // benchmark_net.json (Apostou + Lottu, faixa_diaria com saque/net)
+    lottuEscada: null,         // lottu_escada.json — matriz safra × idade da Lottu (seção LOTTU da Pirâmide Mensal)
   });
 
   const loadData = React.useCallback((opts = {}) => {
@@ -9457,6 +9534,12 @@ function App({ user, onLogout, config }) {
     fetch('benchmark_net.json', opt)
       .then(r => r.ok ? r.json() : null)
       .then(j => { if (j) setState(prev => ({ ...prev, benchmarkNet: j })); })
+      .catch(() => {});
+    // Escada mensal da Lottu (tools/lottu-escada/build.js). Mesmo contrato de coorte do only=escada,
+    // então a Pirâmide Mensal roda a MESMA escRet_ nos dois lados. Ausente = a seção some, não quebra.
+    fetch('lottu_escada.json', opt)
+      .then(r => r.ok ? r.json() : null)
+      .then(j => { if (j && j.coortes) setState(prev => ({ ...prev, lottuEscada: j })); })
       .catch(() => {});
   }, []);
 
@@ -9591,6 +9674,7 @@ function App({ user, onLogout, config }) {
     componentsByChannel: state.componentsByChannel,   // spend/ftd por canal (tbl_performance_daily) — aba CAC usa p/ Investimento bater com o Farol
     meta: state.meta,
     benchmarkNet: state.benchmarkNet, chFilter, range: appliedRange,
+    lottuEscada: state.lottuEscada,   // benchmark da concorrente na Pirâmide Mensal (seção LOTTU)
     isLive: state.isLive,
     monthlyClose: state.monthlyClose,   // aba Monthly Close (house-level, segue scope do backend)
     ftdByRegister: state.ftdByRegister,  // FTDs por canal por data de cadastro — toggle no Farol (Aquisição)
