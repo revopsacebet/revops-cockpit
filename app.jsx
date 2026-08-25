@@ -94,6 +94,10 @@ const MOCK_M = {
   retM0M1:    { act: 0.2079, bp: 0.75, m1: 0.2388, pctBp: 0.2772, fmt: 'pct', label: 'Retenção M0→M1' },
   retM1M2:    { act: 0.7436, bp: 0.72, m1: 0.3295, pctBp: 1.0328, fmt: 'pct', label: 'Retenção M1→M2' },
   retM3plus:  { act: 0.5401, bp: 0.88, m1: 0.7801, pctBp: 0.6138, fmt: 'pct', label: 'Retenção M3+' },
+  // Retenção por JOGADOR (cabeça, não R$) — sem bp: o plano só declara meta de retenção em valor.
+  retPlayM0M1:   { act: 0.1388, bp: null, m1: null, pctBp: null, fmt: 'pct', label: 'Jogadores M0→M1' },
+  retPlayM1M2:   { act: 0.5482, bp: null, m1: null, pctBp: null, fmt: 'pct', label: 'Jogadores M1→M2' },
+  retPlayM3plus: { act: 0.7280, bp: null, m1: null, pctBp: null, fmt: 'pct', label: 'Jogadores M3+' },
   // DEPÓSITOS
   depTotal:    { act: 10935097.81, bp: 20012903.23, m1: 4780033.68, pctBp: 0.5464, fmt: 'brl', label: 'Depósitos Totais' },
   qtdDep:      { act: 184523, bp: null, m1: 91044, pctBp: null, fmt: 'qty', label: 'Qtd Depósitos' },
@@ -3261,6 +3265,21 @@ function buildFarolGroups_(MM, f, range, useYtd, sparkByKey) {
       dressPlain(MM.retGgrM0M1), dressPlain(MM.retGgrM1M2), dressPlain(MM.retGgrM3plus),
       dressPlain(MM.retTurnM0M1), dressPlain(MM.retTurnM1M2), dressPlain(MM.retTurnM3plus),
     ] },
+    // Retenção por JOGADOR (pedido do Luis, 24/08): a MESMA passagem da seção acima medida em CABEÇA
+    // em vez de R$. Fica logo abaixo porque as duas juntas é que respondem "perdemos gente ou perdemos
+    // ticket?" — em ago/26 o M0→M1 é 35,8% em dinheiro e 13,9% em jogador: um terço do dinheiro volta,
+    // um sétimo das pessoas. SEM BP de propósito: a meta do plano é declarada em valor, não em cabeça,
+    // e pendurar a meta de valor num card de gente seria comparar contra outra coisa.
+    // Backend < v86 não manda retPlay* → os 3 cards somem e a seção inteira também (filtro no fim).
+    { title: 'Retenção por jogador', cards: [
+      dressPlain(MM.retPlayM0M1), dressPlain(MM.retPlayM1M2), dressPlain(MM.retPlayM3plus),
+    ] },
+    // Quanto CADA SAFRA depositou no período (R$ absoluto) — o numerador que está por trás dos %
+    // das duas seções acima. `share` = participação da safra no depósito do período (as 4 fecham 100%).
+    // Mesma fonte/janela dos outros cards por safra (payload.ggrSafra, MTD, segue o filtro de canal).
+    { title: 'Depósito por safra (R$)', cards: [
+      dressPlain(f.depSafra_m0), dressPlain(f.depSafra_m1), dressPlain(f.depSafra_m2), dressPlain(f.depSafra_m3plus),
+    ].filter(c => c && c.act != null) },
     // Margem por safra em DUAS seções (GGR e Hold separados, pedido do Luis) — qualidade de monetização
     // por IDADE DE COORTE, não é retenção; janela MTD. Cada card carrega o `share` (peso da safra no GGR).
     // Só entra card com valor: bucket sem safra no período sai da tela em vez de virar um "—" mudo
@@ -3859,6 +3878,7 @@ async function exportFarolRange_({ from, to, chFilter, escopo, onProgress }) {
       if (p.error) throw new Error(p.error);
       const { dispM, farol } = derivePayloadMetrics_({
         M: p.metrics, componentsByChannel: p.componentsByChannel, retentionChannels: p.retentionChannels, ggrRetentionChannels: p.ggrRetentionChannels, turnRetentionChannels: p.turnRetentionChannels,
+        retentionPlayersChannels: p.retentionPlayersChannels || null,
         depM0Channels: p.depM0Channels, bp: p.bp, ggrSafra: p.ggrSafra, channels: p.channels, ggrChannels: p.ggrChannels,
       }, chFilter, true);
       // GGR e Turnover por SAFRA (idade de coorte) — mesma lógica dos depósitos: soma o bucket ggrSafra
@@ -8444,7 +8464,7 @@ function deriveMockM_(M, filter) {
 }
 
 // Live: deriva os hero cards do canal/scope a partir dos componentes por canal (exato, mesma fonte do backend).
-function deriveLiveM_(M, filter, comp, retCh, depCh, bp, ggrRetCh, turnRetCh) {
+function deriveLiveM_(M, filter, comp, retCh, depCh, bp, ggrRetCh, turnRetCh, playRetCh) {
   const selList = chList_(filter);
   if ((!selList.length && filter.scope !== 'growth') || !comp) return M; // Total da Casa: backend já setou BP
   const inSel = selList.length ? (ch) => selList.includes(ch) : (ch) => isGrowthCh_(ch);
@@ -8467,6 +8487,9 @@ function deriveLiveM_(M, filter, comp, retCh, depCh, bp, ggrRetCh, turnRetCh) {
   const gnd = (n, d) => { if (!grsel.length) return undefined; let N = 0, D = 0; grsel.forEach(c => { if (c.nd) { N += c.nd[n] || 0; D += c.nd[d] || 0; } }); return D > 0 ? N / D : null; };
   const trsel = (turnRetCh || []).filter(c => inSel(c.channel));
   const tnd = (n, d) => { if (!trsel.length) return undefined; let N = 0, D = 0; trsel.forEach(c => { if (c.nd) { N += c.nd[n] || 0; D += c.nd[d] || 0; } }); return D > 0 ? N / D : null; };
+  // Retenção por JOGADOR: mesmo padrão — soma CABEÇAS do numerador e do denominador (nunca média de %).
+  const prsel = (playRetCh || []).filter(c => inSel(c.channel));
+  const pnd = (n, d) => { if (!prsel.length) return undefined; let N = 0, D = 0; prsel.forEach(c => { if (c.nd) { N += c.nd[n] || 0; D += c.nd[d] || 0; } }); return D > 0 ? N / D : null; };
   const dsel = (depCh || []).filter(c => inSel(c.channel));
   const depM0Total = dsel.reduce((a, c) => a + (c.depM0 || 0), 0);
   const depM0Growth = dsel.filter(c => isGrowthCh_(c.channel)).reduce((a, c) => a + (c.depM0 || 0), 0);
@@ -8512,6 +8535,10 @@ function deriveLiveM_(M, filter, comp, retCh, depCh, bp, ggrRetCh, turnRetCh) {
     retM0M1:     mk(M.retM0M1, nd('n1','d1'), null),
     retM1M2:     mk(M.retM1M2, nd('n2','d2'), null),
     retM3plus:   mk(M.retM3plus, nd('n3','d3'), null),
+    // Idem p/ a retenção em cabeças (backend < v86 → prsel vazio → preserva o card como veio).
+    retPlayM0M1:   gmk(M.retPlayM0M1,   pnd('n1','d1')),
+    retPlayM1M2:   gmk(M.retPlayM1M2,   pnd('n2','d2')),
+    retPlayM3plus: gmk(M.retPlayM3plus, pnd('n3','d3')),
     // Backend antigo (sem retGgr*/ggrRetentionChannels): preserva o card como veio — não inventa card vazio.
     retGgrM0M1:   gmk(M.retGgrM0M1,   gnd('n1','d1')),
     retGgrM1M2:   gmk(M.retGgrM1M2,   gnd('n2','d2')),
@@ -8605,9 +8632,12 @@ function buildFarolMetrics_(M, comp, channels, ggrChannels, bp, filter, ggrSafra
   // responde "quanto deste numerador vem desta safra", em vez de misturar duas grandezas no mesmo card.
   const SAFRA_BK = [['m0', 'M0'], ['m1', 'M1'], ['m2', 'M2'], ['m3plus', 'M3+']];
   const bkArr = {}; let ggrAll = 0, ggrAllL = 0, turnAll = 0, turnAllL = 0, fsAll = 0, fsAllL = 0;
+  let depAll = 0, depAllL = 0;
   SAFRA_BK.forEach(([bk]) => {
     const arr = filterChannelList_((ggrSafra && ggrSafra[bk]) || [], filter);
     bkArr[bk] = arr;
+    depAll   += arr.reduce((a, c) => a + (c.dep || 0), 0);
+    depAllL  += arr.reduce((a, c) => a + (c.depM1 || 0), 0);
     ggrAll   += arr.reduce((a, c) => a + (c.ggr || 0), 0);
     ggrAllL  += arr.reduce((a, c) => a + (c.ggrM1 || 0), 0);
     turnAll  += arr.reduce((a, c) => a + (c.turnover || 0), 0);
@@ -8663,6 +8693,12 @@ function buildFarolMetrics_(M, comp, channels, ggrChannels, bp, filter, ggrSafra
     // Share = o MESMO shareF: a participação segue o NUMERADOR, e o numerador dos dois cards é o
     // freespin. Trocar o denominador muda a leitura do card, não de quem veio o incentivo.
     safraMargem['fsTurn_' + bk] = wShare(mk(`FreeSpins/Turnover ${lbl}`, 'pct', (on && hasFs) ? div(fsp, turn) : null, null, (on && hasFs) ? div(fspL, turnL) : null, true), shareF, shareFL, 'freespin');
+    // DEPÓSITO ABSOLUTO da safra (R$) — o numerador cru por trás dos % de retenção. Fica logo abaixo
+    // das duas seções de retenção no Farol: o % diz a passagem, este card diz quanto dinheiro ela move.
+    // Share = composição do DEPÓSITO (o próprio valor do card), então as 4 safras somam 100%.
+    const shareD  = (on && depAll  > 0) ? dep  / depAll  : null;
+    const shareDL = (on && depAllL > 0) ? depL / depAllL : null;
+    safraMargem['depSafra_' + bk] = wShare(mk(`Depósito ${lbl}`, 'brl', on ? dep : null, null, on ? depL : null), shareD, shareDL, 'depósito');
   });
 
   const bpM = (bp && bp.month) || null;
@@ -9209,7 +9245,7 @@ function filterChannelList_(list, chFilter) {
 function derivePayloadMetrics_(src, chFilter, isLive) {
   const s = src || {};
   const displayM = isLive
-    ? deriveLiveM_(s.M, chFilter, s.componentsByChannel, s.retentionChannels, s.depM0Channels, s.bp, s.ggrRetentionChannels, s.turnRetentionChannels)
+    ? deriveLiveM_(s.M, chFilter, s.componentsByChannel, s.retentionChannels, s.depM0Channels, s.bp, s.ggrRetentionChannels, s.turnRetentionChannels, s.retentionPlayersChannels)
     : deriveMockM_(s.M, chFilter);
   const m0 = (s.ggrSafra && s.ggrSafra.m0) ? filterChannelList_(s.ggrSafra.m0, chFilter) : null;
   let dispM = displayM;
@@ -9303,6 +9339,7 @@ function App({ user, onLogout, config }) {
           channels: payload.channels,
           ftdByRegister: payload.ftdByRegister || null,
           retentionChannels: payload.retentionChannels,
+          retentionPlayersChannels: payload.retentionPlayersChannels || null,
           ggrRetentionChannels: payload.ggrRetentionChannels,
           turnRetentionChannels: payload.turnRetentionChannels,
           ggrChannels: payload.ggrChannels,
@@ -9401,6 +9438,7 @@ function App({ user, onLogout, config }) {
   // a MESMA derivação que o export YTD roda mês a mês.
   const { dispM, farol: farolMetrics } = derivePayloadMetrics_({
     M: state.M, componentsByChannel: state.componentsByChannel, retentionChannels: state.retentionChannels, ggrRetentionChannels: state.ggrRetentionChannels, turnRetentionChannels: state.turnRetentionChannels,
+    retentionPlayersChannels: state.retentionPlayersChannels,
     depM0Channels: state.depM0Channels, bp: state.bp, ggrSafra: state.ggrSafra, channels: state.channels, ggrChannels: state.ggrChannels,
   }, chFilter, state.isLive);
 
