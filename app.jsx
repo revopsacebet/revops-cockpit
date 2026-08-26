@@ -1383,14 +1383,17 @@ function weekBinISO_(iso, anchor) {
 // soma um julho fechado com um agosto em curso — é o comportamento de sempre, e é pra isso que a
 // coluna M0 Esp. está lá.
 const AGG_MAT_HZ = ['d0', 'd1', 'd3', 'd4', 'w1', 'w2'];   // chaves do retMultCols_ que TÊM corte
-function aggRetFaixaBench_(retencaoFaixa, chFilter, faixa, mode, gran, gCurve, dataMax, dim, grupoSel, weekAnchor, matRef) {
-  const rows = benchApostouRows_(retencaoFaixa);
+function aggRetFaixaBench_(retencaoFaixa, chFilter, faixa, mode, gran, gCurve, dataMax, dim, grupoSel, weekAnchor, matRef, regua) {
+  // Régua das janelas D: default CALENDÁRIO (truncada no fim do mês do FTD) — decisão do Luis em 26/08/2026.
+  // Passar 'coorte' devolve a janela corrida de antes.
+  const cal = regua !== 'coorte';
+  const rows = benchApostouRows_(retencaoFaixa, cal ? 'cal' : 'coorte');
   const selCh = chSelector_(chFilter);
   const faixaArr = Array.isArray(faixa) ? faixa : (faixa && faixa !== 'all' ? [faixa] : []);   // [] = todas
   const selFx = (fx) => faixaArr.length === 0 || faixaArr.includes(fx);
   const grpArr = Array.isArray(grupoSel) ? grupoSel : [];   // [] = todos os grupos (filtro de grupo de risco)
   const selGr = (g) => grpArr.length === 0 || grpArr.indexOf(g || 'sem grupo') >= 0;
-  const keys = ['qtd','ftd','d0','cd1','vd1','vd3','vd4','cw1','vw1','cw2','vw2','vd30','cm0','vm0','ggrM0','cstd','cttd','cqtd4','_pass'];
+  const keys = ['qtd','ftd','d0','cd1','vd1','vd3','vd4','cw1','vw1','cw2','vw2','vd30','cm0','vm0','ggrM0','cstd','cttd','cqtd4','_pass','_cal','_calFalta'];
   const zero = () => { const o = {}; keys.forEach(k => o[k] = 0); o._esp = 0; o._espFtd = 0; o._espD0 = 0; o._rwMin = null; o._rwMax = null; return o; };
   const weekly = gran === 'week';
   // Chave de agrupamento da tabela: período (dia/semana · default) OU por canal OU por faixa — toggle
@@ -1408,7 +1411,7 @@ function aggRetFaixaBench_(retencaoFaixa, chFilter, faixa, mode, gran, gCurve, d
     // buckets maduros: a MESMA linha entra em vários horizontes (a safra de 01/08 é madura pra D1 e
     // pra W1), e não entra em nenhum daqueles que ainda não fecharam.
     if (matRef) AGG_MAT_HZ.forEach(h => {
-      if (!pirFechada_(String(r.date), h, matRef)) return;
+      if (!pirFechada_(String(r.date), h, matRef, cal)) return;
       keys.forEach(k => { matBy[h][k] += r[k] || 0; });
       matN[h]++;
     });
@@ -1430,7 +1433,7 @@ function aggRetFaixaBench_(retencaoFaixa, chFilter, faixa, mode, gran, gCurve, d
     }
   });
   const fin = (b, label, key) => Object.assign(
-    { date: label, _key: key || null, ggrM0: b.ggrM0, m0PerPlayer: b.qtd ? (b.d0 + b.vm0) / b.qtd : null,
+    { date: label, _key: key || null, ggrM0: b.ggrM0, _cal: b._cal, _calFalta: b._calFalta, m0PerPlayer: b.qtd ? (b.d0 + b.vm0) / b.qtd : null,
       m0Esp: (b._espFtd > 0) ? b._esp / b._espFtd : null, m0EspD0: (b._espD0 > 0) ? b._esp / b._espD0 : null,
       m0EspAmt: (b._espFtd > 0) ? b._esp : null, rwMin: b._rwMin, rwMax: b._rwMax },
     benchMetrics_(b, mode));
@@ -1449,7 +1452,7 @@ function aggRetFaixaBench_(retencaoFaixa, chFilter, faixa, mode, gran, gCurve, d
 // Colunas de multiplicador da Ret. Faixa. base 'ftd' (padrão) = acúmulo (incl. D0) ÷ FTD, começando no D0.
 // base 'd0' (toggle da aba) = acúmulo ÷ DEPÓSITO D0: o D0 é a âncora (=1,00x, omitido), então a 1ª coluna é D1/D0.
 // base 'd1' = acúmulo ÷ NÍVEL D1 (D0 + dep do dia 1): D0 sai, D1 vira a base (=1,00x). mL = label do M0.
-function retMultCols_(base, mL) {
+function retMultColsRaw_(base, mL) {
   const M = mL || 'M0';
   if (base === 'd0') return [
     { key: 'd1', label: 'Mult D1/D0', get: r => r.multD1D0, tip: '(D0 + dia 1) ÷ depósito do D0. O D0/D0 (=1,00x) é omitido por ser constante.' },
@@ -1476,6 +1479,12 @@ function retMultCols_(base, mL) {
     { key: 'w2', label: 'Mult W2/FTD', get: r => r.multW2F, tip: '(D0 + dias 1–14) ÷ FTD.' },
     { key: 'm0', label: `Mult ${M}/FTD`, get: r => r.multM0F, tip: `(D0 + ${M}) ÷ FTD.` },
   ];
+}
+// RÉGUA DE CALENDÁRIO (26/08/2026): as janelas D1/D3/D4/W1/W2 vêm truncadas no fim do mês do FTD (campos
+// `*c` do backend v91), igual ao M0. O rótulo continua D1/W2 porque é a janela NOMINAL; o tooltip diz a régua.
+const RET_CAL_TIP = ' ⚠️ Janela TRUNCADA no fim do mês do FTD (régua de CALENDÁRIO, igual ao M0): a safra de 30/08 tem D14 de um dia, não de 14. Aqui e na Pirâmide de Coorte; o Benchmark Lottu e as Métricas do dia a dia seguem em janela CORRIDA (a Lottu vem do ClickHouse assim).';
+function retMultCols_(base, mL) {
+  return retMultColsRaw_(base, mL).map(c => (c.key === 'd0' || c.key === 'm0') ? c : Object.assign({}, c, { tip: c.tip + RET_CAL_TIP }));
 }
 
 function RetFaixaTable({ data, dateLabel, m0Label, base }) {
@@ -2177,8 +2186,44 @@ function TabRetencaoFaixa({ retencaoFaixa, chFilter, channels, bp, meta }) {
         <div className="ch-note">Mês-calendário <strong>anterior ao período selecionado</strong> no slicer ({monthLabelPt_(pm.from)}), agregado num único registro, no mesmo recorte de canal/faixa/modo. O M0 é sempre mês-calendário (não muda com o toggle Calendário/Coorte).</div>
       </div>
       <div className="support">
-        <div className="support-title">Safra {tableDim === 'periodo' ? 'por ' + (gran === 'week' ? 'Semana' : 'Dia') : 'por ' + (tableDim === 'canal' ? 'Canal' : tableDim === 'faixa' ? 'Faixa' : tableDim === 'campanha' ? 'Campanha' : 'Grupo de risco')} · {chLabel} · {faixaLabelTxt}{sameday ? ' · same-day' : ''}{coSuffix} · mult sobre {baseLbl}{loadingRF ? ' · carregando…' : ''}{errorRF ? ' · erro ao carregar' : ''}</div>
+        {/* Recap dos slicers removido (pedido do Luis, 26/08/2026) — os botoes acima ja dizem o recorte.
+            Fica so o estado de carga/erro, que nao e recap. */}
+        {(loadingRF || errorRF) && (
+          <div className="support-title">
+            {errorRF ? 'erro ao carregar' : 'carregando…'}
+          </div>
+        )}
         <RetFaixaTable data={tableData} dateLabel={tableDim === 'canal' ? 'Canal' : tableDim === 'faixa' ? 'Faixa' : tableDim === 'grupo' ? 'Grupo' : tableDim === 'campanha' ? 'Campanha' : (gran === 'week' ? 'Semana' : 'Data FTD')} m0Label={cohort ? cohortDays + 'd' : 'M0'} base={multBase} />
+        <div className="ch-note">
+          <strong>Régua das janelas D (26/08/2026):</strong> D1/D3/D4/W1/W2 somam depósito dos dias 1..<em>k</em>{' '}
+          <strong>truncados no fim do mês do FTD</strong>, igual ao M0 — a safra de 30/08 tem D14 de um dia, não de 14.
+          Antes a janela era CORRIDA e invadia o mês seguinte; era isso que fazia o W2 de um mês fechado passar do M0
+          (julho/2026, canais growth: W2 3,01x corrido vs <strong>2,70x</strong> de calendário, com o M0 em 2,87x).
+          {' '}⚠️ No mês CORRENTE as duas réguas dão o mesmo número — a janela corrida só invade o mês seguinte quando
+          esse mês existe no dado. ⚠️ O <strong>Benchmark Lottu</strong> e as <strong>Métricas do dia a dia</strong> seguem
+          em janela CORRIDA: o lado da Lottu vem do ClickHouse assim, e as metas do estudo foram medidas na régua corrida.
+        </div>
+        {(tableData.totals && tableData.totals._calFalta > 0) && (
+          <div className="ch-note" style={{ color: 'var(--negative)' }}>
+            ⚠ o backend em produção ainda NÃO manda a régua de calendário (campos <code>*c</code> do <code>retfaixa</code>) —
+            as colunas D1…W2 caíram na janela CORRIDA. O número na tela é o antigo até o deploy propagar.
+          </div>
+        )}
+        {/* ASSERT visível: na régua de calendário W2 ≤ M0 vale por SAFRA, sempre. Se o Total inverte, a causa não é
+            a régua — é o Total ler cada coluna numa base de safras diferente (W2 só as maduras, M0 todas). */}
+        {(() => {
+          const w2 = (tableData.matTotals && tableData.matTotals.w2) ? tableData.matTotals.w2.multW2F : (tableData.totals || {}).multW2F;
+          const m0 = (tableData.totals || {}).multM0F;
+          if (!(w2 > m0)) return null;
+          return (
+            <div className="ch-note" style={{ color: 'var(--accent-yellow)' }}>
+              ⚠ o Total de <strong>Mult W2/FTD</strong> ({fmtMultiple(w2)}) está ACIMA do de <strong>Mult {cohort ? cohortDays + 'd' : 'M0'}/FTD</strong> ({fmtMultiple(m0)}).
+              {' '}Por safra isso é impossível nesta régua — as duas células não estão na mesma base: <strong>W2 usa só as safras
+              que já fecharam a janela</strong> (as do começo do período, que multiplicam mais) e o <strong>M0 usa todas</strong>.
+              {' '}Nesse caso compare por LINHA, não pelo Total.
+            </div>
+          );
+        })()}
       </div>
       <div className="support">
         <div className="support-title">Multiplicador por dimensão · sobre {baseLbl} · {cohort ? 'coorte ' + cohortDays + 'd' : 'últimos 30 dias corridos'} · {chLabel} · {faixaLabelTxt}{grupoActive ? ' · ' + grupoLabelTxt : ''}{sameday ? ' · same-day' : ''}</div>
@@ -2472,21 +2517,32 @@ function benchHouseRows_(bench, hkey) {
   }));
 }
 // retencaoFaixa (Apostou, diária) -> mesmo shape, mantendo o dia. ggrM0 = p/ ROAS GGR na aba Ret. Faixa.
-function benchApostouRows_(retencaoFaixa) {
+// `regua`: 'cal' = janelas D1/D3/D4/W1/W2 TRUNCADAS no fim do mês do FTD (campos `*c` do backend v91),
+// igual ao M0 — é a régua das abas que leem a escada DENTRO do mês. 'coorte' (default) = janela corrida,
+// que é o que o Benchmark Lottu precisa (o lado da Lottu vem do ClickHouse em janela corrida, então lá
+// trocar a régua faria a comparação medir régua em vez de performance).
+function benchApostouRows_(retencaoFaixa, regua) {
+  const querCal = regua === 'cal';
   return (retencaoFaixa || []).map(r => {
     // Caixa LÍQUIDO da safra (mesma base "totais da safra" da Lottu): Σ depósitos − Σ saques OBSERVADOS
     // (todo o histórico da coorte, não a janela M0). Vem do BQ via retfaixa (depTot/saqTot).
     const dep = r.depTot || 0, saq = r.saqTot || 0;
+    // Backend antigo não manda os campos `*c` → cai na coorte e MARCA (`_calFalta`), pra tela avisar em vez
+    // de mostrar o número da régua errada em silêncio.
+    const temCal = (r.valW2c !== undefined && r.valW2c !== null);
+    const cal = querCal && temCal;
     return {
       date: String(r.date), canal: r.canal, faixa: r.faixa, grupo: (r.grupo != null ? r.grupo : null), campanha: (r.campanha != null ? r.campanha : null),
       qtd: r.qtdFtds || 0, ftd: r.ftdTotal || 0, d0: r.depD0 || 0,
-      cd1: r.cntD1 || 0, vd1: r.valD1 || 0, vd3: r.valD3 || 0, vd4: r.valD4 || 0, cw1: r.cntW1 || 0, vw1: r.valW1 || 0, cw2: r.cntW2 || 0, vw2: r.valW2 || 0, cd30: r.cntD30 || 0, vd30: r.valD30 || 0, cm0: r.cntM0 || 0, vm0: r.valM0 || 0,
+      cd1: (cal ? r.cntD1c : r.cntD1) || 0, vd1: (cal ? r.valD1c : r.valD1) || 0, vd3: (cal ? r.valD3c : r.valD3) || 0, vd4: (cal ? r.valD4c : r.valD4) || 0, cw1: (cal ? r.cntW1c : r.cntW1) || 0, vw1: (cal ? r.valW1c : r.valW1) || 0, cw2: (cal ? r.cntW2c : r.cntW2) || 0, vw2: (cal ? r.valW2c : r.valW2) || 0, cd30: r.cntD30 || 0, vd30: r.valD30 || 0, cm0: r.cntM0 || 0, vm0: r.valM0 || 0,
       // Funil D0+D1 (backend v58+). _pass = 0 marca payload ANTIGO (campo ausente) → as taxas saem "—" em vez
       // de 0,0%, que seria lido como "ninguém passou". Sem isso um cache velho mentiria na tela.
       cstd: r.cntStd || 0, cttd: r.cntTtd || 0, cqtd4: r.cntQtd4 || 0,
       // Coorte semanal de CALENDÁRIO (backend v60+): S0 = semana ISO do FTD, S1 = a seguinte. Aba Métricas do dia a dia.
       vs0: r.valS0 || 0, vs1: r.valS1 || 0, cs1: r.cntS1 || 0,
       _pass: (r.cntStd === undefined || r.cntStd === null) ? 0 : 1,
+      _cal: cal ? 1 : 0,                              // régua efetivamente aplicada nesta linha
+      _calFalta: (querCal && !temCal) ? 1 : 0,        // queria calendário e o payload não tem → aviso na tela
       ggrM0: r.ggrM0 || 0,
       dep, saq, net: dep - saq,
     };
@@ -5743,10 +5799,18 @@ function ultimoDiaFechado_(dataMax) {
 // dela fecha — senão o bin misturaria coorte madura com imatura e o número cairia sem avisar, que é
 // exatamente o defeito que esta aba existe pra tornar visível.
 // ⚠️ `ref` é o último dia COMPLETO (ver ultimoDiaFechado_), não o dataMax cru.
-function pirFechada_(safra, hz, ref) {
+// `cal` = régua de CALENDÁRIO: a janela Dk vale dias 1..min(k, fim do mês do FTD), então ela FECHA em
+// min(safra+k, fim do mês) — não em safra+k. Sem isso a safra de 30/08 ficaria 'imatura' pra D14 até 13/09,
+// quando o número dela já está final desde 31/08 (não entra mais depósito naquela janela).
+// ⚠️ d30 fica FORA da régua de calendário: no backend ele segue sendo janela corrida de 30 dias (um 'D30 de
+// calendário' seria, por construção, o próprio M0 — mês tem no máximo 31 dias).
+function pirFechada_(safra, hz, ref, cal) {
   if (!ref || !safra) return false;
   if (hz === 'm0') return pirFimDoMes_(safra) <= ref;
-  return isoAddDays_(safra, PIR_HZ[hz]) <= ref;
+  const fimJanela = isoAddDays_(safra, PIR_HZ[hz]);
+  if (!cal || hz === 'd30') return fimJanela <= ref;
+  const fimMes = pirFimDoMes_(safra);
+  return (fimJanela < fimMes ? fimJanela : fimMes) <= ref;
 }
 const pirInt_ = (v) => (v == null || !isFinite(v)) ? '—' : Math.round(v).toLocaleString('pt-BR');
 // `plain` = contexto da safra (tamanho/ticket), não magnitude a comparar entre dias → fica sem escala
@@ -6011,10 +6075,10 @@ function pirComOutros_(linhas, keys, noun) {
 //     sobrar uma safra imatura — é o aviso de que ali há mistura de maturidades.
 function pirCel_(l, col, base, diaOk, soMaduras) {
   if (!l.dias) {
-    const aberta = !pirFechada_(l.fim, col.hz, diaOk);
+    const aberta = !pirFechada_(l.fim, col.hz, diaOk, true);
     return { v: pirValor_(col, l, base), aberta: aberta, vazia: aberta && !!soMaduras, dias: [l], n: 1, nFech: aberta ? 0 : 1 };
   }
-  const fech = l.dias.filter((d) => pirFechada_(d.fim, col.hz, diaOk));
+  const fech = l.dias.filter((d) => pirFechada_(d.fim, col.hz, diaOk, true));
   const usa = soMaduras ? fech : l.dias;
   return {
     v: usa.length ? pirTotal_(usa, col, base) : null,
@@ -6373,7 +6437,7 @@ function TabPiramideCoorte({ retencaoFaixa, chFilter, meta, retFaixaLive }) {
   // TUDO que decide maturação nesta aba usa `diaOk` (último dia COMPLETO), nunca o dataMax cru.
   const dataMax = meta && meta.dataMaxDate;
   const diaOk = ultimoDiaFechado_(dataMax);
-  const rowsFull = benchApostouRows_(retencaoFaixa || []);
+  const rowsFull = benchApostouRows_(retencaoFaixa || [], 'cal');
   const selCh = chSelector_(chFilter);
   const selFx = (fx) => faixaSel.length === 0 || faixaSel.includes(fx);
   // Mesma chave de canal da Métricas do dia a dia — ver o comentário lá sobre `channels` × `canals`.
@@ -6429,9 +6493,9 @@ function TabPiramideCoorte({ retencaoFaixa, chFilter, meta, retFaixaLive }) {
   }, [axFlags, prevFrom, prevTo]);
   const fxKey = JSON.stringify(faixaSel);
   // Top N de CADA janela, no recorte da tela (canal+faixa) e na base do toggle.
-  const topCur = React.useMemo(() => pirTopCamp_(benchApostouRows_(axCur.rows || []), selCh, selFx, base, PIR_EX_N),
+  const topCur = React.useMemo(() => pirTopCamp_(benchApostouRows_(axCur.rows || [], 'cal'), selCh, selFx, base, PIR_EX_N),
     [axCur.rows, chKey, fxKey, base]);
-  const topPrev = React.useMemo(() => pirTopCamp_(benchApostouRows_(axPrev.rows || []), selCh, selFx, base, PIR_EX_N),
+  const topPrev = React.useMemo(() => pirTopCamp_(benchApostouRows_(axPrev.rows || [], 'cal'), selCh, selFx, base, PIR_EX_N),
     [axPrev.rows, chKey, fxKey, base]);
   // ⚠️ O toggle só passa a valer QUANDO O DADO CHEGA. Enquanto carrega (ou se o fetch falhar) a tabela
   // segue mostrando TODAS as campanhas — e diz isso na tela. Um "sem as 3 maiores" que na verdade está
@@ -6444,7 +6508,7 @@ function TabPiramideCoorte({ retencaoFaixa, chFilter, meta, retFaixaLive }) {
   // tem que dizer isso em vez de mostrar uma tabela vazia com cara de "não teve safra".
   const axProprio = (eixo === 'campanha' || eixo === 'grupo');
   const axPend = axProprio && !axHas;
-  const srcRows = (axNeed && axHas) ? benchApostouRows_(axCur.rows) : (axProprio ? [] : rowsFull);
+  const srcRows = (axNeed && axHas) ? benchApostouRows_(axCur.rows, 'cal') : (axProprio ? [] : rowsFull);
   const rows = exOn ? pirSemTop_(srcRows, topCur) : srcRows;
   const bins = React.useMemo(() => pirBins_(rows, selCh, selFx, granEf),
     [retencaoFaixa, chKey, fxKey, granEf, exOn, axCur.rows, base, eixo]);
@@ -6455,7 +6519,7 @@ function TabPiramideCoorte({ retencaoFaixa, chFilter, meta, retFaixaLive }) {
   // ⚠️ E a fonte do mês anterior tem que ter a MESMA quebra: com eixo de grupo, o payload base não traz
   // `grupo` — todas as linhas cairiam em "Sem grupo" e cada linha compararia contra o balde errado.
   const exPrevOn = !!(exOn && axPrev.rows && axPrev.rows.length);
-  const prevSrc = axNeed ? benchApostouRows_(axPrev.rows || []) : benchApostouRows_(prev.rows || []);
+  const prevSrc = axNeed ? benchApostouRows_(axPrev.rows || [], 'cal') : benchApostouRows_(prev.rows || [], 'cal');
   const prevRows = exTop3
     ? (exPrevOn ? pirSemTop_(prevSrc, topPrev) : null)
     : prevSrc;
@@ -6533,7 +6597,7 @@ function TabPiramideCoorte({ retencaoFaixa, chFilter, meta, retFaixaLive }) {
     : b.lb;
   const fmtDe = (c) => c.fmt || fmtMultiple;
   // n de safras fechadas por coluna — o rodapé mostra, e é o que separa o Total honesto do Total sujo.
-  const fechadasDe = (c) => bins.filter((b) => pirFechada_(b.fim, c.hz, diaOk));
+  const fechadasDe = (c) => bins.filter((b) => pirFechada_(b.fim, c.hz, diaOk, true));
   // Escala sempre sobre as LINHAS QUE ESTÃO NA TELA (é a comparação que o olho faz). Nos eixos de
   // dimensão, linha com menos de PIR_EIXO_MIN_QTD FTDs fica fora da escala — ver pirEscala_.
   const minEsc = porSafra ? 0 : PIR_EIXO_MIN_QTD;
@@ -6629,7 +6693,7 @@ function TabPiramideCoorte({ retencaoFaixa, chFilter, meta, retFaixaLive }) {
   // chamaria de melhora. Aqui o homólogo é montado a partir dos mesmos bins, um a um.
   const refBins = (c) => {
     if (!temPrev) return null;
-    const usados = soMaduras ? bins.filter((b) => pirFechada_(b.fim, c.hz, diaOk)) : bins;
+    const usados = soMaduras ? bins.filter((b) => pirFechada_(b.fim, c.hz, diaOk, true)) : bins;
     const out = [];
     bins.forEach((b, i) => {
       if (usados.indexOf(b) < 0) return;
@@ -6781,20 +6845,15 @@ function TabPiramideCoorte({ retencaoFaixa, chFilter, meta, retFaixaLive }) {
         </label>
       </div>
       <div className="support">
-        <div className="support-title">
-          {porSafra ? ('Safra por ' + (gran === 'week' ? 'semana' : 'dia')) : ('Por ' + pirEixoCol_(eixoDef).toLowerCase() + ' · ' + linhas.length + ' linha' + (linhas.length === 1 ? '' : 's'))} · {chLbl} · {faixaLbl} · mult {base === 'ftd' ? 'sobre FTD' : 'sobre D0'}
-          {porSafra ? '' : (soMaduras ? ' · só safras maduras' : ' · ⚠ MISTURANDO MATURIDADES')}
-          {topNOn ? ' · TOP ' + PIR_TOP_N + ' em qtd FTD + Outros (' + nOutros + ' ' + noun + ')' : ''}
-          {ordLbl ? ' · ordenado por ' + ordLbl : ''}
-          {exTop3 ? (exOn ? ' · SEM as ' + PIR_EX_N + ' maiores campanhas' : (axCur.error ? ' · ⚠ COM todas as campanhas (o corte falhou)' : ' · carregando campanhas…')) : ''}
-          {diaOk ? ' · último dia FECHADO ' + fmtBR_(diaOk) + (dataMax ? ' (dado entra até ' + fmtBR_(dataMax) + ', mas esse dia ainda não fechou)' : '') : ''}
-          {comMeta > 0 ? ' · bateu a meta em ' + bateu + ' de ' + comMeta + ' células fechadas com meta' : ''}
-        </div>
+        {/* A linha de recap do estado dos slicers saiu daqui (pedido do Luis, 26/08/2026): ela repetia o
+            que os proprios botoes acima ja dizem. O que NAO era recap — as falhas — desceu pra pir-legend,
+            que e onde os avisos ja viviam. */}
         <div className="pir-legend">
           {/* rótulo em "pior → melhor" (não "menor → maior"): nestas colunas maior É melhor, e a rampa
               branco→verde foi escolhida justamente pra ser lida como qualidade, não como magnitude. */}
           <span>Escala <i className="pir-ramp">{PIR_RAMP.map((v) => <i key={v} style={{ background: 'var(' + v + ')' }} />)}</i> pior → melhor</span>
           <span><i className="pir-sw pir-sw-meta">2,47x</i> número acima da meta da coluna</span>
+          {comMeta > 0 && <span>bateu a meta em <strong>{bateu}</strong> de <strong>{comMeta}</strong> células fechadas com meta</span>}
           <span><i className="pir-dot pir-dot-up" /> melhorou vs o mesmo período do mês anterior</span>
           <span><i className="pir-dot pir-dot-down" /> piorou</span>
           <span><i className="pir-sw pir-sw-open" /> ainda não fechou</span>
@@ -6803,6 +6862,25 @@ function TabPiramideCoorte({ retencaoFaixa, chFilter, meta, retFaixaLive }) {
           </span>
           {prev.error && <span style={{ color: 'var(--negative)' }}>⚠ falhou buscar o mês anterior — sem bolinhas ({prev.error})</span>}
           {soMaduras && <span style={{ color: 'var(--accent-yellow)' }}>⚠ só safras maduras: as imaturas estão FORA do cálculo</span>}
+          {/* RÉGUA DE CALENDÁRIO (26/08/2026): as janelas D1..D14 fecham no fim do mês do FTD. Fica FORA do
+              accordion de didática de propósito — muda o número, e a meta da coluna veio da régua corrida. */}
+          <span title={'D1/D3/D4/D7/D14 somam depósito dos dias 1..k TRUNCADOS no fim do mês do FTD, igual ao M0: a safra de 30/08 tem D14 de UM dia, não de 14. Por isso essas colunas também fecham no fim do mês (a de 30/08 já está madura pra D14 em 31/08). O D30 fica de fora: no backend ele segue sendo janela CORRIDA de 30 dias.'}>
+            janelas D em régua de <strong>CALENDÁRIO</strong> (fecham no fim do mês) · D30 segue corrido
+          </span>
+          <span style={{ color: 'var(--accent-yellow)' }}
+                title={'As metas por coluna vêm do estudo, que mediu D1/D14/D30 em janela CORRIDA. Na régua de calendário o realizado de safra de fim de mês é MENOR por construção (a janela é mais curta), então nessas linhas o "abaixo da meta" pode ser régua, não performance. Nas safras do começo do mês as duas réguas coincidem e a comparação é limpa.'}>
+            ⚠ as metas do estudo são de janela CORRIDA — em safra de fim de mês a comparação mistura réguas
+          </span>
+          {rowsFull.some(r => r._calFalta) && (
+            <span style={{ color: 'var(--negative)' }}>
+              ⚠ o backend em produção ainda NÃO manda a régua de calendário (campos <code>*c</code>) — as colunas D1…D14 caíram na janela CORRIDA
+            </span>
+          )}
+          {exTop3 && !exOn && (
+            <span style={{ color: axCur.error ? 'var(--negative)' : 'var(--text-muted)' }}>
+              {axCur.error ? '⚠ o corte das ' + PIR_EX_N + ' maiores campanhas FALHOU — a tabela está COM todas as campanhas (' + axCur.error + ')' : 'carregando as campanhas do corte…'}
+            </span>
+          )}
           {/* --- avisos do EIXO. O de maturidade misturada é VERMELHO e não some: fora do eixo de safra
               ele é a diferença entre comparar performance e comparar idade de safra. --- */}
           {!porSafra && !soMaduras && (
