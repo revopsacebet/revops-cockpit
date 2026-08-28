@@ -6861,9 +6861,38 @@ function TabPiramideCoorte({ retencaoFaixa, chFilter, meta, retFaixaLive }) {
             {ordLbl ? <strong style={{ color: 'var(--accent-yellow)' }}>ordenado por {ordLbl}</strong> : 'clique no cabeçalho pra ordenar'}
           </span>
           {prev.error && <span style={{ color: 'var(--negative)' }}>⚠ falhou buscar o mês anterior — sem bolinhas ({prev.error})</span>}
+          {rowsFull.some(r => r._calFalta) && (
+            <span style={{ color: 'var(--negative)' }}>
+              ⚠ D1…D14 vieram em janela CORRIDA — o backend em produção ainda não manda a régua de calendário (<code>*c</code>)
+            </span>
+          )}
+          {exTop3 && !exOn && (
+            <span style={{ color: axCur.error ? 'var(--negative)' : 'var(--text-muted)' }}>
+              {axCur.error ? '⚠ o corte das ' + PIR_EX_N + ' maiores campanhas FALHOU — a tabela está COM todas as campanhas (' + axCur.error + ')' : '⚠ carregando as campanhas do corte — os números abaixo ainda estão COM todas as campanhas'}
+            </span>
+          )}
+          {axPend && (
+            <span style={{ color: 'var(--negative)' }}>
+              ⚠ {axCur.error ? 'falhou buscar a quebra por ' + pirEixoCol_(eixoDef).toLowerCase() + ' (' + axCur.error + ')' : 'carregando a quebra por ' + pirEixoCol_(eixoDef).toLowerCase() + ' do BigQuery'} — a tabela abaixo fica vazia até chegar.
+            </span>
+          )}
+          {exTop3 && exOn && !exPrevOn && (
+            <span style={{ color: 'var(--negative)' }}>
+              ⚠ sem o mês anterior por campanha{axPrev.error ? ' (' + axPrev.error + ')' : ' — carregando'}: as bolinhas somem de propósito.
+              Comparar “sem as {PIR_EX_N} maiores” contra “com tudo” mediria o corte, não a melhora.
+            </span>
+          )}
+          {/* DIDATICA FECHADA (28/08/2026, pedido do Luis): a legenda tinha ate 4 linhas de texto amarelo e
+              vermelho acima da tabela. Nada foi REMOVIDO — cada aviso explica uma decisao real de leitura e
+              todos vivem tambem no tooltip da coluna e no "Como ler esta tabela". Mesmo criterio da aba
+              Classificacao Cluster: FORA do accordion fica so o que nao e opinavel — a chave visual da cor/
+              bolinha e as falhas de payload ("o numero que voce esta vendo nao existe"). */}
+          <details className="pir-legend-more">
+            <summary>como ler · avisos</summary>
+            <div className="pir-legend pir-legend-in">
           {soMaduras && <span style={{ color: 'var(--accent-yellow)' }}>⚠ só safras maduras: as imaturas estão FORA do cálculo</span>}
-          {/* RÉGUA DE CALENDÁRIO (26/08/2026): as janelas D1..D14 fecham no fim do mês do FTD. Fica FORA do
-              accordion de didática de propósito — muda o número, e a meta da coluna veio da régua corrida. */}
+          {/* RÉGUA DE CALENDÁRIO (26/08/2026): as janelas D1..D14 fecham no fim do mês do FTD. Desceu pro
+              accordion em 28/08 junto com o resto da didática — segue no tooltip da coluna e no "Como ler". */}
           <span title={'D1/D3/D4/D7/D14 somam depósito dos dias 1..k TRUNCADOS no fim do mês do FTD, igual ao M0: a safra de 30/08 tem D14 de UM dia, não de 14. Por isso essas colunas também fecham no fim do mês (a de 30/08 já está madura pra D14 em 31/08). O D30 fica de fora: no backend ele segue sendo janela CORRIDA de 30 dias.'}>
             janelas D em régua de <strong>CALENDÁRIO</strong> (fecham no fim do mês) · D30 segue corrido
           </span>
@@ -6871,16 +6900,6 @@ function TabPiramideCoorte({ retencaoFaixa, chFilter, meta, retFaixaLive }) {
                 title={'As metas por coluna vêm do estudo, que mediu D1/D14/D30 em janela CORRIDA. Na régua de calendário o realizado de safra de fim de mês é MENOR por construção (a janela é mais curta), então nessas linhas o "abaixo da meta" pode ser régua, não performance. Nas safras do começo do mês as duas réguas coincidem e a comparação é limpa.'}>
             ⚠ as metas do estudo são de janela CORRIDA — em safra de fim de mês a comparação mistura réguas
           </span>
-          {rowsFull.some(r => r._calFalta) && (
-            <span style={{ color: 'var(--negative)' }}>
-              ⚠ o backend em produção ainda NÃO manda a régua de calendário (campos <code>*c</code>) — as colunas D1…D14 caíram na janela CORRIDA
-            </span>
-          )}
-          {exTop3 && !exOn && (
-            <span style={{ color: axCur.error ? 'var(--negative)' : 'var(--text-muted)' }}>
-              {axCur.error ? '⚠ o corte das ' + PIR_EX_N + ' maiores campanhas FALHOU — a tabela está COM todas as campanhas (' + axCur.error + ')' : 'carregando as campanhas do corte…'}
-            </span>
-          )}
           {/* --- avisos do EIXO. O de maturidade misturada é VERMELHO e não some: fora do eixo de safra
               ele é a diferença entre comparar performance e comparar idade de safra. --- */}
           {!porSafra && !soMaduras && (
@@ -6922,11 +6941,6 @@ function TabPiramideCoorte({ retencaoFaixa, chFilter, meta, retFaixaLive }) {
               ⚠ grupo = snapshot de HOJE (escada de recência), não segmento de aquisição — diz onde a safra está agora
             </span>
           )}
-          {axPend && (
-            <span style={{ color: 'var(--negative)' }}>
-              ⚠ {axCur.error ? 'falhou buscar a quebra por ' + pirEixoCol_(eixoDef).toLowerCase() + ' (' + axCur.error + ')' : 'carregando a quebra por ' + pirEixoCol_(eixoDef).toLowerCase() + ' do BigQuery'} — a tabela abaixo fica vazia até chegar.
-            </span>
-          )}
           {!porSafra && !axPend && !temPrev && !exTop3 && (
             <span style={{ color: 'var(--text-muted)' }}>sem o mês anterior nesta quebra — sem bolinhas</span>
           )}
@@ -6940,17 +6954,6 @@ function TabPiramideCoorte({ retencaoFaixa, chFilter, meta, retFaixaLive }) {
               {topCur.share != null ? ' (' + fmtPct(topCur.share, 1) + ' do ' + (base === 'ftd' ? 'FTD$' : 'dep D0') + ')' : ''}
               {exPrevOn ? ' | mês anterior: ' + (topPrev.list.length ? topPrev.list.map((c) => pirCampLbl_(c.campanha)).join(' · ') : '—')
                              + (topPrev.share != null ? ' (' + fmtPct(topPrev.share, 1) + ')' : '') : ''}
-            </span>
-          )}
-          {exTop3 && exOn && !exPrevOn && (
-            <span style={{ color: 'var(--negative)' }}>
-              ⚠ sem o mês anterior por campanha{axPrev.error ? ' (' + axPrev.error + ')' : ' — carregando'}: as bolinhas somem de propósito.
-              Comparar “sem as {PIR_EX_N} maiores” contra “com tudo” mediria o corte, não a melhora.
-            </span>
-          )}
-          {exTop3 && !exOn && (
-            <span style={{ color: 'var(--negative)' }}>
-              ⚠ {axCur.error ? 'falhou buscar a quebra por campanha (' + axCur.error + ')' : 'carregando a quebra por campanha'} — os números abaixo ainda estão COM todas as campanhas.
             </span>
           )}
           {metaDeriv && !metaMix && (
@@ -6978,6 +6981,8 @@ function TabPiramideCoorte({ retencaoFaixa, chFilter, meta, retFaixaLive }) {
               sem meta para este canal — volume não sustenta derivar uma
             </span>
           )}
+            </div>
+          </details>
         </div>
         <div className="table-scroll tall">
           <table className="ch-table pir-table">
