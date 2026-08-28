@@ -2194,7 +2194,12 @@ function TabRetencaoFaixa({ retencaoFaixa, chFilter, channels, bp, meta }) {
           </div>
         )}
         <RetFaixaTable data={tableData} dateLabel={tableDim === 'canal' ? 'Canal' : tableDim === 'faixa' ? 'Faixa' : tableDim === 'grupo' ? 'Grupo' : tableDim === 'campanha' ? 'Campanha' : (gran === 'week' ? 'Semana' : 'Data FTD')} m0Label={cohort ? cohortDays + 'd' : 'M0'} base={multBase} />
-        <div className="ch-note">
+        {/* DIDATICA FECHADA (28/08/2026, pedido do Luis): o paragrafo da regua virava 4 linhas de texto
+            embaixo da tabela, em toda visita. Mesmo criterio da Piramide — a explicacao vai pro accordion
+            (o texto e o MESMO, nada foi reescrito) e so as ANOMALIAS seguem visiveis, uma linha cada. */}
+        <details className="ch-note">
+          <summary style={{ cursor: 'pointer', color: 'var(--text-muted)' }}>régua das janelas D · como ler</summary>
+          <div style={{ marginTop: 8 }}>
           <strong>Régua das janelas D (26/08/2026):</strong> D1/D3/D4/W1/W2 somam depósito dos dias 1..<em>k</em>{' '}
           <strong>truncados no fim do mês do FTD</strong>, igual ao M0 — a safra de 30/08 tem D14 de um dia, não de 14.
           Antes a janela era CORRIDA e invadia o mês seguinte; era isso que fazia o W2 de um mês fechado passar do M0
@@ -2202,25 +2207,24 @@ function TabRetencaoFaixa({ retencaoFaixa, chFilter, channels, bp, meta }) {
           {' '}⚠️ No mês CORRENTE as duas réguas dão o mesmo número — a janela corrida só invade o mês seguinte quando
           esse mês existe no dado. ⚠️ O <strong>Benchmark Lottu</strong> e as <strong>Métricas do dia a dia</strong> seguem
           em janela CORRIDA: o lado da Lottu vem do ClickHouse assim, e as metas do estudo foram medidas na régua corrida.
-        </div>
+          </div>
+        </details>
         {(tableData.totals && tableData.totals._calFalta > 0) && (
           <div className="ch-note" style={{ color: 'var(--negative)' }}>
-            ⚠ o backend em produção ainda NÃO manda a régua de calendário (campos <code>*c</code> do <code>retfaixa</code>) —
-            as colunas D1…W2 caíram na janela CORRIDA. O número na tela é o antigo até o deploy propagar.
+            ⚠ D1…W2 vieram em janela CORRIDA — o backend em produção ainda não manda a régua de calendário (<code>*c</code> do <code>retfaixa</code>).
           </div>
         )}
         {/* ASSERT visível: na régua de calendário W2 ≤ M0 vale por SAFRA, sempre. Se o Total inverte, a causa não é
-            a régua — é o Total ler cada coluna numa base de safras diferente (W2 só as maduras, M0 todas). */}
+            a régua — é o Total ler cada coluna numa base de safras diferente (W2 só as maduras, M0 todas).
+            O porquê inteiro mora no title: na tela fica só o que muda a decisão (compare por linha). */}
         {(() => {
           const w2 = (tableData.matTotals && tableData.matTotals.w2) ? tableData.matTotals.w2.multW2F : (tableData.totals || {}).multW2F;
           const m0 = (tableData.totals || {}).multM0F;
           if (!(w2 > m0)) return null;
           return (
-            <div className="ch-note" style={{ color: 'var(--accent-yellow)' }}>
-              ⚠ o Total de <strong>Mult W2/FTD</strong> ({fmtMultiple(w2)}) está ACIMA do de <strong>Mult {cohort ? cohortDays + 'd' : 'M0'}/FTD</strong> ({fmtMultiple(m0)}).
-              {' '}Por safra isso é impossível nesta régua — as duas células não estão na mesma base: <strong>W2 usa só as safras
-              que já fecharam a janela</strong> (as do começo do período, que multiplicam mais) e o <strong>M0 usa todas</strong>.
-              {' '}Nesse caso compare por LINHA, não pelo Total.
+            <div className="ch-note" style={{ color: 'var(--accent-yellow)' }}
+                 title={'Por safra isso é impossível nesta régua. As duas células não estão na mesma base: o W2 do Total usa só as safras que já fecharam a janela (as do começo do período, que multiplicam mais) e o M0 usa todas.'}>
+              ⚠ Total de <strong>Mult W2/FTD</strong> ({fmtMultiple(w2)}) acima do <strong>Mult {cohort ? cohortDays + 'd' : 'M0'}/FTD</strong> ({fmtMultiple(m0)}) — bases diferentes. Compare por LINHA, não pelo Total.
             </div>
           );
         })()}
