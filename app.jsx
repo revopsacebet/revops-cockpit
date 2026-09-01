@@ -3346,6 +3346,13 @@ function buildFarolGroups_(MM, f, range, useYtd, sparkByKey) {
     { title: 'Depósito por safra (R$)', cards: [
       dressPlain(f.depSafra_m0), dressPlain(f.depSafra_m1), dressPlain(f.depSafra_m2), dressPlain(f.depSafra_m3plus),
     ].filter(c => c && c.act != null) },
+    // Mesma safra, em CABEÇA (pedido do Luis, 01/09). Fica colada no card de R$ acima porque as duas
+    // juntas é que respondem "essa safra é grande porque tem muita gente ou porque tem pouca gente
+    // depositando muito?". Ver o bloco de jogSafra_ em buildFarolMetrics_ para a definição e o aviso
+    // de que os 4 não somam pessoas distintas em janela multi-mês.
+    { title: 'Jogadores por safra', cards: [
+      dressPlain(f.jogSafra_m0), dressPlain(f.jogSafra_m1), dressPlain(f.jogSafra_m2), dressPlain(f.jogSafra_m3plus),
+    ].filter(c => c && c.act != null) },
     // Mediana do depósito por conta em cada safra. Seção própria (e não uma linha no card de R$) porque
     // é outra métrica: o card de cima é TAMANHO, este é o jogador TÍPICO — e os dois se movem em
     // direções opostas quando o mix de ticket muda.
@@ -9588,12 +9595,14 @@ function buildFarolMetrics_(M, comp, channels, ggrChannels, bp, filter, ggrSafra
   // responde "quanto deste numerador vem desta safra", em vez de misturar duas grandezas no mesmo card.
   const SAFRA_BK = [['m0', 'M0'], ['m1', 'M1'], ['m2', 'M2'], ['m3plus', 'M3+']];
   const bkArr = {}; let ggrAll = 0, ggrAllL = 0, turnAll = 0, turnAllL = 0, fsAll = 0, fsAllL = 0;
-  let depAll = 0, depAllL = 0;
+  let depAll = 0, depAllL = 0, jogAll = 0, jogAllL = 0;
   SAFRA_BK.forEach(([bk]) => {
     const arr = filterChannelList_((ggrSafra && ggrSafra[bk]) || [], filter);
     bkArr[bk] = arr;
     depAll   += arr.reduce((a, c) => a + (c.dep || 0), 0);
     depAllL  += arr.reduce((a, c) => a + (c.depM1 || 0), 0);
+    jogAll   += arr.reduce((a, c) => a + (c.jog || 0), 0);
+    jogAllL  += arr.reduce((a, c) => a + (c.jogM1 || 0), 0);
     ggrAll   += arr.reduce((a, c) => a + (c.ggr || 0), 0);
     ggrAllL  += arr.reduce((a, c) => a + (c.ggrM1 || 0), 0);
     turnAll  += arr.reduce((a, c) => a + (c.turnover || 0), 0);
@@ -9655,6 +9664,34 @@ function buildFarolMetrics_(M, comp, channels, ggrChannels, bp, filter, ggrSafra
     const shareD  = (on && depAll  > 0) ? dep  / depAll  : null;
     const shareDL = (on && depAllL > 0) ? depL / depAllL : null;
     safraMargem['depSafra_' + bk] = wShare(mk(`Depósito ${lbl}`, 'brl', on ? dep : null, null, on ? depL : null), shareD, shareDL, 'depósito');
+    // `jog` = COUNTIF(dep > 0) do bucket. Declarado aqui porque serve a DOIS cards: o de cabeça
+    // logo abaixo e a nota do card de mediana, mais adiante.
+    const jog = S('jog'), jogL = S('jogM1');
+    const hasJog = arr.some((c) => c.jog != null);
+    // JOGADORES DA SAFRA (cabeça) — irmão exato do card de R$ acima: aquele diz quanto a safra
+    // depositou, este diz quantas pessoas depositaram. Lidos em par, dão o ticket médio da safra sem
+    // precisar de outra query (a nota traz a média pronta).
+    // ⚠️ É DEPOSITANTE, não jogador ativo: `jog` conta contas com depósito > 0 no período; quem só
+    // apostou/girou não entra. Mesma definição que já alimenta a nota do card de mediana — de
+    // propósito, para os dois números da tela não discordarem.
+    // ⚠️ OS 4 CARDS NÃO SOMAM um total de pessoas distintas quando a janela cruza mais de um mês
+    // (YTD, ou um 28d que pega a virada): a conta ENVELHECE de safra no meio da janela e aparece em
+    // dois buckets. Por isso o share é composição de depositante-safra e não existe card de Total
+    // aqui — um 'total de jogadores' somando os 4 seria maior que o nº real de pessoas.
+    // Sem `jog` no payload (backend antigo) o card fica null e a seção some inteira.
+    const shareJ  = (on && hasJog && jogAll  > 0) ? jog  / jogAll  : null;
+    const shareJL = (on && hasJog && jogAllL > 0) ? jogL / jogAllL : null;
+    safraMargem['jogSafra_' + bk] = Object.assign(
+      wShare(mk(`Jogadores ${lbl}`, 'qty', (on && hasJog) ? jog : null, null, (on && hasJog) ? jogL : null), shareJ, shareJL, 'total de depositantes'),
+      { note: (on && hasJog && jog) ? ('média ' + fmtBRL(divPos(dep, jog))) : null,
+        noteTitle: (on && hasJog && jog)
+          ? ('Contas com depósito > 0 nesta safra, no período e no escopo de canal atual. '
+             + 'Depósito da safra: ' + fmtBRL(dep) + ' ÷ ' + fmtQty(jog) + ' depositantes = média ' + fmtBRL(divPos(dep, jog)) + '. '
+             + 'A mediana está na seção logo abaixo — a distância entre as duas mede o peso das baleias.'
+             + (jogL ? ' Mesma janela do mês anterior: ' + fmtQty(jogL) + ' depositantes.' : '')
+             + ' ⚠️ Numa janela que cruza mais de um mês a mesma conta pode contar em duas safras (ela envelhece), '
+             + 'então os 4 cards não somam um total de pessoas distintas.')
+          : null });
     // MEDIANA DO DEPÓSITO POR CONTA na safra (pedido do Luis, 24/08 — trocou a média pela mediana).
     // Fecha o trio da seção: o % diz a passagem, o R$ diz o tamanho, a mediana diz quanto o jogador
     // TÍPICO depositou. Aqui a diferença não é cosmética: em ago/26 a média do M0 é R$ 172 e a mediana
@@ -9662,8 +9699,6 @@ function buildFarolMetrics_(M, comp, channels, ggrChannels, bp, filter, ggrSafra
     // ⚠️ MEDIANA NÃO SOMA. Não dá pra juntar a de cada canal, então o backend manda 3 níveis prontos
     // (por canal, todos, growth) e aqui só se ESCOLHE qual serve ao escopo. Com 2+ canais selecionados
     // nenhum serve: o card fica vazio DIZENDO por quê, em vez de mostrar uma média de medianas.
-    const jog = S('jog'), jogL = S('jogM1');
-    const hasJog = arr.some((c) => c.jog != null);
     const msc = (ggrSafra && ggrSafra.medScope && ggrSafra.medScope[bk]) || null;
     const selN = chList_(filter).length;
     const escopoMed = !msc ? null : (selN === 0 ? ((filter && filter.scope === 'growth') ? msc.growth : msc.all) : null);
