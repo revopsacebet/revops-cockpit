@@ -6848,7 +6848,7 @@ function TabPiramideCoorte({ retencaoFaixa, chFilter, meta, retFaixaLive }) {
           Sem as {PIR_EX_N} maiores campanhas <span style={{ opacity: .6 }}>(cada mês perde as suas)</span>
         </label>
       </div>
-      <div className="support">
+      <div className="support pir-nored">
         {/* A linha de recap do estado dos slicers saiu daqui (pedido do Luis, 26/08/2026): ela repetia o
             que os proprios botoes acima ja dizem. O que NAO era recap — as falhas — desceu pra pir-legend,
             que e onde os avisos ja viviam. */}
@@ -6989,7 +6989,7 @@ function TabPiramideCoorte({ retencaoFaixa, chFilter, meta, retFaixaLive }) {
           </details>
         </div>
         <div className="table-scroll tall">
-          <table className="ch-table pir-table">
+          <table className="ch-table pir-table pir-nored">
             <thead>
               <tr>
                 {/* Cabeçalho clicável = ordenação. A seta ▾/▴ é a única marca de que a ordem não é a
@@ -8291,6 +8291,10 @@ function TabEscadaMensal({ chFilter, meta, metric, lottuEscada }) {
       <div className="tab-header">
         <div>
           <h1>{M.h1}</h1>
+          {/* SUBTITLE SÓ NA PIRÂMIDE MENSAL (01/09/2026, pedido do Luis): o parágrafo de didática saiu
+              da aba GGR. Nada de leitura foi perdido — o "ROAS 1,00x = payback", a régua da retenção e o
+              "não segue o slicer de data" seguem no tooltip de cada coluna e no "Como ler esta tabela". */}
+          {met !== 'ggr' && (
           <div className="subtitle">
             Grão de MÊS, e <strong>duas leituras na mesma linha</strong>: {met === 'ggr'
               ? <React.Fragment>o <strong>ROAS GGR acumulado</strong> é da safra que nasceu naquele mês (GGR dela ÷ investimento que a comprou)</React.Fragment>
@@ -8301,8 +8305,8 @@ function TabEscadaMensal({ chFilter, meta, metric, lottuEscada }) {
                 (quem entrou em janeiro e {M.vlb === 'GGR' ? 'gerou GGR' : 'depositou'} em julho conta no M3+ de julho)</React.Fragment>
             }. Cobre todo o histórico e
             <strong> não segue o slicer de data</strong> — o de canal e o de faixa valem.
-            {met === 'ggr' && <React.Fragment>{' '}<strong style={{ color: 'var(--accent-yellow)' }}>ROAS 1,00x = payback</strong> — a célula fica marcada quando a safra devolveu a verba.</React.Fragment>}
           </div>
+          )}
         </div>
       </div>
       <div className="slicer-group slicer-ruler">
