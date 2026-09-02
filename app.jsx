@@ -5461,7 +5461,8 @@ const MDD_ROWS = [
   // que a linha "Multiplicador M0/FTD" do slide mede. Por isso o horizonte é 30 e não 90: acima de 30 o
   // numerador para de crescer (o payload só traz até o D30) e a meta tem que parar junto, senão a linha
   // seria cobrada por um dinheiro que o dado nem enxerga.
-  // ⚠️ O ORÇADO MÊS aqui é 3,60x (`comp.m0`, mês-calendário), NÃO cumFTD[30] = 4,87x (janela fixa de 30d).
+  // ⚠️ O ORÇADO MÊS aqui é `comp.m0` (mês-calendário; 4,66x em set/26), NÃO cumFTD[30] = 6,54x (janela
+  // fixa de 30 dias). Trocar um pelo outro dá ~40%.
   { key: 'm0',    grp: 'esc', todas: true, hz: 30, label: 'Multiplicador M0',           mat: 0,  fmt: 'multiple', mult: true, of: (a, den) => (a.d0 && den && a.vd30) ? (a.d0 + a.vd30) / den : null, bp: 'm0' },
   // ---- BLOCO 2: horizonte cheio, só safras maduras ----
   { key: 'm14',   grp: 'full', hz: 14, label: 'Multiplicador D14',                  mat: 14, fmt: 'multiple', mult: true, of: (a, den) => (a.d0 && den && a.vw2) ? (a.d0 + a.vw2) / den : null, bp: 'm14' },
@@ -5787,6 +5788,15 @@ function TabMetricasDia({ retencaoFaixa, chFilter, meta, retFaixaLive }) {
                       ? 'Taxa não se prorateia: ou a safra teve o dia seguinte ou não teve. O orçado MTD é a meta cheia, igual à do mês.'
                       : (r.idadeMed != null ? `Curva-meta na idade real das ${r.n} safra(s) desta linha — ${r.idadeMed.toFixed(1).replace('.', ',')} dias em média, ponderada pelo denominador.` : undefined)}>
                   {val(r.orcMtd, r.fmt)}
+                  {/* Dia da curva em que a meta foi lida. Só aparece quando a IDADE trava o horizonte
+                      (idade < horizonte da linha) — que é exatamente quando a coluna repete o mesmo
+                      número em várias linhas e o leitor acha que travou. */}
+                  {r.orcMtd != null && !r.taxa && r.idadeMed != null && r.hz != null && r.idadeMed < r.hz - 0.05 && (
+                    <span style={{ fontWeight: 400, opacity: 0.6, marginLeft: 4, fontSize: '11px' }}
+                          title={`Esta linha cobra o dia ${r.hz}, mas as safras da janela têm ${r.idadeMed.toFixed(1).replace('.', ',')} dias em média — a meta é a curva NESSE ponto, não no dia ${r.hz}. É por isso que no começo do mês várias linhas mostram o mesmo valor: todas caem no mesmo dia da curva.`}>
+                      d{r.idadeMed < 9.95 ? r.idadeMed.toFixed(1).replace('.', ',') : Math.round(r.idadeMed)}
+                    </span>
+                  )}
                 </td>
                 <td style={{ fontWeight: 700, color: r.cor || 'var(--text-muted)' }}>
                   {r.at == null ? '—' : Math.round(r.at * 100) + '%'}
