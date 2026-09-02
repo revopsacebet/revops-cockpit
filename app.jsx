@@ -10089,6 +10089,14 @@ function SegurancaTab({ user, allTabs, hiddenTabs, onSetTabHidden }) {
   const [busy, setBusy] = React.useState(false);
   const [form, setForm] = React.useState({ email: '', name: '', senha: '', admin: false, profile: '' });
   const [newProfName, setNewProfName] = React.useState('');
+  // Erro com CONTEXTO. O "unauthorized" seco (02/09) apareceu do lado de uma tabela cheia — a aba fica
+  // MONTADA quando se navega, então o que está na tela pode ter sido carregado muito antes de o erro
+  // acontecer. Agora a mensagem diz qual ação falhou e, no caso do gate de admin, o `reason` do backend.
+  const erroDe = (oQue) => (j) => {
+    const base = (j && j.error) || 'falha';
+    if (base === 'unauthorized') return `Sem permissão para ${oQue}: ${(j && j.reason) || 'sessão ou flag de admin'}. Recarregue a página e entre de novo.`;
+    return `Falha ao ${oQue}: ${base}`;
+  };
   const session = localStorage.getItem(SESSION_KEY);
   // Espelho do estado p/ ler a versão MAIS RECENTE dentro dos saves atrasados (evita stale closure).
   const profRef = React.useRef(null);
@@ -10097,12 +10105,12 @@ function SegurancaTab({ user, allTabs, hiddenTabs, onSetTabHidden }) {
   const load = React.useCallback(() => {
     setErr(null);
     apiPost_({ action: 'listUsers', session }).then(j => {
-      if (j && j.ok) setUsers(j.users); else setErr((j && j.error) || 'Falha ao listar usuários');
+      if (j && j.ok) { setUsers(j.users); setErr(null); } else setErr(erroDe('listar usuários')(j));
     }).catch(() => setErr('Erro de conexão'));
   }, [session]);
   const loadProfiles = React.useCallback(() => {
     apiPost_({ action: 'listProfiles', session }).then(j => {
-      if (j && j.ok) setProfiles(j.profiles); else setErr((j && j.error) || 'Falha ao listar perfis');
+      if (j && j.ok) { setProfiles(j.profiles); setErr(null); } else setErr(erroDe('listar perfis')(j));
     }).catch(() => setErr('Erro de conexão'));
   }, [session]);
   React.useEffect(() => { load(); loadProfiles(); }, [load, loadProfiles]);
@@ -10118,12 +10126,12 @@ function SegurancaTab({ user, allTabs, hiddenTabs, onSetTabHidden }) {
   const add = (ev) => {
     ev.preventDefault(); setBusy(true); setErr(null);
     apiPost_({ action: 'addUser', session, email: form.email, name: form.name, senha: form.senha, admin: form.admin, profile: form.profile || null })
-      .then(j => { setBusy(false); if (j && j.ok) { setForm({ email: '', name: '', senha: '', admin: false, profile: '' }); load(); loadProfiles(); } else setErr((j && j.error) || 'Falha ao salvar'); })
+      .then(j => { setBusy(false); if (j && j.ok) { setForm({ email: '', name: '', senha: '', admin: false, profile: '' }); setErr(null); load(); loadProfiles(); } else setErr(erroDe('salvar o acesso')(j)); })
       .catch(() => { setBusy(false); setErr('Erro de conexão'); });
   };
   const remove = (email) => {
     if (!window.confirm('Remover o acesso de ' + email + '?')) return;
-    apiPost_({ action: 'removeUser', session, email }).then(j => { if (j && j.ok) { load(); loadProfiles(); } else setErr((j && j.error) || 'Falha ao remover'); }).catch(() => setErr('Erro de conexão'));
+    apiPost_({ action: 'removeUser', session, email }).then(j => { if (j && j.ok) { load(); loadProfiles(); } else setErr(erroDe('remover o acesso')(j)); }).catch(() => setErr('Erro de conexão'));
   };
   const allIds = (allTabs || []).map(t => t.id);
   const scenIds = CENARIOS.map(c => c.id);
@@ -10135,7 +10143,7 @@ function SegurancaTab({ user, allTabs, hiddenTabs, onSetTabHidden }) {
     const p = (profRef.current || []).find(x => x.id === id);
     if (!p) return;
     apiPost_({ action: 'saveProfile', session, id: p.id, name: p.name, tabs: p.tabs || [], scen: p.scen || [], sections: p.sections || [] })
-      .then(j => { if (!(j && j.ok)) setErr((j && j.error) || 'Falha ao salvar o perfil'); })
+      .then(j => { if (j && j.ok) setErr(null); else setErr(erroDe('salvar o perfil')(j)); })
       .catch(() => setErr('Erro de conexão'));
   }, [session]);
   const queueProfile = (id) => {
@@ -10170,14 +10178,14 @@ function SegurancaTab({ user, allTabs, hiddenTabs, onSetTabHidden }) {
     setErr(null);
     // Nasce sem restrição (tudo marcado); o admin desmarca o que aquele perfil NÃO deve ver.
     apiPost_({ action: 'saveProfile', session, name, tabs: [], scen: [], sections: [] })
-      .then(j => { if (j && j.ok) { setNewProfName(''); setProfiles(j.profiles); } else setErr((j && j.error) || 'Falha ao criar o perfil'); })
+      .then(j => { if (j && j.ok) { setNewProfName(''); setProfiles(j.profiles); setErr(null); } else setErr(erroDe('criar o perfil')(j)); })
       .catch(() => setErr('Erro de conexão'));
   };
   const removeProfile = (p) => {
     const aviso = p.users ? `\n\n${p.users} pessoa${p.users > 1 ? 's ficam' : ' fica'} SEM perfil — ou seja, com acesso a TUDO.` : '';
     if (!window.confirm('Apagar o perfil "' + p.name + '"?' + aviso)) return;
     apiPost_({ action: 'deleteProfile', session, id: p.id })
-      .then(j => { if (j && j.ok) { setProfiles(j.profiles); load(); } else setErr((j && j.error) || 'Falha ao apagar o perfil'); })
+      .then(j => { if (j && j.ok) { setProfiles(j.profiles); setErr(null); load(); } else setErr(erroDe('apagar o perfil')(j)); })
       .catch(() => setErr('Erro de conexão'));
   };
   // Atribuição pessoa → perfil. Sem debounce (é 1 clique no select) e recarrega p/ atualizar a
@@ -10186,7 +10194,7 @@ function SegurancaTab({ user, allTabs, hiddenTabs, onSetTabHidden }) {
     setErr(null);
     setUsers(prev => (prev || []).map(u => u.email === email ? { ...u, profile: profileId || null } : u));
     apiPost_({ action: 'setUserProfile', session, email, profile: profileId || '' })
-      .then(j => { if (j && j.ok) { load(); loadProfiles(); } else { setErr((j && j.error) || 'Falha ao atribuir o perfil'); load(); } })
+      .then(j => { if (j && j.ok) { load(); loadProfiles(); } else { setErr(erroDe('atribuir o perfil')(j)); load(); } })
       .catch(() => { setErr('Erro de conexão'); load(); });
   };
   const profName = (id) => { const p = (profiles || []).find(x => x.id === id); return p ? p.name : null; };
@@ -10357,7 +10365,7 @@ function SegurancaTab({ user, allTabs, hiddenTabs, onSetTabHidden }) {
             {!users && !err && <tr><td colSpan="6" style={{ color: 'var(--text-muted)' }}>carregando…</td></tr>}
           </tbody>
         </table></div>
-        <div className="ch-note">A senha é definida aqui e guardada em <strong>hash</strong> (não dá pra ler depois) — passe ao usuário por um canal seguro. Reenviar com o mesmo e-mail <strong>redefine</strong> a senha. Remover tira o acesso (sessões ativas expiram em até 6h). A coluna <strong>Abas</strong> mostra o acesso <em>efetivo</em> (o que o perfil libera).</div>
+        <div className="ch-note">A senha é definida aqui e guardada em <strong>hash</strong> (não dá pra ler depois) — passe ao usuário por um canal seguro. Reenviar com o mesmo e-mail <strong>redefine</strong> a senha. Remover tira o acesso (sessões ativas expiram em até 6h). A coluna <strong>Abas</strong> mostra o acesso <em>efetivo</em> (o que o perfil libera). Reenviando o <strong>seu próprio</strong> e-mail, o admin é mantido e o perfil ignorado — não dá pra tirar o próprio acesso sem querer.</div>
       </div>
 
       <div className="support" style={{ marginTop: '16px' }}>

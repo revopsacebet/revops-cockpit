@@ -395,5 +395,33 @@ console.log('\n== 9. tabela de usuários mostra o acesso efetivo ==');
   eq(findAll(luis, n => n.type === 'select').length, 0, 'admin não tem select de perfil');
 }
 
+console.log('\n== 10. erro de permissão diz QUAL ação e POR QUÊ ==');
+{
+  // O "unauthorized" seco aparecia do lado de uma tabela cheia (a aba fica montada quando se
+  // navega): impossível saber se era a sessão, a flag de admin, ou qual ação falhou.
+  host.reset(); posts = [];
+  installApi({ users: USERS, profiles: PROFILES });
+  tree = render(PROPS);
+  // a partir daqui o backend nega o save com o reason novo
+  const okApi = ctx.apiPost_;
+  ctx.apiPost_ = (p) => { posts.push(p); return p.action === 'saveProfile'
+    ? thenable({ ok: false, error: 'unauthorized', reason: 'seu usuário não é admin (a flag de admin foi removida?)' })
+    : okApi(p); };
+  byText(checksOf(cardOf(tree, 'pA')), /^Farol$/)[0].input.props.onChange();
+  // 1o render dispara o debounce no FIM do passe (setErr acontece depois da arvore montada) -> 2o render mostra
+  render(PROPS); tree = render(PROPS);
+  const msg = textOf(tree);
+  ok(!/^\s*unauthorized\s*$/m.test(msg), 'não mostra mais só a palavra "unauthorized"');
+  ok(/salvar o perfil/.test(msg), 'a mensagem diz QUAL ação falhou');
+  ok(/não é admin/.test(msg), 'e repassa o motivo que o backend mandou');
+  ok(/Recarregue a página/.test(msg), 'e diz o que fazer');
+
+  // volta a funcionar: o erro tem que SUMIR (antes ficava grudado pra sempre)
+  ctx.apiPost_ = okApi;
+  byText(checksOf(cardOf(tree, 'pA')), /^GGR$/)[0].input.props.onChange();
+  render(PROPS); tree = render(PROPS);
+  ok(!/salvar o perfil/.test(textOf(tree)), 'save que dá certo LIMPA o erro anterior');
+}
+
 console.log('\n' + (fail ? 'FALHAS: ' + fail + ' | ' : '') + pass + ' asserts OK');
 process.exit(fail ? 1 : 0);
