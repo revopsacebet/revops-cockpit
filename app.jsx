@@ -10031,24 +10031,36 @@ function ExcelExportButton({ defaultRange, chFilter, escopo, disabled }) {
 }
 
 // Aba Segurança (só admin) — designar quem tem acesso. Login validado no backend (doPost).
+//
+// 2026-09-02: o acesso deixou de ser marcado aba-a-aba e cenário-a-cenário PARA CADA PESSOA e passou
+// a ser um PERFIL (nome + allowlist de abas + allowlist de cenários do Farol) que se ATRIBUI às
+// pessoas. Uma pessoa tem no máximo um perfil; sem perfil = acesso total. O backend resolve o perfil
+// na sessão e continua devolvendo `user.tabs`/`user.scen` — o menu e o switcher do Farol não mudaram.
+// A migração no backend converteu cada combinação que já existia por usuário num perfil ("Perfil N").
 function SegurancaTab({ user, allTabs, hiddenTabs, onSetTabHidden }) {
   const [users, setUsers] = React.useState(null);
+  const [profiles, setProfiles] = React.useState(null);
   const [err, setErr] = React.useState(null);
   const [busy, setBusy] = React.useState(false);
-  const [form, setForm] = React.useState({ email: '', name: '', senha: '', admin: false });
+  const [form, setForm] = React.useState({ email: '', name: '', senha: '', admin: false, profile: '' });
+  const [newProfName, setNewProfName] = React.useState('');
   const session = localStorage.getItem(SESSION_KEY);
   // Espelho do estado p/ ler a versão MAIS RECENTE dentro dos saves atrasados (evita stale closure).
-  const usersRef = React.useRef(null);
-  React.useEffect(() => { usersRef.current = users; }, [users]);
-  const saveTimers = React.useRef({});
-  const scenTimers = React.useRef({});   // debounce dos saves de cenário por usuário (separado das abas)
+  const profRef = React.useRef(null);
+  React.useEffect(() => { profRef.current = profiles; }, [profiles]);
+  const saveTimers = React.useRef({});   // debounce dos saves POR PERFIL (id → timer)
   const load = React.useCallback(() => {
     setErr(null);
     apiPost_({ action: 'listUsers', session }).then(j => {
       if (j && j.ok) setUsers(j.users); else setErr((j && j.error) || 'Falha ao listar usuários');
     }).catch(() => setErr('Erro de conexão'));
   }, [session]);
-  React.useEffect(() => { load(); }, [load]);
+  const loadProfiles = React.useCallback(() => {
+    apiPost_({ action: 'listProfiles', session }).then(j => {
+      if (j && j.ok) setProfiles(j.profiles); else setErr((j && j.error) || 'Falha ao listar perfis');
+    }).catch(() => setErr('Erro de conexão'));
+  }, [session]);
+  React.useEffect(() => { load(); loadProfiles(); }, [load, loadProfiles]);
   // Tracker de acessos (últimos 30 dias) — só admin. Carrega 1× ao abrir a aba.
   const [access, setAccess] = React.useState(null);
   const [accErr, setAccErr] = React.useState(null);
@@ -10060,67 +10072,80 @@ function SegurancaTab({ user, allTabs, hiddenTabs, onSetTabHidden }) {
   const fmtWhen_ = (ts) => { try { return new Date(ts).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }); } catch (e) { return '—'; } };
   const add = (ev) => {
     ev.preventDefault(); setBusy(true); setErr(null);
-    apiPost_({ action: 'addUser', session, email: form.email, name: form.name, senha: form.senha, admin: form.admin })
-      .then(j => { setBusy(false); if (j && j.ok) { setForm({ email: '', name: '', senha: '', admin: false }); load(); } else setErr((j && j.error) || 'Falha ao salvar'); })
+    apiPost_({ action: 'addUser', session, email: form.email, name: form.name, senha: form.senha, admin: form.admin, profile: form.profile || null })
+      .then(j => { setBusy(false); if (j && j.ok) { setForm({ email: '', name: '', senha: '', admin: false, profile: '' }); load(); loadProfiles(); } else setErr((j && j.error) || 'Falha ao salvar'); })
       .catch(() => { setBusy(false); setErr('Erro de conexão'); });
   };
   const remove = (email) => {
     if (!window.confirm('Remover o acesso de ' + email + '?')) return;
-    apiPost_({ action: 'removeUser', session, email }).then(j => { if (j && j.ok) load(); else setErr((j && j.error) || 'Falha ao remover'); }).catch(() => setErr('Erro de conexão'));
+    apiPost_({ action: 'removeUser', session, email }).then(j => { if (j && j.ok) { load(); loadProfiles(); } else setErr((j && j.error) || 'Falha ao remover'); }).catch(() => setErr('Erro de conexão'));
   };
-  // Allowlist de abas por usuário. Vazio/tudo marcado = TODAS. Update OTIMISTA (reflete na hora); o save é
-  // COALESCIDO por usuário (vários cliques seguidos viram 1 POST com o estado final) e lê o estado mais recente
-  // via usersRef no momento do flush — assim (des)marcar várias abas em sequência não sobrescreve as anteriores.
   const allIds = (allTabs || []).map(t => t.id);
-  const flushTabs = React.useCallback((email) => {
-    const u = (usersRef.current || []).find(x => x.email === email);
-    const tabs = (u && Array.isArray(u.tabs)) ? u.tabs : [];   // null (todas) → [] no wire
-    apiPost_({ action: 'setUserTabs', session, email, tabs })
-      .then(j => { if (!(j && j.ok)) setErr((j && j.error) || 'Falha ao salvar abas'); })
+  const scenIds = CENARIOS.map(c => c.id);
+  // Save de um perfil: manda o estado COMPLETO (nome + as duas allowlists). É COALESCIDO por perfil
+  // (vários cliques seguidos viram 1 POST com o estado final) e lê o estado mais recente via profRef
+  // no momento do flush — assim (des)marcar várias abas em sequência não sobrescreve as anteriores.
+  const flushProfile = React.useCallback((id) => {
+    const p = (profRef.current || []).find(x => x.id === id);
+    if (!p) return;
+    apiPost_({ action: 'saveProfile', session, id: p.id, name: p.name, tabs: p.tabs || [], scen: p.scen || [] })
+      .then(j => { if (!(j && j.ok)) setErr((j && j.error) || 'Falha ao salvar o perfil'); })
       .catch(() => setErr('Erro de conexão'));
   }, [session]);
-  // Mesmo padrão p/ a allowlist de CENÁRIOS do Farol (setUserScen).
-  const flushScen = React.useCallback((email) => {
-    const u = (usersRef.current || []).find(x => x.email === email);
-    const scen = (u && Array.isArray(u.scen)) ? u.scen : [];   // null (todos) → [] no wire
-    apiPost_({ action: 'setUserScen', session, email, scen })
-      .then(j => { if (!(j && j.ok)) setErr((j && j.error) || 'Falha ao salvar cenários'); })
-      .catch(() => setErr('Erro de conexão'));
-  }, [session]);
+  const queueProfile = (id) => {
+    if (saveTimers.current[id]) clearTimeout(saveTimers.current[id]);
+    saveTimers.current[id] = setTimeout(() => { delete saveTimers.current[id]; flushProfile(id); }, 600);
+  };
   // Dispara saves pendentes ao sair da aba (navegar antes do debounce).
   React.useEffect(() => () => {
-    Object.keys(saveTimers.current).forEach(email => { clearTimeout(saveTimers.current[email]); flushTabs(email); });
-    Object.keys(scenTimers.current).forEach(email => { clearTimeout(scenTimers.current[email]); flushScen(email); });
-  }, [flushTabs, flushScen]);
-  const toggleUserTab = (email, tabId) => {
+    Object.keys(saveTimers.current).forEach(id => { clearTimeout(saveTimers.current[id]); flushProfile(id); });
+  }, [flushProfile]);
+  // Toggle genérico de item de allowlist dentro de um perfil. Tudo marcado → null (sem restrição).
+  const toggleIn = (id, field, itemId, universe) => {
     setErr(null);
-    setUsers(prev => (prev || []).map(x => {
-      if (x.email !== email) return x;
-      const restricted = Array.isArray(x.tabs) && x.tabs.length;
-      const cur = restricted ? x.tabs.slice() : allIds.slice();   // "todas" (null) → expande p/ desmarcar a partir de tudo
-      const raw = cur.indexOf(tabId) >= 0 ? cur.filter(y => y !== tabId) : cur.concat([tabId]);
-      const nextTabs = raw.length >= allIds.length ? null : raw;   // tudo marcado → null (sem restrição)
-      return { ...x, tabs: nextTabs };
+    setProfiles(prev => (prev || []).map(p => {
+      if (p.id !== id) return p;
+      const restricted = Array.isArray(p[field]) && p[field].length;
+      const cur = restricted ? p[field].slice() : universe.slice();   // "todas" (null) → expande p/ desmarcar a partir de tudo
+      const raw = cur.indexOf(itemId) >= 0 ? cur.filter(y => y !== itemId) : cur.concat([itemId]);
+      const next = raw.length >= universe.length ? null : raw;        // tudo marcado → null (sem restrição)
+      return { ...p, [field]: next };
     }));
-    if (saveTimers.current[email]) clearTimeout(saveTimers.current[email]);
-    saveTimers.current[email] = setTimeout(() => { delete saveTimers.current[email]; flushTabs(email); }, 600);
+    queueProfile(id);
   };
-  // Allowlist de CENÁRIOS do Farol por usuário (mesmo padrão otimista+coalescido das abas). scenIds = bp/conserv/rolling.
-  const scenIds = CENARIOS.map(c => c.id);
-  const toggleUserScen = (email, scenId) => {
+  const renameProfile = (id, name) => {
+    setProfiles(prev => (prev || []).map(p => p.id === id ? { ...p, name } : p));
+    queueProfile(id);
+  };
+  const addProfile = (ev) => {
+    ev.preventDefault();
+    const name = newProfName.trim();
+    if (!name) return;
     setErr(null);
-    setUsers(prev => (prev || []).map(x => {
-      if (x.email !== email) return x;
-      const restricted = Array.isArray(x.scen) && x.scen.length;
-      const cur = restricted ? x.scen.slice() : scenIds.slice();   // "todos" (null) → expande p/ desmarcar a partir de tudo
-      const raw = cur.indexOf(scenId) >= 0 ? cur.filter(y => y !== scenId) : cur.concat([scenId]);
-      const nextScen = raw.length >= scenIds.length ? null : raw;   // tudo marcado → null (sem restrição)
-      return { ...x, scen: nextScen };
-    }));
-    if (scenTimers.current[email]) clearTimeout(scenTimers.current[email]);
-    scenTimers.current[email] = setTimeout(() => { delete scenTimers.current[email]; flushScen(email); }, 600);
+    // Nasce sem restrição (tudo marcado); o admin desmarca o que aquele perfil NÃO deve ver.
+    apiPost_({ action: 'saveProfile', session, name, tabs: [], scen: [] })
+      .then(j => { if (j && j.ok) { setNewProfName(''); setProfiles(j.profiles); } else setErr((j && j.error) || 'Falha ao criar o perfil'); })
+      .catch(() => setErr('Erro de conexão'));
   };
+  const removeProfile = (p) => {
+    const aviso = p.users ? `\n\n${p.users} pessoa${p.users > 1 ? 's ficam' : ' fica'} SEM perfil — ou seja, com acesso a TUDO.` : '';
+    if (!window.confirm('Apagar o perfil "' + p.name + '"?' + aviso)) return;
+    apiPost_({ action: 'deleteProfile', session, id: p.id })
+      .then(j => { if (j && j.ok) { setProfiles(j.profiles); load(); } else setErr((j && j.error) || 'Falha ao apagar o perfil'); })
+      .catch(() => setErr('Erro de conexão'));
+  };
+  // Atribuição pessoa → perfil. Sem debounce (é 1 clique no select) e recarrega p/ atualizar a
+  // contagem de pessoas por perfil e as abas efetivas mostradas na tabela.
+  const assignProfile = (email, profileId) => {
+    setErr(null);
+    setUsers(prev => (prev || []).map(u => u.email === email ? { ...u, profile: profileId || null } : u));
+    apiPost_({ action: 'setUserProfile', session, email, profile: profileId || '' })
+      .then(j => { if (j && j.ok) { load(); loadProfiles(); } else { setErr((j && j.error) || 'Falha ao atribuir o perfil'); load(); } })
+      .catch(() => { setErr('Erro de conexão'); load(); });
+  };
+  const profName = (id) => { const p = (profiles || []).find(x => x.id === id); return p ? p.name : null; };
   const inp = { background: 'var(--surface)', border: '1px solid var(--border)', color: 'var(--text)', padding: '8px 10px', borderRadius: '6px', fontSize: '13px', fontFamily: 'inherit' };
+  const chip = (on) => ({ display: 'flex', alignItems: 'center', gap: '6px', padding: '5px 9px', border: '1px solid var(--border)', borderRadius: '6px', fontSize: '12px', cursor: 'pointer', background: 'var(--surface)', opacity: on ? 1 : 0.5 });
   return (
     <React.Fragment>
       <div className="tab-header"><div>
@@ -10160,12 +10185,74 @@ function SegurancaTab({ user, allTabs, hiddenTabs, onSetTabHidden }) {
           </tbody>
         </table></div>
       </div>
+
+      <div className="support">
+        <div className="support-title">Perfis de acesso</div>
+        <div className="ch-note" style={{ marginTop: 0, marginBottom: '12px' }}>
+          Um <strong>perfil</strong> define o que a pessoa vê: quais <strong>abas</strong> aparecem no menu e quais <strong>cenários do Farol</strong> aparecem no switcher. Crie o perfil aqui e atribua às pessoas na tabela abaixo.
+          {' '}<strong>Tudo marcado = sem restrição.</strong> Admins veem tudo sempre, com ou sem perfil. Aplica no <strong>próximo login/refresh</strong> de quem tem o perfil. É um filtro de <em>menu</em> — não é uma barreira de dados no backend.
+        </div>
+        {err && <div style={{ color: 'var(--negative)', fontSize: '12px', marginBottom: '10px' }}>{err}</div>}
+        <form onSubmit={addProfile} style={{ display: 'flex', gap: '8px', alignItems: 'center', marginBottom: '14px' }}>
+          <input style={{ ...inp, minWidth: '220px' }} type="text" placeholder="nome do novo perfil (ex.: Marketing)" value={newProfName} onChange={e => setNewProfName(e.target.value)} />
+          <button className="apply-btn" type="submit" disabled={!newProfName.trim()}>Criar perfil</button>
+        </form>
+        {(profiles || []).map(p => {
+          const tabsRestricted = Array.isArray(p.tabs) && p.tabs.length;
+          const scenRestricted = Array.isArray(p.scen) && p.scen.length;
+          return (
+            <div key={p.id} style={{ marginBottom: '16px', paddingBottom: '14px', borderBottom: '1px solid var(--border)' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap', marginBottom: '9px' }}>
+                <input style={{ ...inp, fontWeight: 600, minWidth: '200px' }} type="text" value={p.name} onChange={e => renameProfile(p.id, e.target.value)} />
+                <span style={{ fontSize: '12px', color: 'var(--text-muted)' }}>
+                  {p.users} {p.users === 1 ? 'pessoa' : 'pessoas'}
+                  {' · '}<span style={{ color: tabsRestricted ? 'var(--accent-yellow)' : 'var(--text-muted)' }}>{tabsRestricted ? `${p.tabs.length} de ${allIds.length} abas` : 'todas as abas'}</span>
+                  {' · '}<span style={{ color: scenRestricted ? 'var(--accent-yellow)' : 'var(--text-muted)' }}>{scenRestricted ? `${p.scen.length} de ${scenIds.length} cenários` : 'todos os cenários'}</span>
+                </span>
+                <button className="logout-btn" style={{ marginLeft: 'auto' }} onClick={() => removeProfile(p)}>apagar perfil</button>
+              </div>
+              <div style={{ fontSize: '11px', color: 'var(--text-dim)', textTransform: 'uppercase', letterSpacing: '.04em', marginBottom: '6px' }}>Abas</div>
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', marginBottom: '10px' }}>
+                {(allTabs || []).map(t => {
+                  const on = tabsRestricted ? (p.tabs.indexOf(t.id) >= 0) : true;   // sem restrição = tudo marcado
+                  return (
+                    <label key={t.id} style={chip(on)}>
+                      <input type="checkbox" checked={on} onChange={() => toggleIn(p.id, 'tabs', t.id, allIds)} />
+                      {t.label}
+                    </label>
+                  );
+                })}
+              </div>
+              <div style={{ fontSize: '11px', color: 'var(--text-dim)', textTransform: 'uppercase', letterSpacing: '.04em', marginBottom: '6px' }}>Cenários do Farol</div>
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px' }}>
+                {CENARIOS.map(c => {
+                  const on = scenRestricted ? (p.scen.indexOf(c.id) >= 0) : true;   // sem restrição = tudo marcado
+                  return (
+                    <label key={c.id} style={chip(on)}>
+                      <input type="checkbox" checked={on} onChange={() => toggleIn(p.id, 'scen', c.id, scenIds)} />
+                      <span style={{ width: 8, height: 8, borderRadius: 2, background: c.color, display: 'inline-block' }} />
+                      {c.label}
+                    </label>
+                  );
+                })}
+              </div>
+            </div>
+          );
+        })}
+        {profiles && profiles.length === 0 && <div style={{ color: 'var(--text-muted)', fontSize: '13px' }}>Nenhum perfil ainda — todo mundo (sem perfil) vê todas as abas e cenários.</div>}
+        {!profiles && <div style={{ color: 'var(--text-muted)', fontSize: '13px' }}>carregando…</div>}
+      </div>
+
       <div className="support">
         <div className="support-title">Adicionar / atualizar acesso</div>
         <form onSubmit={add} style={{ display: 'flex', flexWrap: 'wrap', gap: '8px', alignItems: 'center', marginBottom: '10px' }}>
           <input style={inp} type="email" placeholder="e-mail" value={form.email} onChange={e => setForm(f => ({ ...f, email: e.target.value }))} required />
           <input style={inp} type="text" placeholder="nome" value={form.name} onChange={e => setForm(f => ({ ...f, name: e.target.value }))} />
           <input style={inp} type="password" placeholder="senha inicial" value={form.senha} onChange={e => setForm(f => ({ ...f, senha: e.target.value }))} required />
+          <select style={inp} value={form.profile} onChange={e => setForm(f => ({ ...f, profile: e.target.value }))} disabled={form.admin}>
+            <option value="">sem perfil (vê tudo)</option>
+            {(profiles || []).map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+          </select>
           <label style={{ fontSize: '12px', color: 'var(--text-muted)', display: 'flex', gap: '5px', alignItems: 'center' }}>
             <input type="checkbox" checked={form.admin} onChange={e => setForm(f => ({ ...f, admin: e.target.checked }))} /> admin
           </label>
@@ -10173,29 +10260,44 @@ function SegurancaTab({ user, allTabs, hiddenTabs, onSetTabHidden }) {
         </form>
         {err && <div style={{ color: 'var(--negative)', fontSize: '12px', marginBottom: '8px' }}>{err}</div>}
         <div className="table-scroll"><table className="ch-table">
-          <thead><tr><th>E-mail</th><th>Nome</th><th>Admin</th><th>Abas</th><th></th></tr></thead>
+          <thead><tr><th>E-mail</th><th>Nome</th><th>Admin</th><th>Perfil</th><th>Abas</th><th></th></tr></thead>
           <tbody>
             {(users || []).map((u, i) => (
               <tr key={i}>
                 <td className="ch-name">{u.email}</td>
                 <td>{u.name}</td>
                 <td>{u.admin ? '✓' : '—'}</td>
+                <td>
+                  {u.admin
+                    ? <span style={{ color: 'var(--text-muted)' }}>—</span>
+                    : <select
+                        style={{ ...inp, padding: '5px 7px', fontSize: '12px' }}
+                        value={u.profile || ''}
+                        onChange={e => assignProfile(u.email, e.target.value)}
+                      >
+                        <option value="">sem perfil (vê tudo)</option>
+                        {(profiles || []).map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+                        {/* perfil atribuído que sumiu da lista (apagado noutra aba) — mantém o rótulo em vez de virar "sem perfil" silenciosamente */}
+                        {u.profile && !profName(u.profile) && <option value={u.profile}>{'(perfil removido)'}</option>}
+                      </select>}
+                </td>
                 <td style={{ color: (!u.admin && u.tabs && u.tabs.length) ? 'var(--accent-yellow)' : 'var(--text-muted)' }}>
                   {u.admin ? 'todas' : (u.tabs && u.tabs.length) ? `${u.tabs.length} de ${allIds.length}` : 'todas'}
                 </td>
                 <td>{u.email === (user && user.email) ? <span style={{ color: 'var(--text-dim)' }}>você</span> : <button className="logout-btn" onClick={() => remove(u.email)}>remover</button>}</td>
               </tr>
             ))}
-            {users && users.length === 0 && <tr><td colSpan="5" style={{ color: 'var(--text-muted)' }}>nenhum usuário</td></tr>}
-            {!users && !err && <tr><td colSpan="5" style={{ color: 'var(--text-muted)' }}>carregando…</td></tr>}
+            {users && users.length === 0 && <tr><td colSpan="6" style={{ color: 'var(--text-muted)' }}>nenhum usuário</td></tr>}
+            {!users && !err && <tr><td colSpan="6" style={{ color: 'var(--text-muted)' }}>carregando…</td></tr>}
           </tbody>
         </table></div>
-        <div className="ch-note">A senha é definida aqui e guardada em <strong>hash</strong> (não dá pra ler depois) — passe ao usuário por um canal seguro. Reenviar com o mesmo e-mail <strong>redefine</strong> a senha. Remover tira o acesso (sessões ativas expiram em até 6h).</div>
+        <div className="ch-note">A senha é definida aqui e guardada em <strong>hash</strong> (não dá pra ler depois) — passe ao usuário por um canal seguro. Reenviar com o mesmo e-mail <strong>redefine</strong> a senha. Remover tira o acesso (sessões ativas expiram em até 6h). A coluna <strong>Abas</strong> mostra o acesso <em>efetivo</em> (o que o perfil libera).</div>
       </div>
+
       <div className="support" style={{ marginTop: '16px' }}>
         <div className="support-title">Visibilidade das abas</div>
         <div className="ch-note" style={{ marginTop: 0, marginBottom: '12px' }}>
-          Desmarque uma aba para <strong>ocultá-la do menu</strong> — some para <strong>todos, inclusive você</strong>. Reexiba aqui a qualquer momento (esta aba nunca some). Vale no próximo carregamento do dashboard.
+          Desmarque uma aba para <strong>ocultá-la do menu</strong> — some para <strong>todos, inclusive você</strong>, independente de perfil. Reexiba aqui a qualquer momento (esta aba nunca some). Vale no próximo carregamento do dashboard.
         </div>
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px' }}>
           {(allTabs || []).map(t => {
@@ -10213,72 +10315,6 @@ function SegurancaTab({ user, allTabs, hiddenTabs, onSetTabHidden }) {
             );
           })}
         </div>
-      </div>
-
-      <div className="support" style={{ marginTop: '16px' }}>
-        <div className="support-title">Acesso por aba · por usuário</div>
-        <div className="ch-note" style={{ marginTop: 0, marginBottom: '12px' }}>
-          Marque as abas que <strong>cada pessoa</strong> pode ver. <strong>Todas marcadas = sem restrição</strong> (vê tudo); desmarque p/ limitar. Admins veem todas sempre. Aplica no <strong>próximo login/refresh</strong> da pessoa. É um filtro do <em>menu</em> (esconde as abas) — não é uma barreira de dados no backend.
-        </div>
-        {err && <div style={{ color: 'var(--negative)', fontSize: '12px', marginBottom: '10px' }}>{err}</div>}
-        {(users || []).filter(u => !u.admin).map((u, i) => {
-          const restricted = Array.isArray(u.tabs) && u.tabs.length;
-          return (
-            <div key={i} style={{ marginBottom: '14px', paddingBottom: '12px', borderBottom: '1px solid var(--border)' }}>
-              <div style={{ fontSize: '13px', marginBottom: '7px' }}>
-                <strong>{u.name}</strong> <span style={{ color: 'var(--text-dim)' }}>{u.email}</span>
-                {' · '}<span style={{ color: restricted ? 'var(--accent-yellow)' : 'var(--text-muted)', fontSize: '12px' }}>
-                  {restricted ? `só ${u.tabs.length} aba${u.tabs.length > 1 ? 's' : ''}` : 'todas as abas'}
-                </span>
-              </div>
-              <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px' }}>
-                {(allTabs || []).map(t => {
-                  const on = restricted ? (u.tabs.indexOf(t.id) >= 0) : true;   // sem restrição = tudo marcado
-                  return (
-                    <label key={t.id} style={{ display: 'flex', alignItems: 'center', gap: '6px', padding: '5px 9px', border: '1px solid var(--border)', borderRadius: '6px', fontSize: '12px', cursor: 'pointer', background: 'var(--surface)', opacity: on ? 1 : 0.5 }}>
-                      <input type="checkbox" checked={on} onChange={() => toggleUserTab(u.email, t.id)} />
-                      {t.label}
-                    </label>
-                  );
-                })}
-              </div>
-            </div>
-          );
-        })}
-        {users && (users || []).filter(u => !u.admin).length === 0 && <div style={{ color: 'var(--text-muted)', fontSize: '13px' }}>Nenhum usuário não-admin. (Admins sempre veem todas as abas.)</div>}
-      </div>
-
-      <div className="support" style={{ marginTop: '16px' }}>
-        <div className="support-title">Acesso por cenário do Farol · por usuário</div>
-        <div className="ch-note" style={{ marginTop: 0, marginBottom: '12px' }}>
-          Marque os cenários do <strong>Farol</strong> (BP / Conservador / Rolling) que <strong>cada pessoa</strong> pode ver no switcher. <strong>Todos marcados = sem restrição</strong>; desmarque p/ limitar. Admins veem todos sempre. Aplica no <strong>próximo login/refresh</strong> da pessoa. É um filtro do <em>switcher de cenário</em> — não é uma barreira de dados no backend.
-        </div>
-        {(users || []).filter(u => !u.admin).map((u, i) => {
-          const restricted = Array.isArray(u.scen) && u.scen.length;
-          return (
-            <div key={i} style={{ marginBottom: '14px', paddingBottom: '12px', borderBottom: '1px solid var(--border)' }}>
-              <div style={{ fontSize: '13px', marginBottom: '7px' }}>
-                <strong>{u.name}</strong> <span style={{ color: 'var(--text-dim)' }}>{u.email}</span>
-                {' · '}<span style={{ color: restricted ? 'var(--accent-yellow)' : 'var(--text-muted)', fontSize: '12px' }}>
-                  {restricted ? `só ${u.scen.length} cenário${u.scen.length > 1 ? 's' : ''}` : 'todos os cenários'}
-                </span>
-              </div>
-              <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px' }}>
-                {CENARIOS.map(c => {
-                  const on = restricted ? (u.scen.indexOf(c.id) >= 0) : true;   // sem restrição = tudo marcado
-                  return (
-                    <label key={c.id} style={{ display: 'flex', alignItems: 'center', gap: '6px', padding: '5px 9px', border: '1px solid var(--border)', borderRadius: '6px', fontSize: '12px', cursor: 'pointer', background: 'var(--surface)', opacity: on ? 1 : 0.5 }}>
-                      <input type="checkbox" checked={on} onChange={() => toggleUserScen(u.email, c.id)} />
-                      <span style={{ width: 8, height: 8, borderRadius: 2, background: c.color, display: 'inline-block' }} />
-                      {c.label}
-                    </label>
-                  );
-                })}
-              </div>
-            </div>
-          );
-        })}
-        {users && (users || []).filter(u => !u.admin).length === 0 && <div style={{ color: 'var(--text-muted)', fontSize: '13px' }}>Nenhum usuário não-admin. (Admins sempre veem todos os cenários.)</div>}
       </div>
     </React.Fragment>
   );
