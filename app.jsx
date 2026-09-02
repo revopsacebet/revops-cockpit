@@ -5306,8 +5306,17 @@ const MDD_BP = {
 // ⚠️ `d0` (= cumFTD[0]) só existe AQUI, na base FTD, e é a meta da coluna D0 da Pirâmide de Coorte.
 // Na base D0 o equivalente seria cum[0] = 1,00x por definição (o D0 é a própria âncora), então lá a
 // coluna não tem meta — e é por isso que `d0` não entra no MDD_BP.
+// ⚠️ 2026-09-02 — GERAL passou para o COMPROMISSO DE SETEMBRO (Metas Retencao_v4.html, seção 5,
+// "Painel — todas as metas de setembro"). Google e Meta CONTINUAM em agosto: o estudo de setembro só
+// produziu curva no nível Geral, e escalar a de Geral por canal seria número inventado. Qual mês cada
+// escopo está seguindo aparece na tela (MDD_COMP_MES) — misturar meses em silêncio na mesma coluna é
+// exatamente o que esta tabela já errou uma vez.
+// ⚠️ BASE ROLLING, não "base mês". O painel do estudo traz as duas; o realizado desta aba é CORRIDO
+// (decisão de 26/08: Multiplicadores e Pirâmide truncam no fim do mês, MDD e Benchmark Lottu não), então
+// a meta tem que ser a corrida — senão o % compara régua truncada contra realizado corrido. No D30 a
+// diferença entre as duas é 4,66x vs 6,54x (40%), então isto não é detalhe.
 const MDD_BP_FTD_MULT = {
-  Geral:  { d0: 1.5260, m1: 1.8901, m3: 2.3302, m4: 2.4971, m7: 2.9323, m14: 3.6590, m30: 4.8742 },
+  Geral:  { d0: 1.69072, m1: 2.18727, m3: 2.82159, m4: 3.07129, m7: 3.72585, m14: 4.83945, m30: 6.54349 },
   Google: { d0: 2.0077, m1: 2.6401, m3: 3.4072, m4: 3.6963, m7: 4.3960, m14: 5.4943, m30: 7.2639 },
   Meta:   { d0: 1.5419, m1: 1.8956, m3: 2.2817, m4: 2.4344, m7: 2.8407, m14: 3.5360, m30: 4.7543 },
 };
@@ -5329,11 +5338,11 @@ Object.keys(MDD_BP).forEach(k => { MDD_BP_FTD[k] = Object.assign({}, MDD_BP[k], 
 //   ORÇADO MTD do M0 saiu idêntico ao do D7 num build do deck: curva curta, clamp silencioso).
 const MDD_CURVA = {
   ftd: {   // comp.canais.<esc>.cumFTD — COMPROMISSO, base M0/FTD (cumFTD[0] = alvo de D0/FTD)
-    Geral: [
-      1.52601, 1.89009, 2.13077, 2.33021, 2.49713, 2.65203, 2.79243, 2.93230,
-      3.05651, 3.16947, 3.27350, 3.37161, 3.46620, 3.56149, 3.65898, 3.74607,
-      3.82663, 3.90781, 3.98332, 4.06381, 4.14638, 4.23039, 4.31098, 4.39336,
-      4.46126, 4.52988, 4.59815, 4.66685, 4.74103, 4.81117, 4.87420,
+    Geral: [   // SETEMBRO/26 (rolling) — ver MDD_BP_FTD_MULT
+      1.69072, 2.18727, 2.52012, 2.82159, 3.07129, 3.31339, 3.52128, 3.72585,
+      3.90984, 4.09367, 4.24150, 4.39786, 4.54842, 4.68872, 4.83945, 4.97338,
+      5.08920, 5.20290, 5.31540, 5.42664, 5.54756, 5.67045, 5.78352, 5.89509,
+      5.98494, 6.08138, 6.17633, 6.26884, 6.36243, 6.45093, 6.54349,
     ],
     Google: [
       2.00765, 2.64012, 3.06815, 3.40718, 3.69634, 3.93265, 4.16938, 4.39600,
@@ -5378,7 +5387,7 @@ const mddCurvaAt_ = (c, i) => c[Math.min(Math.max(Math.round(i) || 0, 0), c.leng
 // ⚠️ As 2 linhas SEMANAIS (rsS1/jogS1) NÃO entraram nessa decisão e seguem no nível BP. Se um dia forem,
 // os nós são `comp.canais.<esc>.rsSem[1]` (46,0% no Geral) e `.jogSem[1]` (24,5%, ainda × MDD_JOGSEM_K).
 const MDD_COMP_RET = {
-  Geral:  { jogD1: 0.10310, rsD1: 0.23859 },
+  Geral:  { jogD1: 0.11234, rsD1: 0.29369 },   // set/26, rolling (era 0,10310 / 0,23859 em ago)
   Google: { jogD1: 0.14177, rsD1: 0.31503 },
   Meta:   { jogD1: 0.08783, rsD1: 0.22945 },
 };
@@ -5386,12 +5395,19 @@ const MDD_COMP_RET = {
 // ⚠️ NÃO é `cumFTD[30]` (4,874 no Geral): aquilo é janela FIXA de 30 dias. Trocar um pelo outro dá ~25%.
 // Só existe na base FTD (o estudo declara `comp.base = "M0/FTD"`); na base D0 a linha fica sem ORÇADO MÊS,
 // e é melhor assim do que inventar uma conversão que o estudo não fez.
-const MDD_COMP_M0 = { Geral: 3.6000, Google: 5.3671, Meta: 3.4924 };
+// ⚠️ Este é o único número do painel que vem na BASE MÊS, e de propósito: a linha M0 é a do
+// mês-calendário (safra de 30/09 tem 1 dia de exposição), que é justamente o que a base mês modela.
+// As linhas D1..D30 acima são rolling. set/26 = 4,66x (era 3,60x em ago).
+const MDD_COMP_M0 = { Geral: 4.6600, Google: 5.3671, Meta: 3.4924 };
 // As 3 TAXAS DE PASSAGEM (FTD→STD, STD→TTD, TTD→QTD) saíram da tabela em 06/08/2026 a pedido do Luis
 // ("não vamos mais olhar"), junto com a derivação † que dava meta pra elas. As constantes pStd/pTtd/
 // pQtd continuam no MDD_BP acima e o backend segue mandando cntStd/cntTtd/cntQtd4 — pra religar,
 // basta devolver as 3 linhas em MDD_ROWS. O racional da derivação está no histórico do git (commit
 // "Metricas do dia a dia: meta BP derivada para as 3 taxas de passagem").
+// Mês do COMPROMISSO por escopo. Existe porque os escopos podem ficar dessincronizados: o estudo de
+// setembro só produziu curva pro Geral. Sem isto, Google e Meta mostrariam a meta de agosto ao lado da
+// de setembro do Geral, na mesma coluna, sem nada avisando.
+const MDD_COMP_MES = { Geral: 'setembro/26', Google: 'agosto/26', Meta: 'agosto/26' };
 const MDD_DERIV = { jogS1: 1 };   // chaves de bp que levam o marcador † de "meta ajustada de régua"
 // Fator estimado→exato da retenção SEMANAL de jogadores (ver comentário na linha jogS1 de MDD_ROWS).
 // Medido no BQ sobre as safras de julho/26: exato 0,12233 ÷ estimado do estudo 0,21131.
@@ -5802,6 +5818,15 @@ function TabMetricasDia({ retencaoFaixa, chFilter, meta, retFaixaLive }) {
           {' '}<strong style={{ color: 'var(--accent-orange)' }}>Orçado mês</strong> é onde a curva chega no fechamento;
           é constante do estudo, <strong>não deriva do nosso dado</strong>, e só existe p/ Geral,
           Google e Meta — em qualquer outro canal, ou com 2+ canais selecionados, fica “—”.
+          {scopeName && MDD_COMP_MES[scopeName] && (
+            <React.Fragment>{' '}<strong style={{ color: 'var(--accent-yellow)' }}>A meta na tela é o compromisso
+            de {MDD_COMP_MES[scopeName]}</strong>{scopeName !== 'Geral' ? <React.Fragment> — o estudo de setembro só
+            produziu curva no nível <strong>Geral</strong>, então este canal segue no compromisso de agosto.
+            Não escalei a curva do Geral por canal porque seria número inventado.</React.Fragment>
+            : <React.Fragment> (multiplicadores na régua <strong>rolling</strong>, a mesma do realizado desta aba;
+            a linha <strong>M0</strong> é a única em base mês, porque é a métrica do mês-calendário).</React.Fragment>}
+            </React.Fragment>
+          )}
           {' '}<strong>⚠️ Os dois blocos da tabela leem safras diferentes.</strong> No de cima (<em>ritmo do período</em>,
           o mesmo do slide 2 do deck) entra <strong>toda</strong> safra da janela, com o numerador truncado pela
           observação — é a coluna Orçado MTD que desconta a idade. No de baixo (<em>horizonte cheio</em>) só entram
