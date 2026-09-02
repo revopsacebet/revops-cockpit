@@ -5483,6 +5483,10 @@ const MDD_ROWS = [
 const MDD_GRP_LB = {
   esc:  'Ritmo do período — todas as safras da janela, meta na idade real de cada uma (= slide 2 do deck)',
   full: 'Horizonte cheio — só safras que já maturaram; aqui o orçado MTD é o do mês, por construção',
+  // ⚠️ Outra ESCALA DE TEMPO, não outra régua de maturação: aqui a linha não é uma safra de FTD, é a
+  // passagem MÊS a MÊS. O cabeçalho de grupo é o que impede o leitor de comparar um M+1 mensal com um
+  // multiplicador de safra como se fossem irmãos.
+  retmes: 'Retenção MENSAL — passagem mês a mês em R$; o orçado MTD é o alvo do mês × a fração dele que já costuma ter entrado',
 };
 // Resolve o escopo do slicer de canal p/ uma chave de MDD_BP. ⚠️ NÃO dá pra usar chLabel_ direto: ele
 // devolve 'Total Casa'/'Canais Growth' e a curva do estudo se chama 'Geral' — o mismatch fazia a coluna
@@ -5566,6 +5570,22 @@ function TabMetricasDia({ retencaoFaixa, chFilter, meta, retFaixaLive }) {
   const grupoOptions = (grFetch.rows && grFetch.rows.length)
     ? Array.from(new Set(grFetch.rows.map(r => r.grupo != null ? String(r.grupo) : 'sem grupo'))).sort()
     : GRUPO_LIST;
+  // RETENÇÕES MENSAIS (M+1/M+2/M3+) — endpoint próprio (only=retmes), porque a query varre o
+  // player_metrics inteiro e não vale pagar isso em todo load do cockpit. Busca 1× por janela.
+  // ⚠️ Backend antigo devolve 404/erro → `retMes` fica null e as 3 linhas simplesmente não aparecem;
+  // o resto da aba sai igual ao de antes (degradação silenciosa é intencional aqui, ver
+  // [[reference-clasp-deploy-auth]]: o deploy do backend pode estar travado por reauth).
+  const [retMes, setRetMes] = React.useState(null);
+  React.useEffect(() => {
+    if (!ENDPOINT_URL || !winTo) return;
+    let vivo = true;
+    fetch(`${ENDPOINT_URL}?${authParam_()}&only=retmes&to=${winTo}`)
+      .then(r => r.ok ? r.json() : Promise.reject(new Error('HTTP ' + r.status)))
+      .then(j => { if (vivo && j && j.retMensal && !j.error) setRetMes(j.retMensal); })
+      .catch(() => { if (vivo) setRetMes(null); });
+    return () => { vivo = false; };
+  }, [winTo]);
+
   const srcRows = grupoActive ? (grFetch.rows || []) : (retencaoFaixa || []);
   const rows = benchApostouRows_(srcRows);
   const selCh = chSelector_(chFilter);
@@ -5603,6 +5623,40 @@ function TabMetricasDia({ retencaoFaixa, chFilter, meta, retFaixaLive }) {
   const bpScope = mddBpScope_(chFilter, multBase);
   const scopeName = mddScopeName_(chFilter);
   const curva = (scopeName && MDD_CURVA[multBase]) ? MDD_CURVA[multBase][scopeName] : null;
+  // As 3 linhas de retenção MENSAL. Não saem do `byDay` (que é safra de FTD × dia) — vêm prontas do
+  // backend, que faz a MESMA conta do agg-retmes.js do deck (os dois têm um assert cruzado no
+  // retmestest.js; se divergirem, a tela e o slide 2 brigam na reunião).
+  //   REALIZADO  = a taxa do mês até o último dia FECHADO
+  //   ORÇADO MTD = alvo do mês × a fração do numerador que já costuma ter entrado até este dia
+  //   ORÇADO MÊS = o alvo (aba Projection_Revenue, cenário Forecast — o padrão do cockpit e a régua
+  //                do deck; os outros 2 cenários vêm no payload mas não são usados aqui)
+  // ⚠️ NÃO respeitam o slicer de canal nem faixa/grupo: a definição é house-level (o denominador é o
+  // M0 da casa no mês anterior). Com filtro ligado elas somem, em vez de mostrar número da casa
+  // debaixo de um recorte — que é o erro que a nota da tabela já avisa pras metas de curva.
+  const semRecorte = chList_(chFilter).length === 0 && !(chFilter && chFilter.scope === 'growth')
+    && faixaSel.length === 0 && !grupoActive;
+  const linhasRetMes = (retMes && retMes.mtd && retMes.pace && semRecorte) ? (() => {
+    const alvo = (retMes.alvo && retMes.alvo.rolling) || null;
+    const M = [
+      { key: 'retmes1', label: 'Retenção M+1 · mensal', k: 'm1', alvoKey: 'm0m1',   sub: '÷ M0 do mês anterior' },
+      { key: 'retmes2', label: 'Retenção M+2 · mensal', k: 'm2', alvoKey: 'm1m2',   sub: '÷ M+1 do mês anterior' },
+      { key: 'retmes3', label: 'Retenção M3+ · mensal', k: 'm3', alvoKey: 'm3plus', sub: '÷ pool de veteranos do mês anterior' },
+    ];
+    return M.map(x => {
+      const mes = alvo ? alvo[x.alvoKey] : null;
+      const real = retMes.mtd[x.k];
+      const pace = retMes.pace[x.k];
+      const orcMtd = (mes != null && pace != null) ? mes * pace : null;
+      const at = (real != null && orcMtd) ? real / orcMtd : null;
+      // ⚠️ `bp` PRECISA existir: a célula do Orçado mês renderiza "indicativo" quando ela é null.
+      return { key: x.key, grp: 'retmes', label: x.label, fmt: 'pct', taxa: true, mensal: true, bp: x.alvoKey,
+        sub: x.sub, mes: retMes.mes, diaOk: retMes.diaOk, diasNoMes: retMes.diasNoMes,
+        pace: pace, mesesCurva: retMes.mesesCurva,
+        real: real, orcMtd: orcMtd, bpVal: mes, at: at, n: 0,
+        cor: at == null ? null : (at >= 0.95 ? 'var(--positive)' : at >= 0.85 ? 'var(--warning)' : 'var(--negative)') };
+    });
+  })() : [];
+
   const out = MDD_ROWS.filter(row => !(row.ftdOnly && multBase !== 'ftd')).map(row => {
     // Só safras que já fecharam a janela da métrica (maturação).
     // ⚠️ 2026-08-14: o corte parte do último dia FECHADO, não do dataMax cru. `meta.dataMaxDate` é o MAX
@@ -5685,7 +5739,7 @@ function TabMetricasDia({ retencaoFaixa, chFilter, meta, retFaixaLive }) {
         return d > 0 ? n / d : null;
       })() : null,
     };
-  });
+  }).concat(linhasRetMes);
   // Idade média da escada (bloco 'esc') p/ a nota — tirada da linha do M0, que usa todas as safras.
   const idadeMedEsc = (out.find(r => r.key === 'm0') || {}).idadeMed;
   const val = (v, fmt) => v == null ? '—' : (fmt === 'pct' ? fmtPct(v, 1) : fmtMultiple(v));
@@ -5762,7 +5816,9 @@ function TabMetricasDia({ retencaoFaixa, chFilter, meta, retFaixaLive }) {
                 </tr>
               )}
               <tr>
-                <td className="ch-name">{r.label}</td>
+                <td className="ch-name" title={r.mensal
+                  ? `${r.sub}. Mês ${r.mes}, realizado até o dia ${r.diaOk} de ${r.diasNoMes} (último FECHADO). O denominador é FIXO desde o dia 1 — vem do mês anterior, já fechado — e o numerador se acumula: por isso o orçado MTD é o alvo do mês × ${(r.pace * 100).toFixed(0)}%, a fração que já costuma ter entrado a esta altura (medida em ${(r.mesesCurva || []).join(', ')}).`
+                  : undefined}>{r.label}</td>
                 {/* A marca amarela "coorte dd/mm–dd/mm" saiu a pedido do Luis (06/08). A informação
                     continua no title da célula: sem ela ninguém sabe que a linha lê um período
                     diferente das demais. */}
