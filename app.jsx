@@ -3310,21 +3310,21 @@ function buildFarolGroups_(MM, f, range, useYtd, sparkByKey) {
     // Registros entra depois do Investimento (ordem do funil: verba → cadastro → FTD). SEM BP (o plano não
     // tem meta de registro) → farol apagado; leva Δ M-1, trend de fechamento e sparkline como os outros
     // cards de FLUXO. Card ausente (backend < v73) é filtrado no fim da função, não vira buraco.
-    { title: 'Aquisição', cards: [blS(ws(dress(MM.invest), 'invest')), blS(ws(dress(MM.registros), 'registros')), blS(ws(dress(MM.ftdQty), 'ftdQty')), blS(ws(dress(MM.ftdAmount), 'ftdAmount')), blS(ws(roasFtdCard, 'roasFtd')), blS(ws(dressPlain(f.roasDepD0), 'roasDepD0')), blS(ws(dressPlain(f.cac), 'cac')), blS(ws(dressPlain(f.ticketFtd), 'ticketFtd'))] },
-    { title: 'Depósito M0', cards: [blS(dress(MM.depM0Total)), blS(roasDepM0Card), blS(multM0Card)] },
-    { title: 'Volume & GGR', cards: [blS(ws(dress(MM.depTotal), 'depTotal')), blS(ws(dress(turnoverCard), 'turnover')), blS(ws(dress(MM.ggr), 'ggr')), blS(ws(dressPlain(MM.ggrPerDep), 'ggrPerDep')), blS(ws(dressPlain(holdCard), 'hold')), blS(ws(dressPlain(f.holdBruto), 'holdBruto')), blS(ws(rolloverCard, 'rollover')), blS(roasGgrM0Card)] },
+    { id: 'aquisicao', title: 'Aquisição', cards: [blS(ws(dress(MM.invest), 'invest')), blS(ws(dress(MM.registros), 'registros')), blS(ws(dress(MM.ftdQty), 'ftdQty')), blS(ws(dress(MM.ftdAmount), 'ftdAmount')), blS(ws(roasFtdCard, 'roasFtd')), blS(ws(dressPlain(f.roasDepD0), 'roasDepD0')), blS(ws(dressPlain(f.cac), 'cac')), blS(ws(dressPlain(f.ticketFtd), 'ticketFtd'))] },
+    { id: 'depm0', title: 'Depósito M0', cards: [blS(dress(MM.depM0Total)), blS(roasDepM0Card), blS(multM0Card)] },
+    { id: 'volumeggr', title: 'Volume & GGR', cards: [blS(ws(dress(MM.depTotal), 'depTotal')), blS(ws(dress(turnoverCard), 'turnover')), blS(ws(dress(MM.ggr), 'ggr')), blS(ws(dressPlain(MM.ggrPerDep), 'ggrPerDep')), blS(ws(dressPlain(holdCard), 'hold')), blS(ws(dressPlain(f.holdBruto), 'holdBruto')), blS(ws(rolloverCard, 'rollover')), blS(roasGgrM0Card)] },
     // Seção própria pra FreeSpins/Bonificação (pedido do Luis, 17/08) — antes vivia dentro de Volume & GGR,
     // mas cresceu de 2 pra 6 cards (Dep + Turnover + GGR de cada) e virou um assunto à parte: quanto do
     // incentivo concedido volta em jogo, sob as três bases. Ordem = Dep primeiro (a única com meta),
     // depois Turnover (o que girou), depois GGR (o que a casa ganhou — o que mede margem comida).
-    { title: 'FreeSpins & Bonificação', cards: [
+    { id: 'freespins', title: 'FreeSpins & Bonificação', cards: [
       blS(ws(dressPlain(f.freespinDep), 'freespinDep')), blS(ws(dressPlain(f.bonusDep), 'bonusDep')),
       blS(ws(dressPlain(f.freespinTurnover), 'freespinTurnover')), blS(ws(dressPlain(f.bonusTurnover), 'bonusTurnover')),
       blS(ws(dressPlain(f.freespinGgr), 'freespinGgr')), blS(ws(dressPlain(f.bonusGgr), 'bonusGgr')),
     ] },
     // Retenção: Depósito (view de coorte, meta fixa do plano) + GGR (ngr net, mesma fórmula/janela, SEM meta).
     // ⚠️ o Depósito M3+ usa o residual da FAROL; o GGR M3+ é ratio de coorte puro — ver tooltip/nota.
-    { title: 'Retenção', cards: [
+    { id: 'retencao', title: 'Retenção', cards: [
       bl(dressPlain(relabelRet(MM.retM0M1, 'Depósito M0→M1'))),
       bl(dressPlain(relabelRet(MM.retM1M2, 'Depósito M1→M2'))),
       bl(dressPlain(relabelRet(MM.retM3plus, 'Depósito M3+'))),
@@ -3337,20 +3337,20 @@ function buildFarolGroups_(MM, f, range, useYtd, sparkByKey) {
     // um sétimo das pessoas. SEM BP de propósito: a meta do plano é declarada em valor, não em cabeça,
     // e pendurar a meta de valor num card de gente seria comparar contra outra coisa.
     // Backend < v86 não manda retPlay* → os 3 cards somem e a seção inteira também (filtro no fim).
-    { title: 'Retenção por jogador', cards: [
+    { id: 'retencaojog', title: 'Retenção por jogador', cards: [
       dressPlain(MM.retPlayM0M1), dressPlain(MM.retPlayM1M2), dressPlain(MM.retPlayM3plus),
     ] },
     // Quanto CADA SAFRA depositou no período (R$ absoluto) — o numerador que está por trás dos %
     // das duas seções acima. `share` = participação da safra no depósito do período (as 4 fecham 100%).
     // Mesma fonte/janela dos outros cards por safra (payload.ggrSafra, MTD, segue o filtro de canal).
-    { title: 'Depósito por safra (R$)', cards: [
+    { id: 'depsafra', title: 'Depósito por safra (R$)', cards: [
       dressPlain(f.depSafra_m0), dressPlain(f.depSafra_m1), dressPlain(f.depSafra_m2), dressPlain(f.depSafra_m3plus),
     ].filter(c => c && c.act != null) },
     // Mesma safra, em CABEÇA (pedido do Luis, 01/09). Fica colada no card de R$ acima porque as duas
     // juntas é que respondem "essa safra é grande porque tem muita gente ou porque tem pouca gente
     // depositando muito?". Ver o bloco de jogSafra_ em buildFarolMetrics_ para a definição e o aviso
     // de que os 4 não somam pessoas distintas em janela multi-mês.
-    { title: 'Depositantes por safra', cards: [
+    { id: 'jogsafra', title: 'Depositantes por safra', cards: [
       dressPlain(f.jogSafra_m0), dressPlain(f.jogSafra_m1), dressPlain(f.jogSafra_m2), dressPlain(f.jogSafra_m3plus),
     ].filter(c => c && c.act != null) },
     // Mediana do depósito por conta em cada safra. Seção própria (e não uma linha no card de R$) porque
@@ -3358,29 +3358,29 @@ function buildFarolGroups_(MM, f, range, useYtd, sparkByKey) {
     // direções opostas quando o mix de ticket muda.
     // ⚠️ o filtro aceita card sem `act` quando ele traz `note`: é o caso de 2+ canais selecionados, em
     // que a mediana não existe. Some a seção inteira sem explicação é pior do que dizer por que sumiu.
-    { title: 'Mediana de depósito por safra', cards: [
+    { id: 'tktsafra', title: 'Mediana de depósito por safra', cards: [
       dressPlain(f.tktSafra_m0), dressPlain(f.tktSafra_m1), dressPlain(f.tktSafra_m2), dressPlain(f.tktSafra_m3plus),
     ].filter(c => c && (c.act != null || c.note)) },
     // Margem por safra em DUAS seções (GGR e Hold separados, pedido do Luis) — qualidade de monetização
     // por IDADE DE COORTE, não é retenção; janela MTD. Cada card carrega o `share` (peso da safra no GGR).
     // Só entra card com valor: bucket sem safra no período sai da tela em vez de virar um "—" mudo
     // (e sem ggrSafra nenhum as duas seções desaparecem).
-    { title: 'GGR por safra', cards: [
+    { id: 'ggrsafra', title: 'GGR por safra', cards: [
       dressPlain(f.ggrDep_m0), dressPlain(f.ggrDep_m1), dressPlain(f.ggrDep_m2), dressPlain(f.ggrDep_m3plus),
     ].filter(c => c && c.act != null) },
-    { title: 'Hold por safra', cards: [
+    { id: 'holdsafra', title: 'Hold por safra', cards: [
       dressPlain(f.hold_m0), dressPlain(f.hold_m1), dressPlain(f.hold_m2), dressPlain(f.hold_m3plus),
     ].filter(c => c && c.act != null) },
-    { title: 'Rollover por safra', cards: [
+    { id: 'rollsafra', title: 'Rollover por safra', cards: [
       dressPlain(f.roll_m0), dressPlain(f.roll_m1), dressPlain(f.roll_m2), dressPlain(f.roll_m3plus),
     ].filter(c => c && c.act != null) },
     // Freespin por safra (pedido do Luis, 24/08): irmão dos três de cima, com o numerador CUSTO em vez
     // de receita — quanto do freespin concedido foi pra cada idade de coorte (share) e quanto ele pesa
     // no depósito daquela safra (o card). Sem freespin no ggrSafra (backend < v71) o grupo inteiro some.
-    { title: 'Freespin por safra', cards: [
+    { id: 'fssafra', title: 'Freespin por safra', cards: [
       dressPlain(f.fsDep_m0), dressPlain(f.fsDep_m1), dressPlain(f.fsDep_m2), dressPlain(f.fsDep_m3plus),
     ].filter(c => c && c.act != null) },
-    { title: 'Freespin / Turnover por safra', cards: [
+    { id: 'fsturnsafra', title: 'Freespin / Turnover por safra', cards: [
       dressPlain(f.fsTurn_m0), dressPlain(f.fsTurn_m1), dressPlain(f.fsTurn_m2), dressPlain(f.fsTurn_m3plus),
     ].filter(c => c && c.act != null) },
   ].map(g => ({ ...g, cards: (g.cards || []).filter(Boolean) }))   // card ausente (backend velho) não vira buraco
@@ -3415,6 +3415,43 @@ function applyFtdByRegister_(MM, f, ftdByRegister, chFilter) {
 // vindo do plano por canal (payload.planScenarios). Reescopa por chFilter igual ao resto (canais selecionados →
 // soma; scope 'growth' → growthAgg; senão allAgg). Só mexe no .bp desses cards — o Hero recolore o farol e o %
 // sozinho a partir do novo bp. Retenção/GGR/Volume ficam intactos (a aba do plano não tem meta pra eles).
+// Catálogo das SEÇÕES do Farol — o que um PERFIL pode ligar/desligar (aba Segurança). O `id` é o que
+// fica gravado no perfil, então NUNCA renomear um id (o label pode mudar à vontade). A ordem aqui é só
+// a da tela da Segurança; quem manda na ordem do Farol é o buildFarolGroups_.
+// ⚠️ O `label` tem que ser IDÊNTICO ao `title` da seção — o export do Excel monta sua própria lista de
+// grupos (buildFarolExportGroups_, com splits que a tela não tem) e é casado por título. O segtest.js
+// cobra os dois sentidos: seção sem entrada aqui = invisível pro admin; entrada sem seção = checkbox morto.
+const FAROL_SECOES = [
+  { id: 'aquisicao',    label: 'Aquisição' },
+  { id: 'depm0',        label: 'Depósito M0' },
+  { id: 'volumeggr',    label: 'Volume & GGR' },
+  { id: 'freespins',    label: 'FreeSpins & Bonificação' },
+  { id: 'retencao',     label: 'Retenção' },
+  { id: 'retencaojog',  label: 'Retenção por jogador' },
+  { id: 'depsafra',     label: 'Depósito por safra (R$)' },
+  { id: 'jogsafra',     label: 'Depositantes por safra' },
+  { id: 'tktsafra',     label: 'Mediana de depósito por safra' },
+  { id: 'ggrsafra',     label: 'GGR por safra' },
+  { id: 'holdsafra',    label: 'Hold por safra' },
+  { id: 'rollsafra',    label: 'Rollover por safra' },
+  { id: 'fssafra',      label: 'Freespin por safra' },
+  { id: 'fsturnsafra',  label: 'Freespin / Turnover por safra' },
+];
+const FAROL_SEC_ID_BY_LABEL = {}; FAROL_SECOES.forEach(x => { FAROL_SEC_ID_BY_LABEL[x.label] = x.id; });
+// Seções que ESTE usuário pode ver. Admin e perfil sem restrição → null (todas). Mesma regra das abas:
+// allowlist vazia = sem restrição. Gate de UI — o payload continua trazendo tudo.
+function allowedSecoes_(user) {
+  if (!user || user.admin) return null;
+  return (Array.isArray(user.sections) && user.sections.length) ? user.sections : null;
+}
+// ⚠️ NÃO tem fallback "não casou nada → mostra tudo": isso transformaria uma seção some do payload
+// (mês sem dado) num vazamento silencioso do Farol inteiro pra quem não podia ver. Devolve vazio e quem
+// chama avisa na tela.
+function filterFarolSecoes_(groups, allowed) {
+  if (!allowed) return groups;
+  return (groups || []).filter(g => allowed.indexOf(g.id || FAROL_SEC_ID_BY_LABEL[g.title]) >= 0);
+}
+
 const CENARIOS = [
   // 2026-08-11: 'Orçado' virou 'Meta' (pedido do Luis). O `id` segue 'bp' — é o que persiste em
   // rvops:scen e o que o backend usa nas chaves de planScenarios; renomear o id derrubaria a
@@ -3700,7 +3737,10 @@ function TabFarol({ M, farol, range, ytd, ftdByRegister, chFilter, planScenarios
   const mesCurto_ = (mk) => { const MM_ = ['jan','fev','mar','abr','mai','jun','jul','ago','set','out','nov','dez']; return (MM_[+String(mk).slice(5, 7) - 1] || mk) + '/' + String(mk).slice(2, 4); };
   // Algum outro cenário cobre a janela inteira? Se sim, aponta — é a saída prática pro usuário.
   const scenCheio = planGap ? visCenarios.find(c => { if (c.id === activeScen || !scenAvail[c.id]) return false; const h = planScenarios[c.id] && planScenarios[c.id].house; return !!(h && h.winDays > 0 && h.planDays >= h.winDays); }) : null;
-  const groups = buildFarolGroups_(ov.M, ov.farol, range, useYtd, sparkByKey);
+  // Seções liberadas pelo PERFIL (aba Segurança). Mesma natureza do gate de cenário logo acima: filtro
+  // de UI, o payload continua trazendo tudo. Admin/sem restrição = todas.
+  const secAllow = allowedSecoes_(user);
+  const groups = filterFarolSecoes_(buildFarolGroups_(ov.M, ov.farol, range, useYtd, sparkByKey), secAllow);
   const rangeLbl = (range && range.from) ? `${fmtBR_(range.from)} → ${fmtBR_(range.to)}` : '';
   // SEÇÕES RECOLHÍVEIS (pedido do Luis, 01/09). Tudo ABAIXO de "FreeSpins & Bonificação" pode ser
   // recolhido; os grupos de cima ficam sempre abertos porque são a leitura de topo do Farol — escondê-los
@@ -3773,6 +3813,11 @@ function TabFarol({ M, farol, range, ytd, ftdByRegister, chFilter, planScenarios
           </button>
         </div>
       </div>
+      {secAllow && !groups.length && (
+        <div className="support"><div className="ch-note" style={{ marginTop: 0 }}>
+          Nenhuma seção do Farol está liberada para o seu perfil nesta janela. Fale com um admin.
+        </div></div>
+      )}
       {groups.map((g, i) => {
         const podeRecolher = iCorte >= 0 && i > iCorte;
         const aberta = !podeRecolher || secAbertas.indexOf(g.title) >= 0;
@@ -3949,7 +3994,7 @@ function ensureXLSX_() {
 // popover, não do slicer do dashboard. Reusa buildFarolExportGroups_ + buildMonthlyCloseRows_ por mês.
 // onProgress(feito, total) p/ o botão mostrar o andamento. Fetches em POOL (concorrência limitada) —
 // bem mais rápido que sequencial quando há vários meses; janelas menores = menos meses = menos consultas.
-async function exportFarolRange_({ from, to, chFilter, escopo, onProgress }) {
+async function exportFarolRange_({ from, to, chFilter, escopo, onProgress, secAllow }) {
   try { await ensureXLSX_(); } catch (e) { alert((e && e.message) || 'Falha ao carregar a biblioteca de Excel.'); return; }
   if (!ENDPOINT_URL) { alert('Sem endpoint (modo mock) — o export precisa do backend.'); return; }
   const numFmt = (fmt) => fmt === 'brl' ? 'R$ #,##0.00'
@@ -4049,7 +4094,7 @@ async function exportFarolRange_({ from, to, chFilter, escopo, onProgress }) {
   ];
   const fFmts = {};
   ok.forEach(b => {
-    buildFarolExportGroups_(b.dispM, b.farol, b.monthlyClose, b.channels, chFilter, { from: b.mo.from, to: b.mo.to }, false).forEach(g => {
+    filterFarolSecoes_(buildFarolExportGroups_(b.dispM, b.farol, b.monthlyClose, b.channels, chFilter, { from: b.mo.from, to: b.mo.to }, false), secAllow).forEach(g => {
       (g.cards || []).forEach(mm2 => {
         if (!mm2) return;
         const r = fAoa.length;
@@ -9962,7 +10007,7 @@ function monthsBetween_(from, to) {
 // Botão "Excel" com popover de SELEÇÃO DE DATA da extração (default = janela atual do slicer). Escolhe o
 // período, mostra quantos meses/consultas, e dispara exportFarolRange_ (fetch em pool). Encapsula o
 // próprio estado (aberto/período/ocupado) + fechar-ao-clicar-fora, no mesmo padrão do ChannelMultiSelect.
-function ExcelExportButton({ defaultRange, chFilter, escopo, disabled }) {
+function ExcelExportButton({ defaultRange, chFilter, escopo, disabled, secAllow }) {
   const [open, setOpen] = React.useState(false);
   const [busy, setBusy] = React.useState(false);
   const [prog, setProg] = React.useState('');
@@ -9983,7 +10028,7 @@ function ExcelExportButton({ defaultRange, chFilter, escopo, disabled }) {
     if (badRange) { alert('A data inicial não pode ser maior que a final.'); return; }
     setBusy(true); setProg('');
     try {
-      await exportFarolRange_({ from: range.from, to: range.to, chFilter, escopo, onProgress: (d, t) => setProg(`${d}/${t}`) });
+      await exportFarolRange_({ from: range.from, to: range.to, chFilter, escopo, secAllow, onProgress: (d, t) => setProg(`${d}/${t}`) });
       setOpen(false);
     } catch (e) { alert('Falha ao gerar o Excel: ' + (e && e.message || e)); }
     finally { setBusy(false); setProg(''); }
@@ -10082,13 +10127,14 @@ function SegurancaTab({ user, allTabs, hiddenTabs, onSetTabHidden }) {
   };
   const allIds = (allTabs || []).map(t => t.id);
   const scenIds = CENARIOS.map(c => c.id);
+  const secIds = FAROL_SECOES.map(x => x.id);
   // Save de um perfil: manda o estado COMPLETO (nome + as duas allowlists). É COALESCIDO por perfil
   // (vários cliques seguidos viram 1 POST com o estado final) e lê o estado mais recente via profRef
   // no momento do flush — assim (des)marcar várias abas em sequência não sobrescreve as anteriores.
   const flushProfile = React.useCallback((id) => {
     const p = (profRef.current || []).find(x => x.id === id);
     if (!p) return;
-    apiPost_({ action: 'saveProfile', session, id: p.id, name: p.name, tabs: p.tabs || [], scen: p.scen || [] })
+    apiPost_({ action: 'saveProfile', session, id: p.id, name: p.name, tabs: p.tabs || [], scen: p.scen || [], sections: p.sections || [] })
       .then(j => { if (!(j && j.ok)) setErr((j && j.error) || 'Falha ao salvar o perfil'); })
       .catch(() => setErr('Erro de conexão'));
   }, [session]);
@@ -10123,7 +10169,7 @@ function SegurancaTab({ user, allTabs, hiddenTabs, onSetTabHidden }) {
     if (!name) return;
     setErr(null);
     // Nasce sem restrição (tudo marcado); o admin desmarca o que aquele perfil NÃO deve ver.
-    apiPost_({ action: 'saveProfile', session, name, tabs: [], scen: [] })
+    apiPost_({ action: 'saveProfile', session, name, tabs: [], scen: [], sections: [] })
       .then(j => { if (j && j.ok) { setNewProfName(''); setProfiles(j.profiles); } else setErr((j && j.error) || 'Falha ao criar o perfil'); })
       .catch(() => setErr('Erro de conexão'));
   };
@@ -10189,8 +10235,8 @@ function SegurancaTab({ user, allTabs, hiddenTabs, onSetTabHidden }) {
       <div className="support">
         <div className="support-title">Perfis de acesso</div>
         <div className="ch-note" style={{ marginTop: 0, marginBottom: '12px' }}>
-          Um <strong>perfil</strong> define o que a pessoa vê: quais <strong>abas</strong> aparecem no menu e quais <strong>cenários do Farol</strong> aparecem no switcher. Crie o perfil aqui e atribua às pessoas na tabela abaixo.
-          {' '}<strong>Tudo marcado = sem restrição.</strong> Admins veem tudo sempre, com ou sem perfil. Aplica no <strong>próximo login/refresh</strong> de quem tem o perfil. É um filtro de <em>menu</em> — não é uma barreira de dados no backend.
+          Um <strong>perfil</strong> define o que a pessoa vê: quais <strong>abas</strong> aparecem no menu, quais <strong>cenários do Farol</strong> aparecem no switcher e quais <strong>seções do Farol</strong> (Aquisição, Retenção, …) aparecem na aba. Crie o perfil aqui e atribua às pessoas na tabela abaixo.
+          {' '}<strong>Tudo marcado = sem restrição.</strong> Admins veem tudo sempre, com ou sem perfil. Aplica no <strong>próximo login/refresh</strong> de quem tem o perfil. É um filtro de <em>tela</em> (esconde do menu / da aba, e também do export de Excel) — não é uma barreira de dados no backend.
         </div>
         {err && <div style={{ color: 'var(--negative)', fontSize: '12px', marginBottom: '10px' }}>{err}</div>}
         <form onSubmit={addProfile} style={{ display: 'flex', gap: '8px', alignItems: 'center', marginBottom: '14px' }}>
@@ -10200,6 +10246,7 @@ function SegurancaTab({ user, allTabs, hiddenTabs, onSetTabHidden }) {
         {(profiles || []).map(p => {
           const tabsRestricted = Array.isArray(p.tabs) && p.tabs.length;
           const scenRestricted = Array.isArray(p.scen) && p.scen.length;
+          const secRestricted = Array.isArray(p.sections) && p.sections.length;
           return (
             <div key={p.id} style={{ marginBottom: '16px', paddingBottom: '14px', borderBottom: '1px solid var(--border)' }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap', marginBottom: '9px' }}>
@@ -10208,6 +10255,7 @@ function SegurancaTab({ user, allTabs, hiddenTabs, onSetTabHidden }) {
                   {p.users} {p.users === 1 ? 'pessoa' : 'pessoas'}
                   {' · '}<span style={{ color: tabsRestricted ? 'var(--accent-yellow)' : 'var(--text-muted)' }}>{tabsRestricted ? `${p.tabs.length} de ${allIds.length} abas` : 'todas as abas'}</span>
                   {' · '}<span style={{ color: scenRestricted ? 'var(--accent-yellow)' : 'var(--text-muted)' }}>{scenRestricted ? `${p.scen.length} de ${scenIds.length} cenários` : 'todos os cenários'}</span>
+                  {' · '}<span style={{ color: secRestricted ? 'var(--accent-yellow)' : 'var(--text-muted)' }}>{secRestricted ? `${p.sections.length} de ${secIds.length} seções do Farol` : 'todas as seções do Farol'}</span>
                 </span>
                 <button className="logout-btn" style={{ marginLeft: 'auto' }} onClick={() => removeProfile(p)}>apagar perfil</button>
               </div>
@@ -10224,7 +10272,7 @@ function SegurancaTab({ user, allTabs, hiddenTabs, onSetTabHidden }) {
                 })}
               </div>
               <div style={{ fontSize: '11px', color: 'var(--text-dim)', textTransform: 'uppercase', letterSpacing: '.04em', marginBottom: '6px' }}>Cenários do Farol</div>
-              <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px' }}>
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', marginBottom: '10px' }}>
                 {CENARIOS.map(c => {
                   const on = scenRestricted ? (p.scen.indexOf(c.id) >= 0) : true;   // sem restrição = tudo marcado
                   return (
@@ -10236,6 +10284,24 @@ function SegurancaTab({ user, allTabs, hiddenTabs, onSetTabHidden }) {
                   );
                 })}
               </div>
+              {/* Seções DENTRO da aba Farol (ex.: o perfil CRM não vê "Aquisição"). Só aparece se a aba
+                  Farol estiver liberada pro perfil — desmarcar seção de quem nem entra no Farol é ruído. */}
+              {(!tabsRestricted || p.tabs.indexOf('farol') >= 0) && (
+                <React.Fragment>
+                  <div style={{ fontSize: '11px', color: 'var(--text-dim)', textTransform: 'uppercase', letterSpacing: '.04em', marginBottom: '6px' }}>Seções do Farol</div>
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px' }}>
+                    {FAROL_SECOES.map(x => {
+                      const on = secRestricted ? (p.sections.indexOf(x.id) >= 0) : true;   // sem restrição = tudo marcado
+                      return (
+                        <label key={x.id} style={chip(on)}>
+                          <input type="checkbox" checked={on} onChange={() => toggleIn(p.id, 'sections', x.id, secIds)} />
+                          {x.label}
+                        </label>
+                      );
+                    })}
+                  </div>
+                </React.Fragment>
+              )}
             </div>
           );
         })}
@@ -10680,6 +10746,7 @@ function App({ user, onLogout, config }) {
             chFilter={chFilter}
             escopo={chLabel_(chFilter)}
             disabled={state.loading}
+            secAllow={allowedSecoes_(user)}
           />
           {user && <span className="user-chip" title={user.email}>{user.name}{user.admin ? ' · admin' : ''}</span>}
           {onLogout && <button className="logout-btn" onClick={onLogout} title="Encerrar sessão">Sair</button>}
