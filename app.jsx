@@ -8410,13 +8410,10 @@ function TabEscadaMensal({ chFilter, meta, metric, lottuEscada }) {
       </div>
 
       <div className="support">
-        <div className="support-title">
-          {porSafra ? ('Safra mensal · ' + linhas.length + ' safras') : ('Por ' + eixoDef.col.toLowerCase() + ' · ' + linhas.length + ' linha' + (linhas.length === 1 ? '' : 's'))}
-          {mesSel ? ' · ' + monthLabelPt_(mesSel + '-01') : janN ? ' · últimos ' + janN + ' meses' : ''}
-          {' · '}{chLbl} · {faixaLbl}{grupoLbl ? ' · ' + grupoLbl : ''}{campOn ? ' · campanha ' + escCampLbl_(camp) : ''} · retenção {porDia ? 'CORRIDA (30d)' : 'mensal'} sobre {baseRet === 'rs' ? 'R$' : 'jogadores'}
-          {soMaduras ? (porDia ? ' · só safras maduras' : ' · só meses fechados') : ' · ⚠ INCLUINDO o mês corrente (parcial)'}
-          {diaOk ? ' · último dia fechado ' + fmtBR_(diaOk) : ''}
-        </div>
+        {/* A linha-resumo dos slicers (safra · janela · canal · faixa · base · maturação · último dia
+            fechado) foi REMOVIDA a pedido do Luis em 01/09. Era repetição: todos esses estados já estão
+            visíveis nos próprios controles logo acima da tabela. Vale para as duas pirâmides — Mensal e
+            GGR são o mesmo componente (TabEscadaGgr = TabEscadaMensal com metric="ggr"). */}
         <div className="pir-legend">
           <span>Escala <i className="pir-ramp">{PIR_RAMP.map((v) => <i key={v} style={{ background: 'var(' + v + ')' }} />)}</i> pior → melhor</span>
           <span><i className="pir-sw pir-sw-open" /> mês em aberto (valor é piso)</span>
