@@ -8735,15 +8735,18 @@ function TabEscadaMensal({ chFilter, meta, metric, lottuEscada }) {
             {mesesMix.map((m) => <option key={m} value={m}>{monthLabelPt_(m + '-01')}</option>)}
           </select>
           <span>· {chLbl} · {faixaLbl} · total {mix ? fmtBRL(mix.total) : '—'}</span>
-          {mixAberto && <span style={{ color: 'var(--accent-yellow)' }}>⚠ mês em curso — parcial{dataMax ? ' (até ' + fmtBR_(dataMax) + ')' : ''}</span>}
+          {/* Os dois avisos em amarelo desta seção (o "⚠ mês em curso — parcial" aqui e a linha de
+              interpretação "M0 alto = ... / M3+ alto = ..." na legenda abaixo) foram REMOVIDOS a pedido
+              do Luis em 01/09.
+              ⚠️ Consequência conhecida e aceita: esta seção não tem NENHUMA outra marca de mês parcial
+              (a hachura de mês em aberto é da tabela da pirâmide, não desta). Com o mês corrente
+              selecionado no seletor acima, o total sai menor que o de um mês fechado sem dizer por quê.
+              `mixAberto` (linha ~8105) fica calculado e sem uso — é o gancho para reintroduzir o aviso
+              em outro formato, se um dia fizer falta. */}
         </div>
         <div className="pir-legend">
           <span title="Cada real depositado no mês é atribuído à SAFRA do jogador que depositou (o mês do 1º depósito dele). A soma fecha com o depósito total da casa no mês.">
             cada real do mês atribuído à safra de quem depositou — a soma fecha com o depósito da casa
-          </span>
-          <span style={{ color: 'var(--accent-yellow)' }}
-                title="É a leitura de dependência de aquisição: quanto do caixa do mês é dinheiro de gente que acabou de chegar (M0) contra dinheiro de base instalada (M3+).">
-            M0 alto = caixa dependente de aquisição · M3+ alto = base instalada pagando a conta
           </span>
         </div>
         {mix && mix.total > 0 && (
