@@ -3350,7 +3350,7 @@ function buildFarolGroups_(MM, f, range, useYtd, sparkByKey) {
     // juntas é que respondem "essa safra é grande porque tem muita gente ou porque tem pouca gente
     // depositando muito?". Ver o bloco de jogSafra_ em buildFarolMetrics_ para a definição e o aviso
     // de que os 4 não somam pessoas distintas em janela multi-mês.
-    { title: 'Jogadores por safra', cards: [
+    { title: 'Depositantes por safra', cards: [
       dressPlain(f.jogSafra_m0), dressPlain(f.jogSafra_m1), dressPlain(f.jogSafra_m2), dressPlain(f.jogSafra_m3plus),
     ].filter(c => c && c.act != null) },
     // Mediana do depósito por conta em cada safra. Seção própria (e não uma linha no card de R$) porque
@@ -9682,7 +9682,7 @@ function buildFarolMetrics_(M, comp, channels, ggrChannels, bp, filter, ggrSafra
     const shareJ  = (on && hasJog && jogAll  > 0) ? jog  / jogAll  : null;
     const shareJL = (on && hasJog && jogAllL > 0) ? jogL / jogAllL : null;
     safraMargem['jogSafra_' + bk] = Object.assign(
-      wShare(mk(`Jogadores ${lbl}`, 'qty', (on && hasJog) ? jog : null, null, (on && hasJog) ? jogL : null), shareJ, shareJL, 'total de depositantes'),
+      wShare(mk(`Depositantes ${lbl}`, 'qty', (on && hasJog) ? jog : null, null, (on && hasJog) ? jogL : null), shareJ, shareJL, 'total de depositantes'),
       { note: (on && hasJog && jog) ? ('média ' + fmtBRL(divPos(dep, jog))) : null,
         noteTitle: (on && hasJog && jog)
           ? ('Contas com depósito > 0 nesta safra, no período e no escopo de canal atual. '
