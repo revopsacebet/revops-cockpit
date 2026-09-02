@@ -3702,6 +3702,17 @@ function TabFarol({ M, farol, range, ytd, ftdByRegister, chFilter, planScenarios
   const scenCheio = planGap ? visCenarios.find(c => { if (c.id === activeScen || !scenAvail[c.id]) return false; const h = planScenarios[c.id] && planScenarios[c.id].house; return !!(h && h.winDays > 0 && h.planDays >= h.winDays); }) : null;
   const groups = buildFarolGroups_(ov.M, ov.farol, range, useYtd, sparkByKey);
   const rangeLbl = (range && range.from) ? `${fmtBR_(range.from)} → ${fmtBR_(range.to)}` : '';
+  // SEÇÕES RECOLHÍVEIS (pedido do Luis, 01/09). Tudo ABAIXO de "FreeSpins & Bonificação" pode ser
+  // recolhido; os grupos de cima ficam sempre abertos porque são a leitura de topo do Farol — escondê-los
+  // atrás de um clique tiraria o sentido da aba.
+  // O corte é por POSIÇÃO, não por lista de títulos: assim continua valendo se alguém inserir uma seção
+  // nova no meio. Se o grupo âncora não existir no payload (fica de fora quando não tem card), `iCorte`
+  // vem -1 e NADA é recolhível — degrada pra tela de hoje em vez de recolher a seção errada.
+  const iCorte = groups.findIndex(g => g.title === 'FreeSpins & Bonificação');
+  // Guarda os ABERTOS (e não os fechados): assim o default de lista vazia já é "tudo recolhido", que é o
+  // ponto do pedido — a aba abre curta. Persistido, então a escolha sobrevive a refresh e troca de aba.
+  const [secAbertas, setSecAbertas] = usePersistedState('rvops:farolSecoesAbertas', []);
+  const toggleSec_ = (t) => setSecAbertas(prev => (prev.indexOf(t) >= 0 ? prev.filter(x => x !== t) : prev.concat([t])));
   return (
     <React.Fragment>
       <div className="tab-header">
@@ -3762,14 +3773,36 @@ function TabFarol({ M, farol, range, ytd, ftdByRegister, chFilter, planScenarios
           </button>
         </div>
       </div>
-      {groups.map((g, i) => (
-        <div className="support" key={i}>
-          <div className="support-title">{g.title}</div>
-          <div className="hero-grid">
-            {g.cards.map((m, j) => (m ? <Hero key={j} metric={m} variant="farol" /> : null))}
+      {groups.map((g, i) => {
+        const podeRecolher = iCorte >= 0 && i > iCorte;
+        const aberta = !podeRecolher || secAbertas.indexOf(g.title) >= 0;
+        return (
+          <div className="support" key={i}>
+            {podeRecolher ? (
+              // Estilo INLINE de propósito: `.support-title` é compartilhada por ~24 lugares do cockpit,
+              // então dar cursor/flex na classe mudaria abas que ninguém pediu pra mexer.
+              <div className="support-title" role="button" tabIndex={0} aria-expanded={aberta}
+                   onClick={() => toggleSec_(g.title)}
+                   onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggleSec_(g.title); } }}
+                   title={aberta ? 'Recolher seção' : 'Expandir seção'}
+                   style={{ cursor: 'pointer', userSelect: 'none', display: 'flex', alignItems: 'center', gap: 7 }}>
+                <span aria-hidden="true" style={{ display: 'inline-block', width: 8, opacity: .55, fontSize: 9,
+                       transform: aberta ? 'rotate(90deg)' : 'none', transition: 'transform .12s' }}>▶</span>
+                {g.title}
+                {/* Recolhida, o nº de cards diz que tem conteúdo ali — sem isso a seção fechada parece vazia. */}
+                {!aberta && <span style={{ opacity: .4, fontWeight: 400, letterSpacing: 0 }}>({g.cards.length})</span>}
+              </div>
+            ) : (
+              <div className="support-title">{g.title}</div>
+            )}
+            {aberta && (
+              <div className="hero-grid">
+                {g.cards.map((m, j) => (m ? <Hero key={j} metric={m} variant="farol" /> : null))}
+              </div>
+            )}
           </div>
-        </div>
-      ))}
+        );
+      })}
     </React.Fragment>
   );
 }
