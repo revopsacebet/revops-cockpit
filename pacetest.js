@@ -103,5 +103,60 @@ const custo = { act: 80, bp: 200, paceBp: 100, fmt: 'money', label: 'CAC', lower
 const sCusto = txt(Hero({ metric: custo, variant: 'farol' }));
 ok(/farol-dot verde/.test(sCusto), 'lowerBetter + ritmo: gastar 80 contra 100 esperado = VERDE (a inversao de custo continua valendo)');
 
+// ============================================================================
+// MESMO PONTO DO MÊS PASSADO (pedido do Luis, 03/09: "inclui aqui como estávamos pra cada retenção
+// no mesmo período do mês passado"). Fixture = o payload REAL de 03/09/2026 (only=retmes), conferido
+// contra o BQ no retmestest.js do backend: set até o dia 2 vs ago até o dia 2, e o M3+ na régua
+// RESIDUAL do card (4,47% em ago) — não no ratio de coorte (4,31%), que é a régua do deck.
+// ============================================================================
+console.log('\n— prev: onde estávamos no mesmo dia do mês passado —');
+const RETMES_SET = { mes: '2026-09', diaOk: 2, diasNoMes: 30, mesesCurva: ['2026-06', '2026-07', '2026-08'],
+  pace: { m1: 0.101, m2: 0.081, m3: 0.078 },
+  prev: { mes: '2026-08', dia: 2, diasNoMes: 31, m1: 0.0421, m2: 0.0403, m3: 0.0447, m3Coorte: 0.0431 },
+  mtdCard: { m1: 0.0387, m2: 0.0476, m3: 0.0660 } };
+const Gp = buildFarolGroups_(MM, {}, RANGE, false, null, RETMES_SET, {});
+const p1 = cardOf(Gp, 'Depósito M0→M1'), p2 = cardOf(Gp, 'Depósito M1→M2'), p3 = cardOf(Gp, 'Depósito M3+');
+ok(p1 && near(p1.prevAct, 0.0421), 'M0->M1: prevAct = 4,21% (ago ate o dia 2)');
+ok(p2 && near(p2.prevAct, 0.0403), 'M1->M2: prevAct = 4,03%');
+ok(p3 && near(p3.prevAct, 0.0447), 'M3+  : prevAct = 4,47% — a RESIDUAL, nao o 4,31% de coorte');
+ok(p1 && /no mesmo dia de ago\/26/.test(p1.prevLabel || ''), 'o rotulo nomeia o mes do lado (ago/26)');
+ok(p1 && near(p1.paceBp, 0.603 * 0.101), 'REGRESSAO: o ritmo continua intacto no mesmo card');
+ok(p1 && near(p1.act, 0.034) && near(p1.bp, 0.603), 'REGRESSAO: valor e meta do card nao foram tocados');
+// o tooltip precisa dar o PAR HONESTO (mesmo corte dos dois lados) — sem isso o leitor compara o
+// headline (view mensal, ja com hoje pela metade) contra um numero de outro corte e le flat onde caiu.
+ok(p1 && /3,9%/.test(p1.prevTitle || '') && /-8%/.test((p1.prevTitle || '').replace(/\u2212/g, '-')),
+   'o tooltip traz o mesmo corte deste mes (3,9%) e o delta (-8%)');
+ok(p3 && /residual/.test(p3.prevTitle || ''), 'so o M3+ avisa que a regua e a residual');
+ok(p1 && /dia 2 \(de 31\)/.test(p1.prevTitle || ''), 'o tooltip diz ate que dia foi medido o mes passado');
+
+console.log('\n— os casos em que o "mesmo dia do mes passado" NAO pode aparecer —');
+ok(!cardOf(buildFarolGroups_(MM, {}, RANGE, false, null, { ...RETMES_SET, prev: null }, {}), 'Depósito M0→M1').prevAct,
+   'backend antigo (sem prev no payload): degrada sem linha');
+ok(!cardOf(buildFarolGroups_(MM, {}, RANGE, false, null, RETMES_SET, { channels: ['meta_ads'] }), 'Depósito M0→M1').prevAct,
+   'slicer de CANAL: o retmes e house-level, mostrar a casa sob um recorte seria mentira');
+ok(!cardOf(buildFarolGroups_(MM, {}, RANGE, false, null, RETMES_SET, { scope: 'growth' }), 'Depósito M0→M1').prevAct,
+   'escopo GROWTH: mesma razao');
+ok(!cardOf(buildFarolGroups_(MM, {}, { from: '2026-04-01', to: '2026-09-01' }, true, null, RETMES_SET, {}), 'Depósito M0→M1').prevAct,
+   'janela YTD/multi-mes: o retmes olha outro mes');
+// mes FECHADO: os dois lados sao meses inteiros -> o rotulo muda de "mesmo dia" p/ "mes cheio"
+const fech = cardOf(buildFarolGroups_(MM, {}, { from: '2026-08-01', to: '2026-08-31' }, false, null,
+  { mes: '2026-08', diaOk: 31, diasNoMes: 31, mesesCurva: [], pace: { m1: 1, m2: 1, m3: 1 },
+    prev: { mes: '2026-07', dia: 31, diasNoMes: 31, m1: 0.478, m2: 0.522, m3: 0.852 },
+    mtdCard: { m1: 0.417, m2: 0.559, m3: 0.711 } }, {}), 'Depósito M0→M1');
+ok(fech && near(fech.prevAct, 0.478) && /jul\/26 \(mês cheio\)/.test(fech.prevLabel || ''),
+   'mes fechado: compara mes cheio contra mes cheio e o rotulo diz isso');
+
+console.log('\n— Hero: a linha aparece e nao mexe em nada do resto —');
+const sPrev = txt(Hero({ metric: p1, variant: 'farol' }));
+ok(/no mesmo dia de ago\/26/.test(sPrev), 'a linha sai renderizada no card do Farol');
+// 3,4% realizado contra 6,09% esperado p/ o dia 2 (0,603 x 0,101) = 56% -> VERMELHO.
+ok(/farol-dot vermelho/.test(sPrev), 'REGRESSAO: a bolinha continua medindo RITMO (nao o mes passado)');
+ok((sPrev.match(/"pct (verde|amarelo|vermelho|cinza)"/g) || []).length === 1, 'REGRESSAO: continua so UM % colorido no card (o do ritmo) — a linha nova entra SEM %');
+const sPrevStd = txt(Hero({ metric: p1, variant: null }));
+ok(/no mesmo dia de ago\/26/.test(sPrevStd), 'variante padrao do Hero: mesma linha');
+const semPrev = { ...p1 }; delete semPrev.prevAct;
+ok(!/mesmo dia/.test(txt(Hero({ metric: semPrev, variant: 'farol' }))), 'REGRESSAO: card sem prevAct sai como antes');
+ok(!/mesmo dia/.test(txt(Hero({ metric: inv, variant: 'farol' }))), 'REGRESSAO: card comum (Investimento) intacto');
+
 console.log('\n' + (fail ? 'FALHOU: ' : 'TUDO OK: ') + pass + ' passaram, ' + fail + ' falharam');
 process.exit(fail ? 1 : 0);

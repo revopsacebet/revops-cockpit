@@ -484,6 +484,16 @@ function Hero({ metric, variant }) {
                 <span className={`pct ${farolEff}`}>{fmtPct(pctPace, 0)}</span>
               </div>
             )}
+            {/* ONDE ESTÁVAMOS NO MESMO PONTO DO MÊS PASSADO (pedido do Luis, 03/09). Sem farol e sem %
+                de propósito: é referência, não meta — quem julga ritmo é a linha "Esperado hoje" acima.
+                ⚠️ O valor é medido no MESMO corte do `prev` (dia fechado), que não é exatamente o corte
+                do valor grande do card (view mensal, inclui hoje pela metade) — o tooltip dá o par
+                honesto. Card que não manda prevAct não muda em nada. */}
+            {metric.prevAct != null && (
+              <div className="hf-m1" title={metric.prevTitle || undefined}>
+                <span className="m1-val">{fmtVal(metric.prevAct, metric.fmt)}</span>{' '}{metric.prevLabel || 'no mesmo dia do mês passado'}
+              </div>
+            )}
             {metric.trend != null && (
               <div className="hf-trend" title="Projeção de fechamento do mês = MTD × (dias do mês ÷ dias decorridos)">
                 <span className="trend-tag">↗ Trend</span> <span className="trend-val">{fmtVal(metric.trend, metric.fmt)}</span>
@@ -538,6 +548,11 @@ function Hero({ metric, variant }) {
             <span><span className="bp-label">Esperado hoje</span> <span className="bp-val">{fmtVal(metric.paceBp, metric.fmt)}</span></span>
             <span className={`pct ${farolEff}`}>{fmtPct(pctPace, 0)}</span>
           </div>
+        </div>
+      )}
+      {metric.prevAct != null && (
+        <div className="delta-m1" title={metric.prevTitle || undefined}>
+          <span className="m1-val">{fmtVal(metric.prevAct, metric.fmt)}</span>{' '}{metric.prevLabel || 'no mesmo dia do mês passado'}
         </div>
       )}
       {metric.trend != null && (
@@ -3263,7 +3278,7 @@ function buildFarolSpark_(spark, chFilter) {
   };
 }
 
-function buildFarolGroups_(MM, f, range, useYtd, sparkByKey, retMes) {
+function buildFarolGroups_(MM, f, range, useYtd, sparkByKey, retMes, chFilter) {
   // Fator de projeção de fechamento = run-rate puro (dias do mês ÷ dias decorridos).
   // ⚠️ 2026-08-05: ANTES o fator era `ggrTrend ÷ ggr`, na crença de que projetava pela "curva do GGR" em vez
   // de reta. Não projetava: o backend calcula `ggrTrend = mtd.ngr × (daysInMonth / daysElapsed)`, então a
@@ -3363,6 +3378,41 @@ function buildFarolGroups_(MM, f, range, useYtd, sparkByKey, retMes) {
         + `número; a meta do mês cheio fica na linha de cima.`,
     };
   };
+  // ---- ONDE ESTÁVAMOS NO MESMO PONTO DO MÊS PASSADO (pedido do Luis, 03/09: "inclui aqui como
+  // estávamos pra cada retenção no mesmo período do mês passado"). Vem pronto do backend
+  // (only=retmes → `prev`), medido na fonte DIÁRIA: mesmo dia do mês, limitado ao tamanho do mês
+  // anterior. Os dois lados da comparação (`mtdCard` e `prev`) saem do MESMO corte e da MESMA régua —
+  // inclusive o M3+, que no backend é a RESIDUAL da Farol (recorrente − M+1 − M+2) e não o ratio de
+  // coorte do deck: em ago/26 as duas dão 71,1% e 75,5%, então trocar de régua aqui compararia o card
+  // com outra coisa.
+  // ⚠️ SÓ NO TOTAL DA CASA: a query do retmes não tem canal (o denominador é o M0 da casa). Com slicer
+  // de canal ou escopo growth a linha SOME, em vez de mostrar número da casa debaixo de um recorte —
+  // mesma regra das 3 linhas mensais da aba Métricas do dia a dia.
+  // ⚠️ Mesmo mês do card (igual ao ritmo): em janela YTD/multi-mês o retmes olha outro mês.
+  // ⚠️ O valor GRANDE do card não é do mesmo corte (view mensal, já inclui hoje pela metade) — por isso
+  // o tooltip mostra o par honesto (mtdCard × prev) em vez de deixar a conta pro olho.
+  const semRecorte = chList_(chFilter).length === 0 && !(chFilter && chFilter.scope === 'growth');
+  const prevMes = (retMes && retMes.prev && retMes.mtdCard && !useYtd && semRecorte && range && range.from
+    && retMes.mes === String(range.from).slice(0, 7)) ? retMes : null;
+  const mesLbl_ = (mk) => (MONTH_ABBR_[+String(mk).slice(5, 7) - 1] || mk) + '/' + String(mk).slice(2, 4);
+  const pv = (m, k) => {
+    const p = prevMes ? prevMes.prev[k] : null;
+    const cur = prevMes ? prevMes.mtdCard[k] : null;
+    if (!m || p == null || !(p > 0)) return m;
+    const d = (cur != null) ? (cur / p - 1) : null;
+    const cheio = prevMes.prev.dia >= prevMes.prev.diasNoMes && prevMes.diaOk >= prevMes.diasNoMes;
+    return { ...m,
+      prevAct: p,
+      prevLabel: cheio ? `em ${mesLbl_(prevMes.prev.mes)} (mês cheio)` : `no mesmo dia de ${mesLbl_(prevMes.prev.mes)}`,
+      prevTitle: `Onde estávamos no MESMO ponto de ${mesLbl_(prevMes.prev.mes)}: ${fmtPct(p, 1)} até o dia `
+        + `${prevMes.prev.dia} (de ${prevMes.prev.diasNoMes}).`
+        + (cur != null ? ` No MESMO corte deste mês — mesma fonte diária, até o dia ${prevMes.diaOk} — a taxa está em `
+            + `${fmtPct(cur, 1)}, ou seja ${d >= 0 ? '+' : ''}${fmtPct(d, 0)} vs o mês passado. `
+            + `⚠️ Compare com ESSE número, não com o valor grande do card: o card vem da view mensal, que já `
+            + `inclui o dia de hoje pela metade, então ele sai um pouco maior.` : '')
+        + (k === 'm3' ? ' O M3+ desta linha usa a MESMA régua residual do card (recorrente − M+1 − M+2), não o ratio de coorte.' : ''),
+    };
+  };
   return [
     // Registros entra depois do Investimento (ordem do funil: verba → cadastro → FTD). SEM BP (o plano não
     // tem meta de registro) → farol apagado; leva Δ M-1, trend de fechamento e sparkline como os outros
@@ -3382,13 +3432,13 @@ function buildFarolGroups_(MM, f, range, useYtd, sparkByKey, retMes) {
     // Retenção: Depósito (view de coorte, meta fixa do plano) + GGR (ngr net, mesma fórmula/janela, SEM meta).
     // ⚠️ o Depósito M3+ usa o residual da FAROL; o GGR M3+ é ratio de coorte puro — ver tooltip/nota.
     { id: 'retencao', title: 'Retenção', cards: [
-      pc(bl(dressPlain(relabelRet(MM.retM0M1, 'Depósito M0→M1'))), 'm1'),
-      pc(bl(dressPlain(relabelRet(MM.retM1M2, 'Depósito M1→M2'))), 'm2'),
+      pv(pc(bl(dressPlain(relabelRet(MM.retM0M1, 'Depósito M0→M1'))), 'm1'), 'm1'),
+      pv(pc(bl(dressPlain(relabelRet(MM.retM1M2, 'Depósito M1→M2'))), 'm2'), 'm2'),
       // ⚠️ o M3+ da casa é a RESIDUAL da Farol (recorrente − M+1 − M+2), régua diferente do ratio de
       // coorte em que a curva foi medida. Medi as duas FORMAS de acúmulo em jun/jul/ago e elas batem
       // (≤1,5 p.p. tipico, 3,5 p.p. no pior ponto), então a curva serve — o que NÃO se compara entre as
       // duas réguas é o NÍVEL (ago: 71,1% residual vs 75,5% coorte), e esse já era o caso do Orçado.
-      pc(bl(dressPlain(relabelRet(MM.retM3plus, 'Depósito M3+'))), 'm3'),
+      pv(pc(bl(dressPlain(relabelRet(MM.retM3plus, 'Depósito M3+'))), 'm3'), 'm3'),
       dressPlain(MM.retGgrM0M1), dressPlain(MM.retGgrM1M2), dressPlain(MM.retGgrM3plus),
       dressPlain(MM.retTurnM0M1), dressPlain(MM.retTurnM1M2), dressPlain(MM.retTurnM3plus),
     ] },
@@ -3801,7 +3851,7 @@ function TabFarol({ M, farol, range, ytd, ftdByRegister, chFilter, planScenarios
   // Seções liberadas pelo PERFIL (aba Segurança). Mesma natureza do gate de cenário logo acima: filtro
   // de UI, o payload continua trazendo tudo. Admin/sem restrição = todas.
   const secAllow = allowedSecoes_(user);
-  const groups = filterFarolSecoes_(buildFarolGroups_(ov.M, ov.farol, range, useYtd, sparkByKey, retMes), secAllow);
+  const groups = filterFarolSecoes_(buildFarolGroups_(ov.M, ov.farol, range, useYtd, sparkByKey, retMes, chFilter), secAllow);
   const rangeLbl = (range && range.from) ? `${fmtBR_(range.from)} → ${fmtBR_(range.to)}` : '';
   // SEÇÕES RECOLHÍVEIS (pedido do Luis, 01/09). Tudo ABAIXO de "FreeSpins & Bonificação" pode ser
   // recolhido; os grupos de cima ficam sempre abertos porque são a leitura de topo do Farol — escondê-los
