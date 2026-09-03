@@ -440,20 +440,34 @@ function Hero({ metric, variant }) {
   //  • atingimento (só p/ a COR) = maior=melhor → ACT/BP; custo (menor=melhor: CAC/FreeSpins/Bonif) → BP/ACT.
   //    Assim o número diz onde você está vs orçado (>100% = estourou) e a cor diz se isso é bom (custo abaixo do orçado = verde).
   const lb = !!metric.lowerBetter;
-  const ratioBp = (v) => (v == null || metric.bp == null || metric.bp === 0) ? null : v / metric.bp;
-  const attain  = (v) => (v == null || metric.bp == null || metric.bp === 0 || (lb && v === 0)) ? null
-    : (lb ? metric.bp / v : v / metric.bp);
+  // Parametrizados na REFERÊNCIA (era metric.bp fixo) só p/ o bloco de RITMO abaixo poder reusar a
+  // mesma conta contra outro denominador. Com ref = metric.bp o comportamento é idêntico ao de antes.
+  const ratioOn  = (v, ref) => (v == null || ref == null || ref === 0) ? null : v / ref;
+  const attainOn = (v, ref) => (v == null || ref == null || ref === 0 || (lb && v === 0)) ? null
+    : (lb ? ref / v : v / ref);
+  const ratioBp = (v) => ratioOn(v, metric.bp);
+  const attain  = (v) => attainOn(v, metric.bp);
   // Farol off enquanto BP pausado; ACT negativo (dado corrompido) também esconde.
   const gated = !BP_FAROL_ON || (metric.act != null && metric.act < 0);
   const pct   = gated ? null : ratioBp(metric.act);                // razão crua exibida (ACT/BP)
   const farol = farolFromPct(gated ? null : attain(metric.act));   // cor pela qualidade (custo inverte)
+  // ---- RITMO (só cards que mandam `paceBp`: hoje as 3 retenções de depósito) ----
+  // `paceBp` = "onde deveríamos estar HOJE" = meta do MÊS × a fração dela que já costuma ter entrado
+  // até este dia do mês. Existe porque taxa mensal contra meta de mês CHEIO produz farol inútil: no dia
+  // 2 de setembro o card lia "3,4% de 60,3% = 6%" e a bolinha ficava VERMELHA o mês inteiro, virando
+  // verde só no fechamento — farol que só acende quando não dá mais tempo de agir não informa nada.
+  // Quando o card manda paceBp, a BOLINHA e o % passam a medir RITMO e a meta do mês fica na linha de
+  // cima SEM %, como referência do compromisso. Card que não manda paceBp não muda em NADA.
+  const hasPace  = !gated && metric.paceBp != null && metric.paceBp > 0 && metric.bp != null;
+  const pctPace  = hasPace ? ratioOn(metric.act, metric.paceBp) : null;
+  const farolEff = hasPace ? farolFromPct(attainOn(metric.act, metric.paceBp)) : farol;
   // Variante FAROL: valor à esquerda · BP/Trend/M-1 à direita · sparkline das 4 semanas na base (só cards de fluxo).
   if (variant === 'farol') {
     return (
       <div className="hero hero-farol">
         <div className="head">
           <div className="label">{metric.label}</div>
-          <span className={`farol-dot ${farol}`} title={`${fmtPct(pct)} do BP`} />
+          <span className={`farol-dot ${farolEff}`} title={hasPace ? `${fmtPct(pctPace)} do esperado para hoje` : `${fmtPct(pct)} do BP`} />
         </div>
         <div className="hf-body">
           <div className="value">{fmtVal(metric.act, metric.fmt)}</div>
@@ -461,7 +475,13 @@ function Hero({ metric, variant }) {
             {pct != null && (
               <div className="hf-bp" title={metric.bpTitle || undefined}>
                 <span className="bp-label">{metric.bpLabel || 'BP'}</span> <span className="bp-val">{fmtVal(metric.bp, metric.fmt)}</span>{' '}
-                <span className={`pct ${farol}`}>{fmtPct(pct, 0)}</span>
+                {!hasPace && <span className={`pct ${farol}`}>{fmtPct(pct, 0)}</span>}
+              </div>
+            )}
+            {hasPace && (
+              <div className="hf-bp" title={metric.paceTitle || undefined}>
+                <span className="bp-label">Esperado hoje</span> <span className="bp-val">{fmtVal(metric.paceBp, metric.fmt)}</span>{' '}
+                <span className={`pct ${farolEff}`}>{fmtPct(pctPace, 0)}</span>
               </div>
             )}
             {metric.trend != null && (
@@ -501,14 +521,22 @@ function Hero({ metric, variant }) {
     <div className="hero">
       <div className="head">
         <div className="label">{metric.label}</div>
-        <span className={`farol-dot ${farol}`} title={`${fmtPct(pct)} do BP`} />
+        <span className={`farol-dot ${farolEff}`} title={hasPace ? `${fmtPct(pctPace)} do esperado para hoje` : `${fmtPct(pct)} do BP`} />
       </div>
       <div className="value">{fmtVal(metric.act, metric.fmt)}</div>
       {pct != null && (
         <div className="vs-bp" title={metric.bpTitle || undefined}>
           <div className="vs-bp-head">
             <span><span className="bp-label">{metric.bpLabel || 'BP'}</span> <span className="bp-val">{fmtVal(metric.bp, metric.fmt)}</span></span>
-            <span className={`pct ${farol}`}>{fmtPct(pct, 0)}</span>
+            {!hasPace && <span className={`pct ${farol}`}>{fmtPct(pct, 0)}</span>}
+          </div>
+        </div>
+      )}
+      {hasPace && (
+        <div className="vs-bp" title={metric.paceTitle || undefined}>
+          <div className="vs-bp-head">
+            <span><span className="bp-label">Esperado hoje</span> <span className="bp-val">{fmtVal(metric.paceBp, metric.fmt)}</span></span>
+            <span className={`pct ${farolEff}`}>{fmtPct(pctPace, 0)}</span>
           </div>
         </div>
       )}
@@ -3235,7 +3263,7 @@ function buildFarolSpark_(spark, chFilter) {
   };
 }
 
-function buildFarolGroups_(MM, f, range, useYtd, sparkByKey) {
+function buildFarolGroups_(MM, f, range, useYtd, sparkByKey, retMes) {
   // Fator de projeção de fechamento = run-rate puro (dias do mês ÷ dias decorridos).
   // ⚠️ 2026-08-05: ANTES o fator era `ggrTrend ÷ ggr`, na crença de que projetava pela "curva do GGR" em vez
   // de reta. Não projetava: o backend calcula `ggrTrend = mtd.ngr × (daysInMonth / daysElapsed)`, então a
@@ -3306,6 +3334,35 @@ function buildFarolGroups_(MM, f, range, useYtd, sparkByKey) {
   // "isto é o orçado". Por isso esta função nem recebe mais o label do cenário.
   const bl = (m, label) => m ? { ...m, bpLabel: label || CARD_BP_LABEL } : m;
   const blS = (m) => bl(m, CARD_BP_LABEL);
+  // ---- RITMO das 3 retenções de DEPÓSITO (pedido do Luis, 02/09): "quanto deveríamos estar HOJE
+  // pra bater o compromisso". `retMes.pace` é a CURVA DE ACÚMULO INTRAMÊS que o backend mede nos 3
+  // meses fechados anteriores (only=retmes) — a MESMA que alimenta o slide 2 do deck semanal, com
+  // assert cruzado no retmestest.js. Aqui ela só MULTIPLICA a meta do card; nada é recalculado.
+  // Por que faz sentido nestas 3 e não em taxa qualquer: as três têm DENOMINADOR FIXO no dia 1 (é um
+  // número do mês anterior, já fechado) e NUMERADOR que se acumula no mês. Então a meta do mês é
+  // divisível pelo tempo, e "esperado(dia) = meta × fração já acumulada" é bem definido.
+  // ⚠️ A FRAÇÃO NÃO É LINEAR: medido, o M+1 já acumulou ~61% na METADE do mês (contra 50% do linear),
+  // porque parte da safra fez FTD no fim do mês passado e volta a depositar nos primeiros dias.
+  // ⚠️ SÓ quando o mês do retmes == o mês de referência dos cards (queryRetention_ usa o mês do INÍCIO
+  // da janela). Em YTD/multi-mês o retmes olha outro mês e o produto seria meta de setembro × curva de
+  // abril. ⚠️ Em canal/growth o `bp` das 3 já vem null (não há plano por canal) → o ritmo nem aparece.
+  // ⚠️ Mês FECHADO tem pace ≈ 1: aí a linha é redundante com o Orçado e fica de fora (o > 0.999).
+  const paceMes = (retMes && retMes.pace && range && range.from
+    && retMes.mes === String(range.from).slice(0, 7)) ? retMes : null;
+  const pc = (m, k) => {
+    const p = paceMes && paceMes.pace ? paceMes.pace[k] : null;
+    if (!m || p == null || !(p > 0) || p > 0.999 || m.bp == null) return m;
+    const nCur = (paceMes.mesesCurva || []).length;
+    return { ...m, paceBp: m.bp * p,
+      paceTitle: `Onde deveríamos estar HOJE pra fechar o mês no compromisso: meta do mês (${fmtPct(m.bp, 1)}) × `
+        + `${fmtPct(p, 0)}, que é a fração do numerador que já costuma ter entrado até o dia `
+        + `${paceMes.diaOk} de ${paceMes.diasNoMes}. A fração é MEDIDA (não é régua linear — o linear daria `
+        + `${fmtPct(paceMes.diaOk / paceMes.diasNoMes, 0)}), média dos ${nCur} `
+        + `${nCur === 1 ? 'mês fechado' : 'meses fechados'} anteriores${nCur ? ' (' + paceMes.mesesCurva.join(', ') + ')' : ''}. `
+        + `É a MESMA curva do slide 2 do deck semanal. A bolinha e o % deste card medem RITMO contra este `
+        + `número; a meta do mês cheio fica na linha de cima.`,
+    };
+  };
   return [
     // Registros entra depois do Investimento (ordem do funil: verba → cadastro → FTD). SEM BP (o plano não
     // tem meta de registro) → farol apagado; leva Δ M-1, trend de fechamento e sparkline como os outros
@@ -3325,9 +3382,13 @@ function buildFarolGroups_(MM, f, range, useYtd, sparkByKey) {
     // Retenção: Depósito (view de coorte, meta fixa do plano) + GGR (ngr net, mesma fórmula/janela, SEM meta).
     // ⚠️ o Depósito M3+ usa o residual da FAROL; o GGR M3+ é ratio de coorte puro — ver tooltip/nota.
     { id: 'retencao', title: 'Retenção', cards: [
-      bl(dressPlain(relabelRet(MM.retM0M1, 'Depósito M0→M1'))),
-      bl(dressPlain(relabelRet(MM.retM1M2, 'Depósito M1→M2'))),
-      bl(dressPlain(relabelRet(MM.retM3plus, 'Depósito M3+'))),
+      pc(bl(dressPlain(relabelRet(MM.retM0M1, 'Depósito M0→M1'))), 'm1'),
+      pc(bl(dressPlain(relabelRet(MM.retM1M2, 'Depósito M1→M2'))), 'm2'),
+      // ⚠️ o M3+ da casa é a RESIDUAL da Farol (recorrente − M+1 − M+2), régua diferente do ratio de
+      // coorte em que a curva foi medida. Medi as duas FORMAS de acúmulo em jun/jul/ago e elas batem
+      // (≤1,5 p.p. tipico, 3,5 p.p. no pior ponto), então a curva serve — o que NÃO se compara entre as
+      // duas réguas é o NÍVEL (ago: 71,1% residual vs 75,5% coorte), e esse já era o caso do Orçado.
+      pc(bl(dressPlain(relabelRet(MM.retM3plus, 'Depósito M3+'))), 'm3'),
       dressPlain(MM.retGgrM0M1), dressPlain(MM.retGgrM1M2), dressPlain(MM.retGgrM3plus),
       dressPlain(MM.retTurnM0M1), dressPlain(MM.retTurnM1M2), dressPlain(MM.retTurnM3plus),
     ] },
@@ -3682,7 +3743,7 @@ function applyFcRatios_(M, farol, fc, chFilter) {
   return { M: MM, farol: ff };
 }
 
-function TabFarol({ M, farol, range, ytd, ftdByRegister, chFilter, planScenarios, farolSpark, planFcRatios, user }) {
+function TabFarol({ M, farol, range, ytd, ftdByRegister, chFilter, planScenarios, farolSpark, planFcRatios, user, retMes }) {
   // YTD é preset GLOBAL de data: a janela (appliedRange) já é abril→ontem, então usa o M/farol normais.
   // Só muda a comparação: SÓ vs BP — tira M-1 (mesma janela 1 mês atrás) e a projeção de fechamento, que
   // não fazem sentido num acumulado de vários meses.
@@ -3740,7 +3801,7 @@ function TabFarol({ M, farol, range, ytd, ftdByRegister, chFilter, planScenarios
   // Seções liberadas pelo PERFIL (aba Segurança). Mesma natureza do gate de cenário logo acima: filtro
   // de UI, o payload continua trazendo tudo. Admin/sem restrição = todas.
   const secAllow = allowedSecoes_(user);
-  const groups = filterFarolSecoes_(buildFarolGroups_(ov.M, ov.farol, range, useYtd, sparkByKey), secAllow);
+  const groups = filterFarolSecoes_(buildFarolGroups_(ov.M, ov.farol, range, useYtd, sparkByKey, retMes), secAllow);
   const rangeLbl = (range && range.from) ? `${fmtBR_(range.from)} → ${fmtBR_(range.to)}` : '';
   // SEÇÕES RECOLHÍVEIS (pedido do Luis, 01/09). Tudo ABAIXO de "FreeSpins & Bonificação" pode ser
   // recolhido; os grupos de cima ficam sempre abertos porque são a leitura de topo do Farol — escondê-los
@@ -5545,7 +5606,7 @@ const MDD_COORTE_MIN = 7;
 // span. Sem folga suficiente o D30 acharia meia dúzia de safras em vez da média móvel inteira.
 const MDD_LOOKBACK = 30 + 30;
 
-function TabMetricasDia({ retencaoFaixa, chFilter, meta, retFaixaLive }) {
+function TabMetricasDia({ retencaoFaixa, chFilter, meta, retFaixaLive, retMes }) {
   const [faixaSel, setFaixaSel] = React.useState([]);   // multi-select de faixa de FTD; [] = todas
   const [grupoSel, setGrupoSel] = React.useState([]);   // multi-select de grupo de risco; [] = todos
   // Base do multiplicador: 'd0' (default, régua do estudo, D0 = 1,00x) ou 'ftd' (sobre o 1º depósito,
@@ -5570,21 +5631,12 @@ function TabMetricasDia({ retencaoFaixa, chFilter, meta, retFaixaLive }) {
   const grupoOptions = (grFetch.rows && grFetch.rows.length)
     ? Array.from(new Set(grFetch.rows.map(r => r.grupo != null ? String(r.grupo) : 'sem grupo'))).sort()
     : GRUPO_LIST;
-  // RETENÇÕES MENSAIS (M+1/M+2/M3+) — endpoint próprio (only=retmes), porque a query varre o
-  // player_metrics inteiro e não vale pagar isso em todo load do cockpit. Busca 1× por janela.
+  // RETENÇÕES MENSAIS (M+1/M+2/M3+): o `retMes` chega por PROP, buscado 1× no App (only=retmes) —
+  // ver o useRetMes_ lá. Era um fetch local desta aba até 02/09; o Farol passou a usar o mesmo dado
+  // (ritmo das 3 retenções de depósito) e dois fetches na mesma chave de cache eram desperdício.
   // ⚠️ Backend antigo devolve 404/erro → `retMes` fica null e as 3 linhas simplesmente não aparecem;
   // o resto da aba sai igual ao de antes (degradação silenciosa é intencional aqui, ver
   // [[reference-clasp-deploy-auth]]: o deploy do backend pode estar travado por reauth).
-  const [retMes, setRetMes] = React.useState(null);
-  React.useEffect(() => {
-    if (!ENDPOINT_URL || !winTo) return;
-    let vivo = true;
-    fetch(`${ENDPOINT_URL}?${authParam_()}&only=retmes&to=${winTo}`)
-      .then(r => r.ok ? r.json() : Promise.reject(new Error('HTTP ' + r.status)))
-      .then(j => { if (vivo && j && j.retMensal && !j.error) setRetMes(j.retMensal); })
-      .catch(() => { if (vivo) setRetMes(null); });
-    return () => { vivo = false; };
-  }, [winTo]);
 
   const srcRows = grupoActive ? (grFetch.rows || []) : (retencaoFaixa || []);
   const rows = benchApostouRows_(srcRows);
@@ -9569,6 +9621,22 @@ function TabCampanhas({ meta, lottuCampanhas }) {
   );
 }
 
+// Busca as retenções MENSAIS + a curva de acúmulo intramês (only=retmes). Devolve null enquanto não
+// chega, em erro, e em backend antigo (404) — todo consumidor TEM que degradar pra "sem ritmo".
+function useRetMes_(winTo) {
+  const [retMes, setRetMes] = React.useState(null);
+  React.useEffect(() => {
+    if (!ENDPOINT_URL || !winTo) return;
+    let vivo = true;
+    fetch(`${ENDPOINT_URL}?${authParam_()}&only=retmes&to=${winTo}`)
+      .then(r => r.ok ? r.json() : Promise.reject(new Error('HTTP ' + r.status)))
+      .then(j => { if (vivo && j && j.retMensal && !j.error) setRetMes(j.retMensal); })
+      .catch(() => { if (vivo) setRetMes(null); });
+    return () => { vivo = false; };
+  }, [winTo]);
+  return retMes;
+}
+
 const TABS = [
   { id: 'farol', label: 'Farol', component: TabFarol },
   { id: 'monthlyclose', label: 'Monthly Close', component: TabMonthlyClose },
@@ -10884,8 +10952,13 @@ function App({ user, onLogout, config }) {
     };
     warmTimerRef.current = setTimeout(step, WARM_TICK_MS);
   }, [state.isLive, state.loading]);
+  // RETENÇÕES MENSAIS (only=retmes) — 1 fetch por janela, compartilhado pelas abas que usam:
+  // Métricas do dia a dia (3 linhas na tabela) e Farol (ritmo das 3 retenções de depósito).
+  // Endpoint próprio porque a query varre o player_metrics inteiro; está no WARM_TARGETS do backend,
+  // então o custo do scan normalmente já foi pago pelo aquecedor antes de alguém abrir a tela.
+  const retMes = useRetMes_(state.meta && state.meta.to);
   const tabProps = {
-    user, M: dispM, farol: farolMetrics, channels: fChannels, bp: state.bp,
+    user, M: dispM, farol: farolMetrics, channels: fChannels, bp: state.bp, retMes,
     ggrChannels: fGgrChannels, ggrSafra: fGgrSafra, ggrSafraRoas: fGgrSafraRoas, ggrPayback: state.ggrPayback,
     retencaoFaixa: state.retencaoFaixa, retFaixaLive: state.retFaixaLive,
     componentsByChannel: state.componentsByChannel,   // spend/ftd por canal (tbl_performance_daily) — aba CAC usa p/ Investimento bater com o Farol
