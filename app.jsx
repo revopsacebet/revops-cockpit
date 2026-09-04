@@ -7743,14 +7743,20 @@ const ESC_COLS_RET_DIA = [
 // tabela já tem 16 colunas e mais 4 permanentes empurram o multiplicador pra fora da tela.
 const ESC_LOTTU_TIP = 'Mesma régua da seção de retenção ao lado (mês de referência × idade da safra), medida na LOTTU. ';
 const ESC_LOTTU_TIP_D = 'Mesma janela corrida da seção ao lado (blocos de 30 dias desde o FTD de cada conta), medida na LOTTU. ';
-// ⚠️ SÓ DOIS DEGRAUS, e não é escolha: o `lottu_escada.json` em uso tem a grade `dw` com 3 blocos
-// (o janelas.sql dela foi gerado com teto de 90 dias). Sem D120/D90 nem D120+ do lado dela até o
-// tools/lottu-escada/build.js rodar de novo sem o teto — coluna vazia com rótulo lottu seria pior.
+// ⚠️ AS 4 COLUNAS (03/09/2026): o `tools/lottu-escada/janelas.sql` perdeu o teto de 90 dias (testado
+// direto no Metabase pra safra mais velha, 2025-08: 6,7s, chega no bloco 12 — bem longe do timeout que
+// motivou o teto original). Antes só existiam D60/D30 e D90/D60; se o `lottu_escada.json` em uso for de
+// um build anterior a essa data, `dw` ainda vem com só 3 blocos e D120/D90 e D120+ saem vazios — mesmo
+// tratamento de payload velho que o resto da aba já tem (nunca célula com número errado).
 const ESC_COLS_LOTTU_DIA = [
   { key: 'lw1', lb: 'D60/D30', blk: 'lottu', jan: 1, lottu: true, corDe: 'w1',
     tip: ESC_LOTTU_TIP_D + 'Dias 30–59 das safras dela ÷ dias 0–29. Sai do lottu_escada.json (grade `dw`, gerada pelo janelas.sql).' },
   { key: 'lw2', lb: 'D90/D60', blk: 'lottu', jan: 2, lottu: true, corDe: 'w2',
     tip: ESC_LOTTU_TIP_D + 'Dias 60–89 ÷ dias 30–59.' },
+  { key: 'lw3', lb: 'D120/D90', blk: 'lottu', jan: 3, lottu: true, corDe: 'w3',
+    tip: ESC_LOTTU_TIP_D + 'Dias 90–119 ÷ dias 60–89 — o 3º degrau, mesmo análogo do M3/M2 que o lado da Apostou tem.' },
+  { key: 'lwp', lb: 'D120+', blk: 'lottu', jan: 'p', lottu: true, corDe: 'wp',
+    tip: ESC_LOTTU_TIP_D + 'Pool análogo do M3+: Σ de cada bloco a partir do 4º ÷ Σ do bloco anterior de cada um. Mesma álgebra de degrau do lado da Apostou — não é acumulado.' },
 ];
 const ESC_COLS_LOTTU = [
   { key: 'l1', lb: 'M1/M0', blk: 'lottu', ref: 1,   lottu: true, corDe: 'r1',
@@ -8503,8 +8509,20 @@ function TabEscadaMensal({ chFilter, meta, metric, lottuEscada }) {
   // que falta propagar o deploy. Coluna ausente + aviso é inequívoco; 0,0% e vazio, não.
   const dwMax = React.useMemo(() => coortes.reduce((m, c) => Math.max(m, (c.dw || []).length), 0), [coortes]);
   const dwTrunc = temDw && dwMax <= 3 && coortes.some((c) => (c.dep || []).length > 4);
+  // ⚠️ MESMO GUARD, LADO DA LOTTU — INDEPENDENTE do de cima. Até 03/09/2026 o `lottu_escada.json` vinha
+  // sempre truncado em 3 blocos (teto de 90 dias no janelas.sql dela); agora que o build roda sem teto,
+  // um arquivo VELHO (alguém esqueceu de rodar `tools/lottu-escada/build.js` de novo) ainda pode chegar
+  // truncado enquanto o lado Apostou já está cheio — os dois lados precisam de guardas SEPARADOS, senão
+  // um `lottu_escada.json` desatualizado faria D120/D90 da Lottu sair "0,0%" (bloco ausente = zero no
+  // contrato do payload) em vez de coluna ausente + aviso.
+  const lottuDwMax = React.useMemo(() => (lottuCoo || []).reduce((m, c) => Math.max(m, (c.dw || []).length), 0), [lottuCoo]);
+  const lottuDwTrunc = temLottu && lottuDwMax > 0 && lottuDwMax <= 3;
   const colsAll = escCols_(met, temLottu, regua);
-  const cols = dwTrunc ? colsAll.filter((c) => !(c.jan === 'p' || (typeof c.jan === 'number' && c.jan >= 3))) : colsAll;
+  const cols = colsAll.filter((c) => {
+    const bloco4mais = (c.jan === 'p' || (typeof c.jan === 'number' && c.jan >= 3));
+    if (!bloco4mais) return true;
+    return c.lottu ? !lottuDwTrunc : !dwTrunc;
+  });
   const sepCls = pirSepCls_(cols);
   const eixoDef = ESC_EIXOS.find((e) => e.k === eixo) || ESC_EIXOS[0];
   const porSafra = eixo === 'safra';
