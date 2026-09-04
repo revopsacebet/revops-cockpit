@@ -6707,6 +6707,13 @@ function TabPiramideCoorte({ retencaoFaixa, chFilter, meta, retFaixaLive }) {
   // ~208 campanhas e a cauda, além de ilegível, esticava a escala de cor da tabela inteira. Nada é
   // escondido: o resto vira uma linha agregada, e as linhas visíveis continuam somando o Total.
   const [topN, setTopN] = usePersistedState('rvops:pirTopN', true);
+  // "Excluir high roller" (pedido do Luis, 03/09/2026): tira do CÁLCULO toda conta que APOSTOU
+  // (turnover) mais de R$15.000 no mês-calendário em questão. É DINÂMICO por conta-mês: a mesma safra
+  // pode ter uma conta dentro em M0 e fora em M1 se ela só bateu o teto no 2º mês — não é uma
+  // classificação fixa de "essa conta é high roller". Precisa de recorte no BigQuery (o corte é por
+  // conta, não dá pra fazer client-side com o payload agregado) → entra no mesmo mecanismo de
+  // `axFlags` abaixo, que já sabe pedir um payload próprio e trocar `rowsFull`/`prev` por ele.
+  const [exclHr, setExclHr] = usePersistedState('rvops:pirExclHr', false);
   // Trocar pra um eixo de dimensão LIGA o "só safras maduras" (ver PIR_EIXOS): sem isso a primeira tela
   // que a pessoa vê compara canais com maturidades diferentes, que é a leitura errada mais fácil de
   // fazer aqui. É um setState VISÍVEL (a caixinha marca), não uma regra escondida — dá pra desligar, e
@@ -6749,7 +6756,7 @@ function TabPiramideCoorte({ retencaoFaixa, chFilter, meta, retFaixaLive }) {
   // Multiplicadores.
   const curFrom = (meta && meta.from) || null;
   const curTo   = (meta && meta.to)   || null;
-  const axFlags = ((eixo === 'grupo') ? '&byGrupo=1' : '') + ((eixo === 'campanha' || exTop3) ? '&byCampaign=1' : '');
+  const axFlags = ((eixo === 'grupo') ? '&byGrupo=1' : '') + ((eixo === 'campanha' || exTop3) ? '&byCampaign=1' : '') + (exclHr ? '&exclHr=1' : '');
   const axNeed = !!axFlags;
   const [axCur, setAxCur]   = React.useState({ rows: null, loading: false, error: null });
   const [axPrev, setAxPrev] = React.useState({ rows: null, loading: false, error: null });
@@ -7124,6 +7131,13 @@ function TabPiramideCoorte({ retencaoFaixa, chFilter, meta, retFaixaLive }) {
                     + 'e cortar só de um lado fabricaria a melhora. As METAS não mudam.'}>
           <input type="checkbox" checked={!!exTop3} onChange={(e) => setExTop3(e.target.checked)} />
           Sem as {PIR_EX_N} maiores campanhas <span style={{ opacity: .6 }}>(cada mês perde as suas)</span>
+        </label>
+        <label className="pir-tgl" style={{ marginLeft: '12px' }}
+               title={'Tira do CÁLCULO toda conta que apostou (turnover) mais de R$15.000 no mês-calendário. '
+                    + 'DINÂMICO por conta-mês: a mesma conta pode sair em M1 e continuar em M0 se só bateu o teto depois — não é uma etiqueta fixa da conta. '
+                    + 'Pede payload próprio ao backend (não dá pra recortar client-side).'}>
+          <input type="checkbox" checked={!!exclHr} onChange={(e) => setExclHr(e.target.checked)} />
+          Excluir high roller <span style={{ opacity: .6 }}>(turnover &gt; R$15k/mês)</span>
         </label>
       </div>
       <div className="support pir-nored">
@@ -8184,6 +8198,13 @@ function TabEscadaMensal({ chFilter, meta, metric, lottuEscada }) {
   // "M3+ sem reativados" — pedido do Luis (22/08). Default LIGADO: com reativados o M3+ passa de 100%
   // em vários meses e o número deixa de significar retenção.
   const [semReat, setSemReat] = usePersistedState(pk('SemReat'), true);
+  // "Excluir high roller" (pedido do Luis, 03/09/2026): tira do CÁLCULO toda conta que apostou
+  // (turnover) mais de R$15.000 no MÊS-IDADE em questão. DINÂMICO por conta-mês (ver o comentário
+  // gêmeo na Pirâmide de Coorte) — a mesma safra some do M1 e continua no M0 se só bateu o teto depois.
+  // Recorte é feito no BQ; os 4 payloads desta aba (base/campanha/grupo/campanha×grupo) são resetados
+  // no toggle (ver o efeito logo abaixo dos fetches) e voltam a buscar já com `&exclHr=1`.
+  const [exclHr, setExclHr] = usePersistedState(pk('ExclHr'), false);
+  const hrQ = exclHr ? '&exclHr=1' : '';
   const [faixaSel, setFaixaSel] = React.useState([]);
   // FILTRO por grupo de risco (pedido do Luis, 24/08) — irmão do de faixa, com um custo a mais: a faixa
   // já vem no payload base e o grupo NÃO, então ligar o filtro obriga a aba a trocar de fonte pro payload
@@ -8211,11 +8232,22 @@ function TabEscadaMensal({ chFilter, meta, metric, lottuEscada }) {
   // e o payload iria de ~600KB para ~2,5MB pro front jogar 99% fora. Então o RECORTE VAI PRO SERVIDOR
   // (`&camp=<slug>`, backend v83) e isto aqui é um cache POR CAMPANHA — trocar e voltar não re-consulta.
   const [dadosCpGr, setDadosCpGr] = React.useState({});
+  // Toggle de high roller muda o RECORTE do BQ, não uma dimensão nova — os 4 payloads (base/campanha/
+  // grupo/campanha×grupo) ficam obsoletos e são resetados pra forçar os efeitos abaixo a buscar de novo
+  // já com `&exclHr=1` (ou sem). Ignora o primeiro render (senão duplicaria o fetch inicial da `dados`).
+  const hrFirst = React.useRef(true);
+  React.useEffect(() => {
+    if (hrFirst.current) { hrFirst.current = false; return; }
+    setDados({ rows: null, loading: true, error: null });
+    setDadosCp({ rows: null, loading: false, error: null });
+    setDadosGr({ rows: null, loading: false, error: null });
+    setDadosCpGr({});
+  }, [exclHr]);
   React.useEffect(() => {
     if (!ENDPOINT_URL) { setDados({ rows: null, loading: false, error: 'sem endpoint' }); return; }
     let vivo = true;
     setDados((s) => ({ ...s, loading: true, error: null }));
-    fetch(`${ENDPOINT_URL}?${authParam_()}&only=escada${qMet}`)
+    fetch(`${ENDPOINT_URL}?${authParam_()}&only=escada${qMet}${hrQ}`)
       .then((r) => r.ok ? r.json() : Promise.reject(new Error('HTTP ' + r.status)))
       .then((j) => {
         if (!vivo) return;
@@ -8227,12 +8259,12 @@ function TabEscadaMensal({ chFilter, meta, metric, lottuEscada }) {
       })
       .catch((e) => { if (vivo) setDados({ rows: null, loading: false, error: String(e.message || e) }); });
     return () => { vivo = false; };
-  }, []);
+  }, [exclHr]);
   React.useEffect(() => {
     if (!ENDPOINT_URL || !dados.rows || dadosCp.rows || dadosCp.loading) return;
     let vivo = true;
     setDadosCp({ rows: null, loading: true, error: null });
-    fetch(`${ENDPOINT_URL}?${authParam_()}&only=escada${qMet}&byCampanha=1`)
+    fetch(`${ENDPOINT_URL}?${authParam_()}&only=escada${qMet}&byCampanha=1${hrQ}`)
       .then((r) => r.ok ? r.json() : Promise.reject(new Error('HTTP ' + r.status)))
       .then((j) => {
         if (!vivo) return;
@@ -8242,7 +8274,7 @@ function TabEscadaMensal({ chFilter, meta, metric, lottuEscada }) {
       })
       .catch((e) => { if (vivo) setDadosCp({ rows: null, loading: false, error: String(e.message || e) }); });
     return () => { vivo = false; };
-  }, [dados.rows]);
+  }, [dados.rows, exclHr]);
   // Cruzamento campanha × grupo, sob demanda: só quando as DUAS coisas estão ativas.
   // ⚠️ DEGRADA SOZINHO com backend velho: sem entender `&camp=`, o v82 devolve o grão inteiro
   // campanha×grupo — pesado, mas o `.filter(campanha === camp)` da fonte entrega a mesma tabela.
@@ -8252,7 +8284,7 @@ function TabEscadaMensal({ chFilter, meta, metric, lottuEscada }) {
     if (st && (st.rows || st.loading)) return;
     let vivo = true;
     setDadosCpGr((s) => ({ ...s, [camp]: { rows: null, loading: true, error: null } }));
-    fetch(`${ENDPOINT_URL}?${authParam_()}&only=escada${qMet}&byCampanha=1&byGrupo=1&camp=${encodeURIComponent(camp)}`)
+    fetch(`${ENDPOINT_URL}?${authParam_()}&only=escada${qMet}&byCampanha=1&byGrupo=1&camp=${encodeURIComponent(camp)}${hrQ}`)
       .then((r) => r.ok ? r.json() : Promise.reject(new Error('HTTP ' + r.status)))
       .then((j) => {
         if (!vivo) return;
@@ -8262,14 +8294,14 @@ function TabEscadaMensal({ chFilter, meta, metric, lottuEscada }) {
       })
       .catch((e) => { if (vivo) setDadosCpGr((s) => ({ ...s, [camp]: { rows: null, loading: false, error: String(e.message || e) } })); });
     return () => { vivo = false; };
-  }, [eixo, camp, grupoSel.length]);
+  }, [eixo, camp, grupoSel.length, exclHr]);
   React.useEffect(() => {
     // ⚠️ `|| camp`: com campanha selecionada quem manda é o payload cruzado acima — buscar o de grupo
     // da casa aqui seria uma query de BigQuery pra um dado que a tela não vai usar. Limpa a campanha e vem.
     if (!(eixo === 'grupo' || grupoSel.length) || camp || !ENDPOINT_URL || dadosGr.rows || dadosGr.loading) return;
     let vivo = true;
     setDadosGr({ rows: null, loading: true, error: null });
-    fetch(`${ENDPOINT_URL}?${authParam_()}&only=escada${qMet}&byGrupo=1`)
+    fetch(`${ENDPOINT_URL}?${authParam_()}&only=escada${qMet}&byGrupo=1${hrQ}`)
       .then((r) => r.ok ? r.json() : Promise.reject(new Error('HTTP ' + r.status)))
       .then((j) => {
         if (!vivo) return;
@@ -8279,7 +8311,7 @@ function TabEscadaMensal({ chFilter, meta, metric, lottuEscada }) {
       })
       .catch((e) => { if (vivo) setDadosGr({ rows: null, loading: false, error: String(e.message || e) }); });
     return () => { vivo = false; };
-  }, [eixo, camp, grupoSel.length]);
+  }, [eixo, camp, grupoSel.length, exclHr]);
 
   const dataMax = meta && meta.dataMaxDate;
   const diaOk = ultimoDiaFechado_(dataMax);
@@ -8762,6 +8794,13 @@ function TabEscadaMensal({ chFilter, meta, metric, lottuEscada }) {
                     + (porDia ? ' ⚠️ NA RÉGUA CORRIDA o mesmo toggle vale em DIAS: a coluna D30/D0 de uma safra só entra quando o ÚLTIMO FTD daquele mês já viveu 59 dias — 89 no D60/D30, 119 no D90/D60. Por isso as safras mais novas ficam vazias nas colunas corridas mesmo tendo mês fechado. No D90+ o corte é por BLOCO: o bloco que ainda não fechou 30 dias sai dos dois lados da razão.' : '')}>
           <input type="checkbox" checked={!!soMaduras} onChange={(e) => setSoMaduras(e.target.checked)} />
           {porDia ? 'Só safras maduras' : 'Só meses fechados'} <span style={{ opacity: .6 }}>{porDia ? '(janela de 30d completa)' : (ultFech ? '(até ' + monthLabelPt_(ultFech + '-01') + ')' : '')}</span>
+        </label>
+        <label className="pir-tgl" style={{ marginLeft: '12px' }}
+               title={'Tira do CÁLCULO toda conta que apostou (turnover) mais de R$15.000 no mês-idade em questão. '
+                    + 'DINÂMICO por conta-mês: a mesma safra pode sumir do M1 e continuar no M0 se só bateu o teto depois — não é uma etiqueta fixa da conta. '
+                    + 'Pede payload próprio ao backend (não dá pra recortar client-side).'}>
+          <input type="checkbox" checked={!!exclHr} onChange={(e) => setExclHr(e.target.checked)} />
+          Excluir high roller <span style={{ opacity: .6 }}>(turnover &gt; R$15k/mês)</span>
         </label>
       </div>
 
