@@ -2295,9 +2295,17 @@ function pirEscala_(linhas,col,base,diaOk,soMaduras,minQtd){const calc=mq=>{cons
 //   M0         = comp.canais.<esc>.m0 (alvo de CALENDÁRIO: até o fim do mês do FTD, não é um dia da
 //                curva) — na base D0 é o mesmo alvo dividido pelo D0/FTD da própria régua.
 // Reconferido contra `Metas de Retenção Rev Ops (1).html` em 14/08/2026.
-const PIR_META={ftd:{Geral:{d0:1.5260,d1:1.8901,d3:2.3302,d4:2.4971,w1:2.9323,w2:3.6590,d30:4.8742,m0:3.6000},Google:{d0:2.0076,d1:2.6401,d3:3.4072,d4:3.6963,w1:4.3960,w2:5.4943,d30:7.2639,m0:5.3671},Meta:{d0:1.5418,d1:1.8956,d3:2.2817,d4:2.4344,w1:2.8407,w2:3.5360,d30:4.7543,m0:3.4924},// --- CASCATEADAS: não são do estudo, são derivadas dele. Ver o bloco logo abaixo da tabela.
+// ⚠️ 2026-09-07 — GERAL estava presa em AGOSTO: o commit 3dfd9d8 (02/09, "compromisso de SETEMBRO no
+// Geral") atualizou MDD_BP_FTD_MULT/MDD_CURVA (usados pela Métricas do dia a dia) mas esqueceu esta
+// cópia — PIR_META é uma constante SEPARADA, específica da Pirâmide de Coorte, não derivada daquelas.
+// O Luis pegou na tela: a régua da Pirâmide mostrava D0 1,53x/D1 1,89x/M0 3,60x (agosto) contra safras
+// de setembro. Valores novos = MDD_BP_FTD_MULT.Geral (base ftd, rolling) e o mesmo ÷ d0 (base d0) — a
+// MESMA fonte (Metas Retencao_v4.html, D.set.roll), só que aqui a base d0 é derivada por divisão em vez
+// de reextraída, porque é assim que o resto do arquivo já relaciona as duas bases (ver PIR_META.d0
+// abaixo). Google/Meta CONTINUAM em agosto de propósito (o estudo de set só calibrou o Geral).
+const PIR_META={ftd:{Geral:{d0:1.69072,d1:2.18727,d3:2.82159,d4:3.07129,w1:3.72585,w2:4.83945,d30:6.54349,m0:4.6600},Google:{d0:2.0076,d1:2.6401,d3:3.4072,d4:3.6963,w1:4.3960,w2:5.4943,d30:7.2639,m0:5.3671},Meta:{d0:1.5418,d1:1.8956,d3:2.2817,d4:2.4344,w1:2.8407,w2:3.5360,d30:4.7543,m0:3.4924},// --- CASCATEADAS: não são do estudo, são derivadas dele. Ver o bloco logo abaixo da tabela.
 'TikTok':{d0:1.5011,d1:1.9110,d3:2.3887,d4:2.5712,w1:3.1761,w2:4.1165,d30:5.4796,m0:3.7033},'Programática':{d0:1.3708,d1:1.5804,d3:1.7621,d4:1.8879,w1:2.1662,w2:2.6643,d30:3.4223,m0:2.6031},'Social Media':{d0:1.4709,d1:1.9178,d3:2.2675,d4:2.4416,w1:2.9558,w2:3.7975,d30:5.1357,m0:3.4196},'Orgânico (sem atribuição)':{d0:1.2214,d1:1.4057,d3:1.5912,d4:1.6813,w1:1.8929,w2:2.3017,d30:3.0198,m0:2.2789}},// base D0: o D0 é a própria âncora (1,00x) → sem meta, e a coluna nem vai pra tela.
-d0:{Geral:{d1:1.2386,d3:1.5270,d4:1.6364,w1:1.9216,w2:2.3977,d30:3.1941,m0:2.3591},Google:{d1:1.3150,d3:1.6971,d4:1.8411,w1:2.1896,w2:2.7367,d30:3.6181,m0:2.6733},Meta:{d1:1.2294,d3:1.4798,d4:1.5789,w1:1.8424,w2:2.2934,d30:3.0835,m0:2.2651},'TikTok':{d1:1.2731,d3:1.5913,d4:1.7129,w1:2.1158,w2:2.7423,d30:3.6504,m0:2.4671},'Programática':{d1:1.1529,d3:1.2855,d4:1.3772,w1:1.5802,w2:1.9436,d30:2.4966,m0:1.8990},'Social Media':{d1:1.3038,d3:1.5416,d4:1.6599,w1:2.0095,w2:2.5818,d30:3.4915,m0:2.3248},'Orgânico (sem atribuição)':{d1:1.1509,d3:1.3028,d4:1.3765,w1:1.5498,w2:1.8845,d30:2.4724,m0:1.8658}}};// ============================================================
+d0:{Geral:{d1:1.2937,d3:1.6689,d4:1.8166,w1:2.2037,w2:2.8624,d30:3.8702,m0:2.7562},Google:{d1:1.3150,d3:1.6971,d4:1.8411,w1:2.1896,w2:2.7367,d30:3.6181,m0:2.6733},Meta:{d1:1.2294,d3:1.4798,d4:1.5789,w1:1.8424,w2:2.2934,d30:3.0835,m0:2.2651},'TikTok':{d1:1.2731,d3:1.5913,d4:1.7129,w1:2.1158,w2:2.7423,d30:3.6504,m0:2.4671},'Programática':{d1:1.1529,d3:1.2855,d4:1.3772,w1:1.5802,w2:1.9436,d30:2.4966,m0:1.8990},'Social Media':{d1:1.3038,d3:1.5416,d4:1.6599,w1:2.0095,w2:2.5818,d30:3.4915,m0:2.3248},'Orgânico (sem atribuição)':{d1:1.1509,d3:1.3028,d4:1.3765,w1:1.5498,w2:1.8845,d30:2.4724,m0:1.8658}}};// ============================================================
 // CASCATA DAS METAS — canais que o estudo NÃO calibrou (pedido do Luis 2026-08-16)
 // ============================================================
 // O estudo só declara Geral/Google/Meta (as palavras "tiktok"/"kwai"/"program" não aparecem no blob).
@@ -3397,7 +3405,7 @@ useEffect(()=>{loadData();},[loadData]);// ⚠️ CACHE-BUSTER dos JSONs estáti
 // correção do FINAL sem nada na tela dizendo que era dado velho. O build.js troca cada
 // __V_<ARQUIVO>__ pelo hash do arquivo, então todo deploy muda a URL e o dado velho não sobrevive.
 // Ver [[feedback-data-tool-freshness]]: fix não acaba até PROPAGAR.
-const ASSET_VER={'benchmark_net.json':'967c080b66','lottu_escada.json':'0d449a0b7e','lottu_campanhas.json':'5a42db2a1e'};const assetUrl_=f=>f+'?v='+(ASSET_VER[f]||'dev');// Benchmark das casas concorrentes — arquivo estático servido ao lado do index.html.
+const ASSET_VER={'benchmark_net.json':'bdcc83fce9','lottu_escada.json':'0d449a0b7e','lottu_campanhas.json':'5a42db2a1e'};const assetUrl_=f=>f+'?v='+(ASSET_VER[f]||'dev');// Benchmark das casas concorrentes — arquivo estático servido ao lado do index.html.
 // 2026-08-05: `benchmark.json` (3 casas, ~828 KB) e `benchmark_sameday.json` (~201 KB) deixaram de ser
 // baixados junto com a remoção da aba Benchmark — ficaram sem consumidor. Os arquivos seguem no repo
 // (o build_benchmark.py ainda os gera); se a aba voltar, é só religar o fetch.
