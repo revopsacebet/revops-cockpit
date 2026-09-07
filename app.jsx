@@ -10052,15 +10052,16 @@ function deriveLiveM_(M, filter, comp, retCh, depCh, bp, ggrRetCh, turnRetCh, pl
 // Plan_RevOps tem meta de GGR/Dep só no blend da casa (todas as safras), e ancorar um numerador de M0
 // numa margem de blend seria aproximação disfarçada de BP. Constante, na mesma linha de FreeSpins/Dep
 // e Bonificação/Dep — por isso o card diz "Orçado" em qualquer cenário.
-// Total da Casa (0,25) > Growth (0,23) porque o numerador do Total soma o GGR de orgânico/afiliados em
-// cima do MESMO denominador (só existe mídia paga) — é ROAS blended, e é esse o ponto do slicer.
-// ⚠️ 2026-09-07 — GROWTH atualizado pro compromisso de SETEMBRO (pedido do Luis: "martelar pra ficar em
-// 0,23x que é a meta"). Fonte: BP_Apostou_V17_Final.xlsx, aba Projection_Revenue, coluna set/26 —
-// `roasGgrM0` do `compromissos-bp.js` = 0,22544 (a MESMA conta do slide "Compromissos de Setembro" do
-// deck: "ROAS GGR M0 set 0,23x"). Era 0,15 (nível de ago/26 fc). `all` (Total Casa) NÃO foi tocado —
-// ainda é o 0,25 de agosto; o BP de set dá 0,2767 nesse escopo (compromissos-bp.js: `roasGgrM0Casa`),
-// então também está desatualizado — só não mexi porque não foi pedido.
-const ROAS_GGR_M0_BP = { all: 0.25, growth: 0.2254 };
+// ⚠️ 2026-09-07 — os DOIS escopos atualizados pro compromisso de SETEMBRO (pedido do Luis: "martelar
+// pra ficar em 0,23x que é a meta" — ele apontou o card de Total da Casa, que ainda mostrava 0,25x de
+// agosto, então os dois viraram 0,23x). Fonte: BP_Apostou_V17_Final.xlsx, aba Projection_Revenue,
+// coluna set/26, `compromissos-bp.js`: `roasGgrM0` (growth) = 0,22544 · `roasGgrM0Casa` (Total Casa) =
+// 0,27670 — o valor "certo" de Total Casa seria 0,28x, não 0,23x, mas o pedido foi EXPLICITAMENTE
+// igualar os dois em 0,23x, não reconciliar cada um com sua própria fonte. Eram 0,25/ago (Total Casa)
+// e 0,15/ago-fc (Growth). Se um dia isso voltar a incomodar (a régua "Total > Growth" de antes existia
+// porque o numerador do Total soma GGR de orgânico/afiliados sobre o MESMO denominador de mídia paga —
+// é ROAS blended, deveria ser MAIOR que o de growth, não igual), a fonte certa por escopo está acima.
+const ROAS_GGR_M0_BP = { all: 0.2254, growth: 0.2254 };
 // Qualquer recorte (canal específico ou escopo Growth) usa a meta de growth: 0,25 só faz sentido pra casa
 // inteira, onde o GGR não-growth entra no numerador.
 const ROAS_GGR_M0_META = (filter) => (chList_(filter).length || (filter && filter.scope === 'growth'))
