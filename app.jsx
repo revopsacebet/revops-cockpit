@@ -6414,17 +6414,24 @@ function pirEscala_(linhas, col, base, diaOk, soMaduras, minQtd) {
 //   M0         = comp.canais.<esc>.m0 (alvo de CALENDÁRIO: até o fim do mês do FTD, não é um dia da
 //                curva) — na base D0 é o mesmo alvo dividido pelo D0/FTD da própria régua.
 // Reconferido contra `Metas de Retenção Rev Ops (1).html` em 14/08/2026.
-// ⚠️ 2026-09-07 — GERAL estava presa em AGOSTO: o commit 3dfd9d8 (02/09, "compromisso de SETEMBRO no
-// Geral") atualizou MDD_BP_FTD_MULT/MDD_CURVA (usados pela Métricas do dia a dia) mas esqueceu esta
-// cópia — PIR_META é uma constante SEPARADA, específica da Pirâmide de Coorte, não derivada daquelas.
-// O Luis pegou na tela: a régua da Pirâmide mostrava D0 1,53x/D1 1,89x/M0 3,60x (agosto) contra safras
-// de setembro. Valores novos = MDD_BP_FTD_MULT.Geral (base ftd, rolling) e o mesmo ÷ d0 (base d0) — a
-// MESMA fonte (Metas Retencao_v4.html, D.set.roll), só que aqui a base d0 é derivada por divisão em vez
-// de reextraída, porque é assim que o resto do arquivo já relaciona as duas bases (ver PIR_META.d0
-// abaixo). Google/Meta CONTINUAM em agosto de propósito (o estudo de set só calibrou o Geral).
+// ⚠️⚠️ 2026-09-07 — CORRIGIDO 2×: primeiro tirei do agosto preso (commit 3dfd9d8 de 02/09 tinha
+// atualizado MDD_BP_FTD_MULT/MDD_CURVA pra setembro mas esqueceu esta cópia separada), DEPOIS o Luis
+// pegou que a régua ainda estava ERRADA — D14 (4,84x) saía MAIOR que M0 (4,66x), "impossível" na
+// leitura dele: "n faz sentido o d14 ser maior que o M0... é calendário essa porra".
+// ELE TINHA RAZÃO: esta aba mostra o REALIZADO em régua de CALENDÁRIO (truncado no fim do mês do FTD —
+// ver RET_CAL_TIP/[[revops-d14-cohort-vs-calendario-open]], decisão de 26/08), mas eu tinha posto a
+// META em régua CORRIDA (`D.set.roll`, sem teto de mês) — a MESMA fonte de MDD_BP_FTD_MULT, que é
+// certa PRA LÁ porque a Métricas do dia a dia é a única aba que continua corrida de propósito. Aqui não.
+// FIX: trocar `D.set.roll` por `D.set.bm` ("base mês" — a curva do PRÓPRIO estudo já truncada no fim do
+// mês). Prova de que resolve: `D.set.bm[30] === D.set.alvo` EXATAMENTE (4,66) — por construção, 30 dias
+// corridos cabem inteiros em qualquer mês, então a régua de calendário faz D30 convergir pro M0. E
+// bm[14]=4,205 < 4,66 — a invariante D14 ≤ M0 passa a valer por construção, não por sorte. Essa era a
+// "ressalva aberta" da decisão de 26/08 ("as metas por coluna vêm do estudo em janela corrida —
+// refazer as metas na régua nova é trabalho pendente"). Google/Meta continuam em agosto de propósito
+// (o estudo de set só calibrou curva pro Geral).
 const PIR_META = {
   ftd: {
-    Geral:  { d0: 1.69072, d1: 2.18727, d3: 2.82159, d4: 3.07129, w1: 3.72585, w2: 4.83945, d30: 6.54349, m0: 4.6600 },
+    Geral:  { d0: 1.69072, d1: 2.17072, d3: 2.75270, d4: 2.96911, w1: 3.49401, w2: 4.20543, d30: 4.6600, m0: 4.6600 },
     Google: { d0: 2.0076, d1: 2.6401, d3: 3.4072, d4: 3.6963, w1: 4.3960, w2: 5.4943, d30: 7.2639, m0: 5.3671 },
     Meta:   { d0: 1.5418, d1: 1.8956, d3: 2.2817, d4: 2.4344, w1: 2.8407, w2: 3.5360, d30: 4.7543, m0: 3.4924 },
     // --- CASCATEADAS: não são do estudo, são derivadas dele. Ver o bloco logo abaixo da tabela.
@@ -6435,7 +6442,8 @@ const PIR_META = {
   },
   // base D0: o D0 é a própria âncora (1,00x) → sem meta, e a coluna nem vai pra tela.
   d0: {
-    Geral:  { d1: 1.2937, d3: 1.6689, d4: 1.8166, w1: 2.2037, w2: 2.8624, d30: 3.8702, m0: 2.7562 },
+    // idem — ÷ d0 da curva `bm`, não `roll`. w2(D14) 2,4874 < d30/m0 2,7562: mesma invariante, base D0.
+    Geral:  { d1: 1.2839, d3: 1.6281, d4: 1.7561, w1: 2.0666, w2: 2.4874, d30: 2.7562, m0: 2.7562 },
     Google: { d1: 1.3150, d3: 1.6971, d4: 1.8411, w1: 2.1896, w2: 2.7367, d30: 3.6181, m0: 2.6733 },
     Meta:   { d1: 1.2294, d3: 1.4798, d4: 1.5789, w1: 1.8424, w2: 2.2934, d30: 3.0835, m0: 2.2651 },
     'TikTok':                    { d1: 1.2731, d3: 1.5913, d4: 1.7129, w1: 2.1158, w2: 2.7423, d30: 3.6504, m0: 2.4671 },
