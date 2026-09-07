@@ -3963,6 +3963,72 @@ function TabFarol({ M, farol, range, ytd, ftdByRegister, chFilter, planScenarios
   );
 }
 
+// ============================================================
+// ABA "Farol · Volume & GGR" — RÉPLICA DO SLIDE 1 do deck semanal (pedido do Luis, 07/09/2026:
+// "faça uma aba no cockpit exatamente igual ao 1° slide da apresentação de revenue" — a semanal,
+// `tools/farol-deck/build-slide1-ago.js`). NÃO reimplementa o cálculo: reusa exatamente os mesmos
+// cards que o Farol já monta em `buildFarolGroups_` (mesma fonte, mesmo cenário Forecast/rolling que
+// virou padrão em 05/08 — é o que o deck chama de "Orçado"), só corta pro subconjunto fixo do slide e
+// desenha na faixa-de-4 + grade-3×3 em vez do hero-grid corrido de seções do Farol completo.
+// ⚠️ NÃO É UMA 2ª FONTE DE VERDADE: se um card daqui divergir do Farol, é bug de UM dos dois — os
+// dois leem `buildFarolGroups_` com os MESMOS argumentos.
+// ⚠️ O QUE FICOU DE FORA DE PROPÓSITO: o painel "Resumo do Negócio" do slide é PROSA ESCRITA À MÃO
+// toda semana (achados, não fórmula) — não tem como derivar isso de agregados sem inventar leitura.
+// Sem essa caixa, a aba é só os 12 cards; ela não tenta substituir a apresentação, só a espelha.
+function TabFarolCapa({ M, farol, range, farolSpark, planScenarios, planFcRatios, chFilter, retMes, user }) {
+  const sparkByKey = React.useMemo(() => buildFarolSpark_(farolSpark, chFilter), [farolSpark, chFilter]);
+  // Régua FIXA em Forecast (rolling) — não tem switcher de cenário aqui de propósito: é a MESMA leitura
+  // que o deck chama de "Orçado" (ver build-slide1-ago.js), então um seletor deixaria os dois divergirem
+  // sem ninguém perceber. Quem quiser Meta/Conservador usa a aba Farol completa.
+  const scenData = planScenarios && planScenarios.rolling;
+  const scenHasHouse = (h) => !!(h && ((h.totalDeposit || 0) > 0 || (h.ggr || 0) > 0 || (h.turnover || 0) > 0 || (h.m0tt || 0) > 0));
+  const scenOn = !!(scenData && ((scenData.allAgg && scenData.allAgg.invest > 0) || scenHasHouse(scenData.house)));
+  const ov0 = scenOn ? applyScenarioBp_(M || {}, farol || {}, scenData, chFilter) : { M: M || {}, farol: farol || {} };
+  const ov = applyFcRatios_(ov0.M, ov0.farol, planFcRatios, chFilter);
+  const groups = filterFarolSecoes_(buildFarolGroups_(ov.M, ov.farol, range, false, sparkByKey, retMes, chFilter), allowedSecoes_(user));
+  const byId = {}; groups.forEach(g => { byId[g.id] = g; });
+  const cardAt = (gid, idx) => (byId[gid] && byId[gid].cards && byId[gid].cards[idx]) || null;
+  // Faixa de 4 (topo do slide) = Investimento · ROAS FTD (grupo Aquisição) · ROAS Dep M0 · Mult Dep
+  // M0/FTD (grupo Depósito M0). Índices fixos = a MESMA ordem que `buildFarolGroups_` já declara.
+  const strip = [cardAt('aquisicao', 0), cardAt('aquisicao', 4), cardAt('depm0', 1), cardAt('depm0', 2)];
+  // Grade 3×3 (8 cards) = Volume & GGR (5, pula Hold Bruto e ROAS GGR M0 — não estão no slide) +
+  // FreeSpins/Bonificação, só a coluna "/ Dep" (as de Turnover/GGR não entram no slide).
+  const vg = (byId.volumeggr && byId.volumeggr.cards) || [];
+  const fs = (byId.freespins && byId.freespins.cards) || [];
+  const grade = [vg[0], vg[1], vg[2], vg[3], vg[4], vg[6], fs[0], fs[1]];
+  const rangeLbl = (range && range.from) ? `${fmtBR_(range.from)} → ${fmtBR_(range.to)}` : '';
+  const semDado = !groups.length;
+  return (
+    <React.Fragment>
+      <div className="tab-header">
+        <div>
+          <h1>Farol · Volume & GGR</h1>
+          <div className="subtitle">Resumo executivo — {rangeLbl} · Realizado vs Orçado (Forecast) · os mesmos 12 cards da apresentação semanal</div>
+        </div>
+      </div>
+      {semDado && (
+        <div className="support"><div className="ch-note" style={{ marginTop: 0 }}>
+          Nenhuma seção liberada para o seu perfil nesta janela, ou sem dado. Fale com um admin.
+        </div></div>
+      )}
+      {!semDado && (
+        <React.Fragment>
+          <div className="support">
+            <div className="hero-grid">
+              {strip.map((m, i) => (m ? <Hero key={i} metric={m} variant="farol" /> : null))}
+            </div>
+          </div>
+          <div className="support">
+            <div className="hero-grid">
+              {grade.map((m, i) => (m ? <Hero key={i} metric={m} variant="farol" /> : null))}
+            </div>
+          </div>
+        </React.Fragment>
+      )}
+    </React.Fragment>
+  );
+}
+
 // Aba MONTHLY CLOSE — fechamento do mês no formato do FAROL: ACT (BigQuery, consistente com o resto
 // do cockpit) vs BP, linha a linha. Depósitos por safra (M+1/M+2/M3+) vêm de payload.monthlyClose;
 // o resto reusa M (hero metrics) + farolMetrics (CAC/ROAS Dep). % vs BP = atingimento (custo inverte).
@@ -9762,6 +9828,7 @@ function useRetMes_(winTo) {
 
 const TABS = [
   { id: 'farol', label: 'Farol', component: TabFarol },
+  { id: 'farolcapa', label: 'Farol · Volume & GGR', component: TabFarolCapa },
   { id: 'monthlyclose', label: 'Monthly Close', component: TabMonthlyClose },
   { id: 'caccalc', label: 'CAC Calculator', component: TabCacCalculator },
   { id: 'retfaixa', label: 'Multiplicadores e Retenção', component: TabRetencaoFaixa },
