@@ -3456,6 +3456,9 @@ function buildFarolGroups_(MM, f, range, useYtd, sparkByKey, retMes, chFilter) {
     // Mesma fonte/janela dos outros cards por safra (payload.ggrSafra, MTD, segue o filtro de canal).
     { id: 'depsafra', title: 'Depósito por safra (R$)', cards: [
       dressPlain(f.depSafra_m0), dressPlain(f.depSafra_m1), dressPlain(f.depSafra_m2), dressPlain(f.depSafra_m3plus),
+      // Resumo dos 3 buckets acima (M1+M2+M3+) = tudo que NÃO é safra nova, com BP pra acompanhamento
+      // (pedido do Luis, 10/09) — ver o cálculo e o porquê do BP em buildFarolMetrics_ (depSafra_notm0).
+      dressPlain(f.depSafra_notm0),
     ].filter(c => c && c.act != null) },
     // Mesma safra, em CABEÇA (pedido do Luis, 01/09). Fica colada no card de R$ acima porque as duas
     // juntas é que respondem "essa safra é grande porque tem muita gente ou porque tem pouca gente
@@ -10254,6 +10257,23 @@ function buildFarolMetrics_(M, comp, channels, ggrChannels, bp, filter, ggrSafra
              + (jogL ? ' Mesma janela do mês anterior: ' + fmtQty(jogL) + ' depositantes.' : ''))
           : null });
   });
+
+  // DEPÓSITO NÃO-M0 (pedido do Luis, 10/09) = tudo que a casa depositou que NÃO veio da safra nova
+  // (M1+M2+M3+ juntos), em R$. Calculado no nível "Total da Casa" reconciliado (dt/dm0 = MM.depTotal
+  // / MM.depM0Total), NÃO como soma dos 3 buckets do card acima: aqueles vêm de payload.ggrSafra, que
+  // só cobre conta com FTD e trava o M3+ (diverge ~3% do depósito real da casa — ver comentário da
+  // seção Margem por safra, acima). BP = a MESMA subtração no plano (dt.bp − dm0.bp): é o único jeito
+  // de comparar contra meta, porque o plano só declara Depósito Total e Depósito M0 (não quebra por
+  // idade de coorte) — mesmo padrão que o export de PPT já usa (rowsA1 "Depósitos de Recorrentes").
+  const depNotM0Act = (dt.act != null && dm0.act != null) ? dt.act - dm0.act : null;
+  const depNotM0Bp  = (dt.bp  != null && dm0.bp  != null) ? dt.bp  - dm0.bp  : null;
+  const depNotM0M1  = (dt.m1  != null && dm0.m1  != null) ? dt.m1  - dm0.m1  : null;
+  safraMargem['depSafra_notm0'] = Object.assign(
+    mk('Depósito Não-M0 (M1+M2+M3+)', 'brl', depNotM0Act, depNotM0Bp, depNotM0M1),
+    { bpTitle: 'Depósito Total (Casa) − Depósito M0 (Casa). BP = Depósito Total BP − Depósito M0 BP '
+        + '(o plano não quebra a meta de depósito por idade de coorte, só Total e M0). Pode divergir um '
+        + 'pouco da soma dos cards M1+M2+M3+ acima: aqueles vêm de payload.ggrSafra, restrito a conta '
+        + 'com FTD, enquanto este usa o Depósito Total/M0 reconciliado da casa.' });
 
   const bpM = (bp && bp.month) || null;
   let roasDepM0Bp = div(dm0.bp, inv.bp);   // fallback: razão da janela (mock / sem bp.month)
