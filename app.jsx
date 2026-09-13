@@ -3467,7 +3467,9 @@ function buildFarolGroups_(MM, f, range, useYtd, sparkByKey, retMes, chFilter) {
       dressPlain(f.depSafra_m0), dressPlain(f.depSafra_m1), dressPlain(f.depSafra_m2), dressPlain(f.depSafra_m3plus),
       // Resumo dos 3 buckets acima (M1+M2+M3+) = tudo que NÃO é safra nova, com BP pra acompanhamento
       // (pedido do Luis, 10/09) — ver o cálculo e o porquê do BP em buildFarolMetrics_ (depSafra_notm0).
-      dressPlain(f.depSafra_notm0),
+      // blS: sem ele o Hero cai no rótulo default 'BP' e este card ficava sendo o ÚNICO da tela
+      // escrito "BP" enquanto todos os outros dizem "Orçado" (CARD_BP_LABEL).
+      blS(dressPlain(f.depSafra_notm0)),
     ].filter(c => c && c.act != null) },
     // Mesma safra, em CABEÇA (pedido do Luis, 01/09). Fica colada no card de R$ acima porque as duas
     // juntas é que respondem "essa safra é grande porque tem muita gente ou porque tem pouca gente
