@@ -1564,7 +1564,15 @@ const ret=scenData.retention;if(ret&&isTotal){const setRet=(m,v)=>pos(v)!=null?{
 // valor chega null e o card mantém o BP antigo. Cenário sem número no plano ≠ cockpit inventando um.
 if(ret&&isTotal){// `scenBp` igual ao setBp: este número TAMBÉM vem da aba do cenário ativo, então o rótulo do card
 // tem que seguir o cenário (Orçado/Conservador/Forecast) em vez de dizer "BP" fixo.
-const setTt=(o,k,v,title)=>o&&o[k]&&pos(v)!=null?{...o,[k]:{...o[k],bp:v,scenBp:true,bpTitle:title}}:o;newM=setTt(newM,'roasFtd',ret.roasFtdTt,'BP do escopo Total da Casa lido direto da aba de cenário da planilha (linha "ROAS FTD tt"). O plano de aquisição só cobre mídia paga, então ele não serve de orçado pra casa inteira.');newFarol=setTt(newFarol,'cac',ret.cacTt,'BP do escopo Total da Casa lido direto da aba de cenário da planilha (linha "CAC tt"). No escopo Growth o CAC segue calculado do plano de aquisição (investimento ÷ FTD).');}return{M:newM,farol:newFarol};}// Metas de razão do FORECAST — vêm da aba Projection_Revenue (payload.planFcRatios) e substituem o .bp de
+const setTt=(o,k,v,title)=>o&&o[k]&&pos(v)!=null?{...o,[k]:{...o[k],bp:v,scenBp:true,bpTitle:title}}:o;newM=setTt(newM,'roasFtd',ret.roasFtdTt,'BP do escopo Total da Casa lido direto da aba de cenário da planilha (linha "ROAS FTD tt"). O plano de aquisição só cobre mídia paga, então ele não serve de orçado pra casa inteira.');newFarol=setTt(newFarol,'cac',ret.cacTt,'BP do escopo Total da Casa lido direto da aba de cenário da planilha (linha "CAC tt"). No escopo Growth o CAC segue calculado do plano de aquisição (investimento ÷ FTD).');}// --- Depósito Não-M0 (M1+M2+M3+) — RE-ANCORAR junto (achado 13/09) ---
+// ⚠️ Este card nasce DENTRO do buildFarolMetrics_ (10/09), que roda ANTES deste re-anchor de cenário —
+// então ele ficava CONGELADO no bp do backend (Orçado), nunca acompanhando Forecast/Conservador nem
+// reagindo ao filtro de canal/Growth (onde depTotal.bp e depM0Total.bp colapsam no MESMO número do
+// plano de aquisição e a subtração é honestamente 0 — ver Hero, que já sabe exibir bp===0 como meta
+// real). Os outros cards derivados (roasDepM0, multM0, cac, ticketFtd...) já eram recalculados aqui;
+// este ficou de fora por esquecimento quando entrou. Refeito a partir dos depTotal/depM0Total FINAIS
+// (depois de todo re-anchor acima), nunca dos originais que chegaram em newFarol.
+if(newFarol&&newFarol.depSafra_notm0){const dtBp=newM.depTotal&&newM.depTotal.bp,dmBp=newM.depM0Total&&newM.depM0Total.bp;const nv=dtBp!=null&&dmBp!=null?dtBp-dmBp:null;const card=newFarol.depSafra_notm0;newFarol={...newFarol,depSafra_notm0:{...card,bp:nv,pctBp:nv&&card.act!=null?card.act/nv:null,scenBp:!!(newM.depTotal&&newM.depTotal.scenBp||newM.depM0Total&&newM.depM0Total.scenBp||card.scenBp)}};}return{M:newM,farol:newFarol};}// Metas de razão do FORECAST — vêm da aba Projection_Revenue (payload.planFcRatios) e substituem o .bp de
 // Turnover/Rollover/Hold/FreeSpins-Dep/Bonif-Dep. SÓ no cenário Forecast: Orçado e Conservador continuam nas
 // constantes fixas (decisão do Luis 2026-08-05). Existe porque a DB Plan_RevOps discorda da Projection_Revenue
 // no Turnover (ago/26: 70,49M vs 69,11M — a RevOps ainda multiplica por rollover 5,10 em vez de 5,00).

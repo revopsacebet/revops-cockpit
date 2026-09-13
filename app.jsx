@@ -3766,6 +3766,23 @@ function applyScenarioBp_(M, farol, scenData, chFilter) {
     newFarol = setTt(newFarol, 'cac', ret.cacTt,
       'BP do escopo Total da Casa lido direto da aba de cenário da planilha (linha "CAC tt"). No escopo Growth o CAC segue calculado do plano de aquisição (investimento ÷ FTD).');
   }
+  // --- Depósito Não-M0 (M1+M2+M3+) — RE-ANCORAR junto (achado 13/09) ---
+  // ⚠️ Este card nasce DENTRO do buildFarolMetrics_ (10/09), que roda ANTES deste re-anchor de cenário —
+  // então ele ficava CONGELADO no bp do backend (Orçado), nunca acompanhando Forecast/Conservador nem
+  // reagindo ao filtro de canal/Growth (onde depTotal.bp e depM0Total.bp colapsam no MESMO número do
+  // plano de aquisição e a subtração é honestamente 0 — ver Hero, que já sabe exibir bp===0 como meta
+  // real). Os outros cards derivados (roasDepM0, multM0, cac, ticketFtd...) já eram recalculados aqui;
+  // este ficou de fora por esquecimento quando entrou. Refeito a partir dos depTotal/depM0Total FINAIS
+  // (depois de todo re-anchor acima), nunca dos originais que chegaram em newFarol.
+  if (newFarol && newFarol.depSafra_notm0) {
+    const dtBp = newM.depTotal && newM.depTotal.bp, dmBp = newM.depM0Total && newM.depM0Total.bp;
+    const nv = (dtBp != null && dmBp != null) ? dtBp - dmBp : null;
+    const card = newFarol.depSafra_notm0;
+    newFarol = { ...newFarol, depSafra_notm0: { ...card,
+      bp: nv,
+      pctBp: (nv && card.act != null) ? card.act / nv : null,
+      scenBp: !!((newM.depTotal && newM.depTotal.scenBp) || (newM.depM0Total && newM.depM0Total.scenBp) || card.scenBp) } };
+  }
   return { M: newM, farol: newFarol };
 }
 
