@@ -451,6 +451,15 @@ function Hero({ metric, variant }) {
   const gated = !BP_FAROL_ON || (metric.act != null && metric.act < 0);
   const pct   = gated ? null : ratioBp(metric.act);                // razão crua exibida (ACT/BP)
   const farol = farolFromPct(gated ? null : attain(metric.act));   // cor pela qualidade (custo inverte)
+  // ⚠️ Orçado ZERO é meta REAL em alguns cards (ex.: Depósito Não-M0 em escopo canal/Growth — o plano só
+  // cobre M0 nesse recorte, então "o resto" é zero por construção, não "sem meta"). `ratioOn`/`attainOn`
+  // retornam null pra ref=0 (divisão indefinida) — sem este caso a linha de Orçado sumia e a bolinha
+  // ficava cinza, indistinguível de "não medimos isso aqui". Sem %, porque real ÷ 0 não tem leitura —
+  // só a bolinha (vermelha se sobrou algo pra gastar contra meta zero, cinza se bateu certinho em zero).
+  const zeroBp   = !gated && metric.bp === 0;
+  const farolZero = zeroBp ? ((metric.act > 0) ? 'vermelho' : 'cinza') : null;
+  const showBp   = pct != null || zeroBp;
+  const pctCor   = zeroBp ? farolZero : farol;
   // ---- RITMO (só cards que mandam `paceBp`: hoje as 3 retenções de depósito) ----
   // `paceBp` = "onde deveríamos estar HOJE" = meta do MÊS × a fração dela que já costuma ter entrado
   // até este dia do mês. Existe porque taxa mensal contra meta de mês CHEIO produz farol inútil: no dia
@@ -460,22 +469,22 @@ function Hero({ metric, variant }) {
   // cima SEM %, como referência do compromisso. Card que não manda paceBp não muda em NADA.
   const hasPace  = !gated && metric.paceBp != null && metric.paceBp > 0 && metric.bp != null;
   const pctPace  = hasPace ? ratioOn(metric.act, metric.paceBp) : null;
-  const farolEff = hasPace ? farolFromPct(attainOn(metric.act, metric.paceBp)) : farol;
+  const farolEff = hasPace ? farolFromPct(attainOn(metric.act, metric.paceBp)) : (zeroBp ? farolZero : farol);
   // Variante FAROL: valor à esquerda · BP/Trend/M-1 à direita · sparkline das 4 semanas na base (só cards de fluxo).
   if (variant === 'farol') {
     return (
       <div className="hero hero-farol">
         <div className="head">
           <div className="label">{metric.label}</div>
-          <span className={`farol-dot ${farolEff}`} title={hasPace ? `${fmtPct(pctPace)} do esperado para hoje` : `${fmtPct(pct)} do BP`} />
+          <span className={`farol-dot ${farolEff}`} title={hasPace ? `${fmtPct(pctPace)} do esperado para hoje` : zeroBp ? 'Orçado R$ 0 neste recorte' : `${fmtPct(pct)} do BP`} />
         </div>
         <div className="hf-body">
           <div className="value">{fmtVal(metric.act, metric.fmt)}</div>
           <div className="hf-stats">
-            {pct != null && (
-              <div className="hf-bp" title={metric.bpTitle || undefined}>
+            {showBp && (
+              <div className="hf-bp" title={zeroBp ? 'Orçado é R$ 0 neste recorte (o plano não cobre esta métrica aqui) — sem % porque real ÷ 0 não é uma razão.' : (metric.bpTitle || undefined)}>
                 <span className="bp-label">{metric.bpLabel || 'BP'}</span> <span className="bp-val">{fmtVal(metric.bp, metric.fmt)}</span>{' '}
-                {!hasPace && <span className={`pct ${farol}`}>{fmtPct(pct, 0)}</span>}
+                {!hasPace && <span className={`pct ${pctCor}`}>{zeroBp ? '—' : fmtPct(pct, 0)}</span>}
               </div>
             )}
             {hasPace && (
@@ -534,11 +543,11 @@ function Hero({ metric, variant }) {
         <span className={`farol-dot ${farolEff}`} title={hasPace ? `${fmtPct(pctPace)} do esperado para hoje` : `${fmtPct(pct)} do BP`} />
       </div>
       <div className="value">{fmtVal(metric.act, metric.fmt)}</div>
-      {pct != null && (
-        <div className="vs-bp" title={metric.bpTitle || undefined}>
+      {showBp && (
+        <div className="vs-bp" title={zeroBp ? 'Orçado é R$ 0 neste recorte (o plano não cobre esta métrica aqui) — sem % porque real ÷ 0 não é uma razão.' : (metric.bpTitle || undefined)}>
           <div className="vs-bp-head">
             <span><span className="bp-label">{metric.bpLabel || 'BP'}</span> <span className="bp-val">{fmtVal(metric.bp, metric.fmt)}</span></span>
-            {!hasPace && <span className={`pct ${farol}`}>{fmtPct(pct, 0)}</span>}
+            {!hasPace && <span className={`pct ${pctCor}`}>{zeroBp ? '—' : fmtPct(pct, 0)}</span>}
           </div>
         </div>
       )}
@@ -10268,8 +10277,14 @@ function buildFarolMetrics_(M, comp, channels, ggrChannels, bp, filter, ggrSafra
   const depNotM0Act = (dt.act != null && dm0.act != null) ? dt.act - dm0.act : null;
   const depNotM0Bp  = (dt.bp  != null && dm0.bp  != null) ? dt.bp  - dm0.bp  : null;
   const depNotM0M1  = (dt.m1  != null && dm0.m1  != null) ? dt.m1  - dm0.m1  : null;
-  safraMargem['depSafra_notm0'] = Object.assign(
-    mk('Depósito Não-M0 (M1+M2+M3+)', 'brl', depNotM0Act, depNotM0Bp, depNotM0M1),
+  const notM0Card = mk('Depósito Não-M0 (M1+M2+M3+)', 'brl', depNotM0Act, depNotM0Bp, depNotM0M1);
+  // ⚠️ o `mk` genérico trata bp===0 como "sem meta" (guard `bpv !== 0`, pensado pra valor não-inicializado)
+  // — mas aqui 0 é uma meta REAL: em escopo canal/Growth, dt.bp e dm0.bp colapsam no MESMO número do
+  // plano de M0 (o plano não separa "resto" por canal), então a subtração é honestamente zero, não "sem
+  // dado". Sem este reforço a linha de Orçado sumia (bolinha cinza) e ficava indistinguível de "não
+  // calculamos isso aqui". O Hero sabe ler bp===0 (farol vermelho se o realizado for >0, sem % — ver Hero).
+  if (depNotM0Bp === 0) notM0Card.bp = 0;
+  safraMargem['depSafra_notm0'] = Object.assign(notM0Card,
     { bpTitle: 'Depósito Total (Casa) − Depósito M0 (Casa). BP = Depósito Total BP − Depósito M0 BP '
         + '(o plano não quebra a meta de depósito por idade de coorte, só Total e M0). Pode divergir um '
         + 'pouco da soma dos cards M1+M2+M3+ acima: aqueles vêm de payload.ggrSafra, restrito a conta '
