@@ -5607,6 +5607,59 @@ const MDD_COMP_RET = {
 // mês-calendário (safra de 30/09 tem 1 dia de exposição), que é justamente o que a base mês modela.
 // As linhas D1..D30 acima são rolling. set/26 = 4,66x (era 3,60x em ago).
 const MDD_COMP_M0 = { Geral: 4.6600, Google: 5.3671, Meta: 3.4924 };
+// ============================================================
+// ORÇADO **MTD** DOS CARDS DE M0 DO FAROL (ROAS Dep M0 · Multiplicador M0)
+//
+// ⚠️ ATÉ 14/09/2026 OS DOIS CARDS COBRAVAM O ALVO DE MÊS FECHADO NUMA JANELA MTD. O comentário antigo
+// dizia *"razão do MÊS INTEIRO do plano, nunca a soma prorateada da janela"* — e o raciocínio está certo
+// pra CAC e ticket, que são razões SEM maturação. NÃO vale pro M0: ele MATURA. A safra do dia 12 ainda
+// não teve mês nenhum, então medi-la contra 4,66x é corrida arranjada. Em 01–12/09 isso pintava
+// ROAS Dep M0 em 52% e Multiplicador M0 em 50% — com o realizado idêntico, na régua certa dá ~77%/79%.
+// Pedido do Luis (14/09): *"e os ROAS orçados no MTD que pedi?"* — já era a régua do deck; o front tinha
+// ficado pra trás.
+//
+// A CONTA (a MESMA do `m0Esperado` do deck, em `tools/farol-deck/curva-compromisso.js`): avaliar a curva
+// de compromisso na IDADE REAL de cada safra da janela, ponderada pelo FTD$ daquele dia —
+//     fator = Σ(ftd$_dia × cum(idade_dia)) ÷ (Σftd$_dia × cum(30))
+// e o orçado MTD = orçado do mês × fator. O fator é uma propriedade do MIX DE IDADES da janela, então
+// serve igual pros dois cards e pra qualquer escopo (Total Casa / Growth / canal) — o que muda por escopo
+// é o orçado do mês, que cada um já calcula do seu jeito logo abaixo.
+//
+// ⚠️ CURVA **BASE MÊS**, NÃO ROLLING. Regra do Luis cobrada em 13/09/2026: *"já tinha te falado semana
+// passada que vc estava puxando de rolling. é pra puxar calendário"*. A `MDD_CURVA.ftd.Geral` acima é a
+// ROLLING (termina em 6,54x) e NÃO serve aqui: o card de M0 é mês-calendário. Esta termina em 4,66x, que
+// é exatamente o `MDD_COMP_M0.Geral` — é esse fechamento que prova que numerador e denominador do fator
+// saem da MESMA régua. Na virada de mês, reextrair as duas do estudo juntas.
+const FAROL_CURVA_M0_BM = [
+  1.69072, 2.17072, 2.48138, 2.75270, 2.96911, 3.17086,
+  3.33717, 3.49401, 3.62893, 3.75762, 3.85617, 3.95519,
+  4.04553, 4.12504, 4.20543, 4.27239, 4.32644, 4.37571,
+  4.42071, 4.46150, 4.50181, 4.53867, 4.56882, 4.59486,
+  4.61283, 4.62890, 4.64156, 4.65081, 4.65705, 4.66000,
+  4.66000,
+];
+// Fator ∈ (0,1]. `dias` = [{d:'YYYY-MM-DD', ftd:Number}] do plano house (payload.bp.dias, backend v75+).
+// Corte = último dia da própria série (é a janela que o backend já recortou) — nada a plumbar.
+// Devolve null quando não dá pra calcular; aí o card CAI DE VOLTA no alvo de mês, que é o que ele fazia
+// antes. Degradar pro comportamento antigo é melhor do que sumir com a linha de Orçado.
+function farolM0Maturacao_(dias) {
+  if (!Array.isArray(dias) || !dias.length) return null;
+  const cum = (i) => FAROL_CURVA_M0_BM[Math.min(Math.max(i, 0), FAROL_CURVA_M0_BM.length - 1)];
+  const t = Date.parse(dias[dias.length - 1].d);
+  if (!isFinite(t)) return null;
+  let num = 0, den = 0;
+  dias.forEach((r) => {
+    const w = +r.ftd || 0, ts = Date.parse(r.d);
+    if (!(w > 0) || !isFinite(ts)) return;
+    num += w * cum(Math.round((t - ts) / 864e5));
+    den += w;
+  });
+  if (!(den > 0)) return null;
+  const fator = (num / den) / cum(30);
+  // janela inteira madura => 1; nunca > 1 (a curva clampa no M0) nem ≤ 0.
+  return (fator > 0 && fator <= 1.0001) ? Math.min(fator, 1) : null;
+}
+
 // As 3 TAXAS DE PASSAGEM (FTD→STD, STD→TTD, TTD→QTD) saíram da tabela em 06/08/2026 a pedido do Luis
 // ("não vamos mais olhar"), junto com a derivação † que dava meta pra elas. As constantes pStd/pTtd/
 // pQtd continuam no MDD_BP acima e o backend segue mandando cntStd/cntTtd/cntQtd4 — pra religar,
@@ -10340,16 +10393,31 @@ function buildFarolMetrics_(M, comp, channels, ggrChannels, bp, filter, ggrSafra
       if (hh.ftdAmountTt > 0) multM0Bp = (hh.m0tt || 0) / hh.ftdAmountTt;
     }
   }
+  // ⚠️ MATURAÇÃO MTD — aplicada DEPOIS de os dois orçados de mês estarem prontos, de propósito: cada
+  // escopo (canal / growth / casa) calcula o SEU alvo de mês acima, e o fator só reescala. Assim não há
+  // um segundo caminho de cálculo por escopo pra sair de sincronia. Fator null = janela madura ou sem
+  // série diária do plano (backend antigo) => segue no alvo de mês, o comportamento de antes.
+  // ⚠️ NÃO estender isto pro CAC nem pro Tkt Médio FTD: aqueles não maturam (ver bloco da curva).
+  const matM0 = farolM0Maturacao_((bp && bp.dias) || null);
+  if (matM0 != null) {
+    if (roasDepM0Bp != null) roasDepM0Bp *= matM0;
+    if (multM0Bp != null) multM0Bp *= matM0;
+  }
   return {
     cac:         mk('CAC', 'brl', div(inv.act, ftdQtyM), div(B.invest, B.ftd), div(inv.m1, ftdQtyL), true),   // custo: menor=melhor
     ticketFtd:   mk('Tkt Médio FTD', 'brl', div(fa.act, ftdQtyM), div(B.ftdAmount, B.ftd), div(fa.m1, ftdQtyL)),
     roasDepD0:   mk('ROAS Dep D0', 'multiple', div(depD0M, inv.act), div(B.depD0, B.invest), div(depD0Lm, inv.m1)),
     // BP = razão do MÊS INTEIRO do plano (roasDepM0Bp, calculado acima) — NÃO prorateada pela janela.
-    roasDepM0:   mk('ROAS Dep M0', 'multiple', div(dm0.act, inv.act), roasDepM0Bp, div(dm0.m1, inv.m1)),
+    roasDepM0:   Object.assign(mk('ROAS Dep M0', 'multiple', div(dm0.act, inv.act), roasDepM0Bp, div(dm0.m1, inv.m1)),
+      { bpTitle: 'Orçado MTD: o alvo de M0 do mês maturado na IDADE REAL de cada safra da janela (curva de '
+        + 'compromisso base mês, ponderada pelo FTD$ diário do plano)' + (matM0 != null ? ' — ' + (matM0 * 100).toFixed(0) + '% do alvo de fechamento' : '') + '. '
+        + 'Safra que nasceu ontem ainda não teve mês: cobrá-la no alvo de mês fechado seria corrida arranjada.' }),
     // Multiplicador M0 = Dep M0 ÷ FTD Amount — quanto cada R$ de PRIMEIRO depósito virou de depósito
     // no mês. Mesma família do ROAS Dep M0 (que divide pelo investimento); aqui a base é o próprio FTD,
     // então mede reciclagem do depositante e não eficiência de mídia.
-    multM0:      mk('Multiplicador M0', 'multiple', div(dm0.act, fa.act), multM0Bp, div(dm0.m1, fa.m1)),
+    multM0:      Object.assign(mk('Multiplicador M0', 'multiple', div(dm0.act, fa.act), multM0Bp, div(dm0.m1, fa.m1)),
+      { bpTitle: 'Orçado MTD: mesma maturação do ROAS Dep M0 — alvo de M0 do mês × a fração da curva já '
+        + 'exigível no mix de idades da janela' + (matM0 != null ? ' (' + (matM0 * 100).toFixed(0) + '%)' : '') + '.' }),
     roasGgrM0:   mk('ROAS GGR M0', 'multiple', div(ggrM0Sum, inv.act), ROAS_GGR_M0_META(filter), div(ggrM0SumL, inv.m1)),
     ...safraMargem,
     // FreeSpins/Bonif = custos (menor=melhor). BP plano: meta fixa (flat) de % sobre depósitos. Sem trend (pedido do Luis).
