@@ -3582,8 +3582,11 @@ const CENARIOS = [
   // rvops:scen e o que o backend usa nas chaves de planScenarios; renomear o id derrubaria a
   // preferência salva de todo mundo. ⚠️ 2026-08-12: este label NÃO é mais o prefixo dos cards — eles
   // dizem "Orçado" sempre (CARD_BP_LABEL). Renomear cenário aqui não mexe no texto dos cards.
-  { id: 'bp',      label: 'Meta',         color: '#378ADD' },
-  { id: 'conserv', label: 'Conservador',  color: '#F0997B' },
+  // 2026-09-17: 'Meta'→'Interno' e 'Conservador'→'Investidores' (pedido do Luis). Mesma regra de sempre:
+  // só o LABEL muda — os ids ('bp'/'conserv') continuam, senão quebra rvops:scen salvo e as chaves de
+  // planScenarios do backend.
+  { id: 'bp',      label: 'Interno',      color: '#378ADD' },
+  { id: 'conserv', label: 'Investidores', color: '#F0997B' },
   { id: 'rolling', label: 'Forecast',     color: '#9AA0A6' },
 ];
 // Prefixo do BP em TODO card do Farol (2026-08-12, pedido do Luis): fixo em "Orçado", independente do
@@ -3829,10 +3832,10 @@ function TabFarol({ M, farol, range, ytd, ftdByRegister, chFilter, planScenarios
   // Só muda a comparação: SÓ vs BP — tira M-1 (mesma janela 1 mês atrás) e a projeção de fechamento, que
   // não fazem sentido num acumulado de vários meses.
   const useYtd = !!ytd;
-  // Toggle (só Aquisição): FTD por data de FTD ↔ por data de CADASTRO. Só liga se o backend mandou o dado.
-  const [byReg, setByReg] = usePersistedState('rvops:farolFtdReg', false);
-  const hasReg = !!(ftdByRegister && ftdByRegister.length);
-  const active = byReg && hasReg;
+  // 2026-09-17: toggle "FTD por cadastro" REMOVIDO da UI (pedido do Luis) — o Farol é sempre por data de
+  // FTD. `active` fica hardcoded em false de propósito, em vez de só apagar o botão: quem já tinha
+  // `rvops:farolFtdReg=true` no localStorage ficaria travado no modo por cadastro sem botão pra sair.
+  const active = false;
   const src = active ? applyFtdByRegister_(M || {}, farol || {}, ftdByRegister, chFilter) : { MM: M || {}, f: farol || {} };
   // Cenário do plano (BP/Conservador/Rolling): re-anchora o BP dos cards de aquisição + Dep M0 (payload.planScenarios).
   // ⚠️ NÃO persiste (era usePersistedState): todo load/refresh volta pro padrão, então ninguém entra já
@@ -3916,11 +3919,6 @@ function TabFarol({ M, farol, range, ytd, ftdByRegister, chFilter, planScenarios
               {scenCheio && <> O cenário <strong>{scenCheio.label}</strong> cobre a janela inteira.</>}
             </div>
           )}
-          {active && (
-            <div className="subtitle" style={{ color: 'var(--accent-yellow)', marginTop: 6, maxWidth: 720 }}>
-              Aquisição normalizada por <strong>data de cadastro</strong>: FTD Amount, ROAS FTD, CAC e Ticket contam FTDs de quem <em>registrou</em> na janela (não de quem deu FTD). ⚠️ o mês corrente é uma coorte <strong>maturando</strong> — quem registrou e ainda não deu FTD não conta, então o CAC começa alto e cai conforme matura (~30–45d).
-            </div>
-          )}
         </div>
         <div style={{ display: 'flex', flexDirection: 'column', gap: 8, alignItems: 'flex-end' }}>
           {hasScen && (
@@ -3943,16 +3941,6 @@ function TabFarol({ M, farol, range, ytd, ftdByRegister, chFilter, planScenarios
               ))}
             </div>
           )}
-          <button
-            className={`preset-btn ${active ? 'active' : ''}`}
-            onClick={() => setByReg(v => !v)}
-            disabled={!hasReg}
-            title={hasReg
-              ? 'Aquisição: alterna FTD por data de FTD ↔ por data de cadastro (registro). Afeta FTD Amount, ROAS FTD, CAC e Ticket.'
-              : 'Requer o backend v34 (deploy pendente do clasp) — ainda não há dado de FTD por cadastro.'}
-          >
-            FTD por cadastro{!hasReg ? ' (pendente)' : ''}
-          </button>
         </div>
       </div>
       {secAllow && !groups.length && (
