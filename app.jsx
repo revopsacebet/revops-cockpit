@@ -3582,11 +3582,13 @@ const CENARIOS = [
   // rvops:scen e o que o backend usa nas chaves de planScenarios; renomear o id derrubaria a
   // preferência salva de todo mundo. ⚠️ 2026-08-12: este label NÃO é mais o prefixo dos cards — eles
   // dizem "Orçado" sempre (CARD_BP_LABEL). Renomear cenário aqui não mexe no texto dos cards.
-  // 2026-09-17: 'Meta'→'Interno' e 'Conservador'→'Investidores' (pedido do Luis). Mesma regra de sempre:
+  // 2026-09-17: 'Meta'→'Interno' e 'Conservador'→'Investidores'→'Meta' (pedido do Luis, 2 passos no mesmo dia;
+  // o trio final é Forecast / Meta / Interno, batendo com as abas Projection_Revenue[_INTERNO|_investidor]).
+  // Mesma regra de sempre:
   // só o LABEL muda — os ids ('bp'/'conserv') continuam, senão quebra rvops:scen salvo e as chaves de
   // planScenarios do backend.
   { id: 'bp',      label: 'Interno',      color: '#378ADD' },
-  { id: 'conserv', label: 'Investidores', color: '#F0997B' },
+  { id: 'conserv', label: 'Meta',         color: '#F0997B' },
   { id: 'rolling', label: 'Forecast',     color: '#9AA0A6' },
 ];
 // Prefixo do BP em TODO card do Farol (2026-08-12, pedido do Luis): fixo em "Orçado", independente do
