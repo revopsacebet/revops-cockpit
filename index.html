@@ -1491,11 +1491,11 @@ function filterFarolSecoes_(groups,allowed){if(!allowed)return groups;return(gro
 // preferência salva de todo mundo. ⚠️ 2026-08-12: este label NÃO é mais o prefixo dos cards — eles
 // dizem "Orçado" sempre (CARD_BP_LABEL). Renomear cenário aqui não mexe no texto dos cards.
 // 2026-09-17: 'Meta'→'Interno' e 'Conservador'→'Investidores'→'Meta' (pedido do Luis, 2 passos no mesmo dia;
-// o trio final é Forecast / Meta / Interno, batendo com as abas Projection_Revenue[_INTERNO|_investidor]).
+// o trio final é Forecast / Investidor / Interno, batendo com as abas Projection_Revenue[_INTERNO|_investidor]).
 // Mesma regra de sempre:
 // só o LABEL muda — os ids ('bp'/'conserv') continuam, senão quebra rvops:scen salvo e as chaves de
 // planScenarios do backend.
-{id:'bp',label:'Interno',color:'#378ADD'},{id:'conserv',label:'Meta',color:'#F0997B'},{id:'rolling',label:'Forecast',color:'#9AA0A6'}];// Prefixo do BP em TODO card do Farol (2026-08-12, pedido do Luis): fixo em "Orçado", independente do
+{id:'bp',label:'Interno',color:'#378ADD'},{id:'conserv',label:'Investidor',color:'#F0997B'},{id:'rolling',label:'Forecast',color:'#9AA0A6'}];// Prefixo do BP em TODO card do Farol (2026-08-12, pedido do Luis): fixo em "Orçado", independente do
 // cenário elegido. É DE PROPÓSITO desacoplado do label do CENARIOS — o switcher diz qual plano está ativo,
 // o card diz que aquele número é o orçado. Mexer no label de um não deve mexer no do outro.
 const CARD_BP_LABEL='Orçado';function applyScenarioBp_(M,farol,scenData,chFilter){if(!scenData)return{M,farol};const pos=v=>v!=null&&isFinite(v)&&v!==0?v:null;// scenBp marca que ESTE card foi re-anchorado pelo cenário. O rótulo do card segue isso: sem a
