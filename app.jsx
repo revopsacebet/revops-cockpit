@@ -3750,6 +3750,26 @@ function applyScenarioBp_(M, farol, scenData, chFilter) {
       retM1M2:   setRet(newM.retM1M2,   ret.m1m2),
       retM3plus: setRet(newM.retM3plus, ret.m3plus),
     };
+    // --- FreeSpins/Dep e Bonificação/Dep POR CENÁRIO (backend v106+) ---
+    // ⚠️ CORRIGE UM ERRO VISÍVEL (Luis, 18/09: "o do investidor está errado"): estes dois cards só
+    // tinham meta no Forecast (applyFcRatios_); no Interno e no Investidor caíam nas constantes de
+    // 2,0% e 2,8% chumbadas no buildFarolMetrics_ — número que não é de plano nenhum. Agora cada
+    // cenário lê a SUA linha: FreeSpins/Dep sai da Projection do cenário (set/26 3,50% nos três,
+    // mas out/26 4,70% no Forecast contra 3,00% nos outros) e a Bonificação/Dep sai do PnL do
+    // cenário, invertida de GGR p/ depósito — (% bonif × GGR) ÷ dep — porque a linha
+    // "Bonificação / Dep %" da planilha está congelada em 2,80% em todo mês e cenário.
+    // set/26: Forecast 5,02% · Investidor 4,02% · Interno 3,96%.
+    // Sem valor no plano → não zera: mantém o BP que já estava no card.
+    const setRatio = (m, v, title) => (pos(v) != null)
+      ? { ...setBp(m, v), bpTitle: title } : m;
+    newFarol = { ...newFarol,
+      freespinDep: setRatio(newFarol.freespinDep, ret.fsDep,
+        'Orçado = linha "FreeSpins / Dep %" da Projection do cenário ativo, taxa do mês inteiro.'),
+      bonusDep: setRatio(newFarol.bonusDep, ret.bonifDep,
+        'Orçado = linha de Incentivos e Bonificações do PnL do cenário ativo, que é % sobre GGR, '
+        + 'convertida para depósito: (% bonificação × GGR) ÷ Depósito Total do mês. A linha '
+        + '"Bonificação / Dep %" da planilha não é usada — está congelada em 2,80% em todos os meses.'),
+    };
   }
   // --- ROAS FTD e CAC no TOTAL DA CASA: BP sai da planilha, não do plano de aquisição (backend v76+) ---
   // ⚠️ ISTO CORRIGE UM BUG REAL, não é só troca de fonte (Luis, 16/08: "não mudam quando filtramos"):
