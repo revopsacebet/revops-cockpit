@@ -3603,6 +3603,15 @@ function applyScenarioBp_(M, farol, scenData, chFilter) {
   // Importa desde que a janela pode cobrir meses que só têm plano de receita (DB Plan_RevOps vai de
   // abr a dez) e nenhum plano de aquisição (DB Plan_Growth Mkt só tem agosto).
   const setBp = (m, v) => m ? { ...m, bp: pos(v), scenBp: pos(v) != null } : m;
+  // ⚠️ MATURAÇÃO DO M0 SOBREVIVE AO RE-ANCHOR DE CENÁRIO (18/09). Os alvos de ROAS Dep M0 e
+  // Multiplicador M0 nascem MATURADOS no buildFarolMetrics_ (alvo do mês × fator da curva), mas este
+  // re-anchor roda DEPOIS e recalculava a razão crua do plano por cima — o card voltava a mostrar o
+  // alvo de MÊS FECHADO (set/26: 4,66x e 1,93x) no dia 17, como se a safra de ontem já devesse ter
+  // um mês inteiro de depósito. Mesmo tipo de esquecimento do "Depósito Não-M0" em 13/09: quem
+  // reescreve `.bp` aqui precisa reaplicar o que já tinha sido aplicado lá.
+  // O fator viaja no próprio card (`.matM0`, gravado pelo buildFarolMetrics_) — assim não é preciso
+  // plumbar `payload.bp` até aqui, e card sem fator (backend antigo/janela madura) passa reto.
+  const matM0_ = (m, v) => (m && m.matM0 > 0 && v != null && isFinite(v)) ? v * m.matM0 : v;
   let newM = M, newFarol = farol;
   const sel = chList_(chFilter);
   // --- Aquisição + Dep M0 (DB Plan_Growth Mkt, por canal) — reescopa por chFilter ---
@@ -3642,8 +3651,8 @@ function applyScenarioBp_(M, farol, scenData, chFilter) {
       cac:        setBp(newFarol.cac,        ftd ? inv / ftd : null),
       ticketFtd:  setBp(newFarol.ticketFtd,  ftd ? ftdAmt / ftd : null),
       roasDepD0:  setBp(newFarol.roasDepD0,  inv ? depD0 / inv : null),
-      roasDepM0:  setBp(newFarol.roasDepM0,  inv ? depM0 / inv : null),
-      multM0:     setBp(newFarol.multM0,     ftdAmt ? depM0 / ftdAmt : null),
+      roasDepM0:  setBp(newFarol.roasDepM0,  matM0_(newFarol.roasDepM0, inv ? depM0 / inv : null)),
+      multM0:     setBp(newFarol.multM0,     matM0_(newFarol.multM0,    ftdAmt ? depM0 / ftdAmt : null)),
     };
   }
   // --- Receita / Volume de depósito (DB Plan_RevOps, house-level) — SÓ Total da Casa (a aba não tem canal) ---
@@ -3726,8 +3735,8 @@ function applyScenarioBp_(M, farol, scenData, chFilter) {
     if (m0 > 0 && !scenData.houseUplift) {
       newM = { ...newM, depM0Total: setBp(newM.depM0Total, m0) };
       newFarol = { ...newFarol,
-        roasDepM0: setBp(newFarol.roasDepM0, hInv ? m0 / hInv : null),
-        multM0:    setBp(newFarol.multM0,    hFtdAmt ? m0 / hFtdAmt : null),
+        roasDepM0: setBp(newFarol.roasDepM0, matM0_(newFarol.roasDepM0, hInv ? m0 / hInv : null)),
+        multM0:    setBp(newFarol.multM0,    matM0_(newFarol.multM0,    hFtdAmt ? m0 / hFtdAmt : null)),
       };
     }
   }
@@ -10469,7 +10478,7 @@ function buildFarolMetrics_(M, comp, channels, ggrChannels, bp, filter, ggrSafra
     roasDepD0:   mk('ROAS Dep D0', 'multiple', div(depD0M, inv.act), div(B.depD0, B.invest), div(depD0Lm, inv.m1)),
     // BP = razão do MÊS INTEIRO do plano (roasDepM0Bp, calculado acima) — NÃO prorateada pela janela.
     roasDepM0:   Object.assign(mk('ROAS Dep M0', 'multiple', actRoasM0, roasDepM0Bp, div(dm0.m1, inv.m1)),
-      { trend: projM0(actRoasM0), trendTitle: m0TrendTitle,
+      { matM0: matM0, trend: projM0(actRoasM0), trendTitle: m0TrendTitle,
         bpTitle: 'Orçado MTD: o alvo de M0 do mês maturado na IDADE REAL de cada safra da janela (curva '
         + 'ROLLING ponderada pelo FTD$ diário do plano, normalizada pelo mesmo cálculo no fim do mês)'
         + (matM0 != null ? ' — ' + (matM0 * 100).toFixed(0) + '% do alvo de fechamento' : '')
@@ -10479,7 +10488,7 @@ function buildFarolMetrics_(M, comp, channels, ggrChannels, bp, filter, ggrSafra
     // no mês. Mesma família do ROAS Dep M0 (que divide pelo investimento); aqui a base é o próprio FTD,
     // então mede reciclagem do depositante e não eficiência de mídia.
     multM0:      Object.assign(mk('Multiplicador M0', 'multiple', actMultM0, multM0Bp, div(dm0.m1, fa.m1)),
-      { trend: projM0(actMultM0), trendTitle: m0TrendTitle,
+      { matM0: matM0, trend: projM0(actMultM0), trendTitle: m0TrendTitle,
         bpTitle: 'Orçado MTD: mesma maturação do ROAS Dep M0 — alvo de M0 do mês × a fração da curva já '
         + 'exigível no mix de idades da janela' + (matM0 != null ? ' (' + (matM0 * 100).toFixed(0) + '%)' : '')
         + (multM0Mes != null ? '. Alvo de fechamento: ' + fmtMultiple(multM0Mes) : '') + '.' }),
