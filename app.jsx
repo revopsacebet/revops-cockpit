@@ -7833,12 +7833,16 @@ const ESC_COLS_GGR = [
     tip: 'Investimento ÷ nº de FTDs da coorte. É o número que o ROAS tem que devolver.' },
   { key: 'rg0',  lb: 'ROAS M0',  blk: 'mult', ate: 0, den: 'inv', meta: 1,
     tip: 'GGR do MÊS-CALENDÁRIO do FTD ÷ investimento da coorte. É quanto da verba volta ainda dentro do mês da compra.' },
-  { key: 'rg1',  lb: 'ROAS M1',  blk: 'mult', ate: 1, den: 'inv', meta: 1, tip: 'GGR acumulado M0+M1 ÷ investimento.' },
-  { key: 'rg2',  lb: 'ROAS M2',  blk: 'mult', ate: 2, den: 'inv', meta: 1, tip: 'GGR acumulado M0+M1+M2 ÷ investimento.' },
+  { key: 'rg1',  lb: 'ROAS M1',  blk: 'mult', ate: 1, den: 'inv', meta: 1, tip: 'GGR acumulado M0+M1 ÷ investimento.',
+    tipInc: 'GGR SÓ do mês de idade 1 (sem somar o M0) ÷ investimento. Mostra se a safra ainda paga verba sozinha naquele mês, em vez do total desde o início.' },
+  { key: 'rg2',  lb: 'ROAS M2',  blk: 'mult', ate: 2, den: 'inv', meta: 1, tip: 'GGR acumulado M0+M1+M2 ÷ investimento.',
+    tipInc: 'GGR SÓ do mês de idade 2 (sem somar M0/M1) ÷ investimento.' },
   { key: 'rg3',  lb: 'ROAS M3',  blk: 'mult', ate: 3, den: 'inv', meta: 1,
-    tip: 'GGR acumulado do M0 ao M3 ÷ investimento. É a coluna COMPARÁVEL entre safras: toda linha tem o mesmo horizonte (4 meses).' },
+    tip: 'GGR acumulado do M0 ao M3 ÷ investimento. É a coluna COMPARÁVEL entre safras: toda linha tem o mesmo horizonte (4 meses).',
+    tipInc: 'GGR SÓ do mês de idade 3 (sem somar M0/M1/M2) ÷ investimento. Nesta leitura deixa de ser a coluna comparável entre safras — comparável é a versão ACUMULADA.' },
   { key: 'rgtot', lb: 'ROAS M3+', blk: 'mult', ate: 'tot', den: 'inv', meta: 1,
-    tip: '⚠️ VIDA TODA: todo o GGR que a safra já gerou ÷ investimento. NÃO compara entre linhas — a safra mais velha ganha por IDADE. Para comparar use ROAS M3.' },
+    tip: '⚠️ VIDA TODA: todo o GGR que a safra já gerou ÷ investimento. NÃO compara entre linhas — a safra mais velha ganha por IDADE. Para comparar use ROAS M3.',
+    tipInc: 'GGR de TUDO que tem idade ≥3 (sem somar o que veio antes, M0/M1/M2) ÷ investimento — o análogo "só o período" do M3+ vida toda.' },
 ];
 const ESC_COLS = [
   { key: 'qtd',  lb: 'Qtd FTD',   blk: 'ctx', plain: true, of: (r) => r.qtd || null,                fmt: pirInt_ },
@@ -8030,7 +8034,12 @@ const escEhRet_ = (c) => (c.blk === 'ret' || c.blk === 'lottu');
 // ⚠️ Safra sem investimento rastreado devolve null em vez de dividir por zero: no eixo de safra isso
 // esvazia as linhas antigas (a casa só tem verba rastreada desde ~mar/2026), que é o correto — um ROAS
 // de safra orgânica com denominador zero seria infinito e roubaria a escala de cor inteira.
-function escUnid_(u, col, arr, closed, soMaduras) {
+// ⚠️ `acumulado` (2026-09-22, pedido do Luis): false troca o numerador de "tudo desde o M0" pra "só
+// aquele período". M0 não muda (já é um período único). M1/M2/M3 viram o valor SÓ daquele mês de idade
+// (arr[k], sem somar os anteriores). "tot" (M3+) vira a soma de tudo com idade ≥3 — ainda pooled (não
+// tem um "mês" único pra somar), só que sem incluir M0/M1/M2 como o acumulado inclui.
+function escUnid_(u, col, arr, closed, soMaduras, acumulado) {
+  const acum = acumulado !== false;
   const last = arr.length - 1;
   const lim = soMaduras ? Math.min(last, closed) : last;
   if (lim < 0) return null;
@@ -8038,13 +8047,15 @@ function escUnid_(u, col, arr, closed, soMaduras) {
   if (!(den > 0)) return null;
   if (col.ate === 'tot') {
     if (lim < 3) return null;                       // "M3+" pede que a safra tenha chegado ao M3
-    let s = 0; for (let a = 0; a <= lim; a++) s += arr[a] || 0;
+    let s = 0; for (let a = (acum ? 0 : 3); a <= lim; a++) s += arr[a] || 0;
     return { num: s, den: den, aberta: lim > closed };
   }
   if (col.ate != null) {
     const k = col.ate;
     if (k > lim) return null;
-    let s = 0; for (let a = 0; a <= k; a++) s += arr[a] || 0;
+    let s = 0;
+    if (acum) { for (let a = 0; a <= k; a++) s += arr[a] || 0; }
+    else { s = arr[k] || 0; }
     return { num: s, den: den, aberta: k > closed };
   }
   return null;
@@ -8268,7 +8279,7 @@ function escCel_(row, col, ctx) {
   (row.un || []).forEach((u) => {
     n++;
     const closed = ctx.ultFech ? (escIdx_(ctx.ultFech) - escIdx_(u.safra)) : -1;
-    const r = escUnid_(u, col, u.dep || [], closed, ctx.soMaduras);
+    const r = escUnid_(u, col, u.dep || [], closed, ctx.soMaduras, ctx.acumulado);
     if (!r) return;
     nUso++;
     num += r.num || 0;
@@ -8423,6 +8434,11 @@ function TabEscadaMensal({ chFilter, meta, metric, lottuEscada }) {
   // no modo depósito não haveria leitura nova, o multiplicador já É a razão e o R$ acumulado já está
   // nas colunas de contexto. Troca só o bloco 'mult' (ROAS M0..M3+) — retenção e contexto não mudam.
   const [verValor, setVerValor] = usePersistedState(pk('VerValor'), false);
+  // Acumulado × por período (pedido do Luis, 22/09, vale pras duas leituras acima — ROAS e R$). Default
+  // LIGADO (comportamento de sempre): cada coluna soma do M0 até ali. Desligado, a coluna vira o GGR SÓ
+  // daquele mês de idade (M3+ vira "tudo com idade ≥3", sem M0/M1/M2) — mostra se a safra ainda paga
+  // verba SOZINHA naquele mês, em vez do total desde o início.
+  const [acumulado, setAcumulado] = usePersistedState(pk('Acum'), true);
   // Período: preset de janela ou 'm:YYYY-MM'. Default 'all' de propósito: nada some sem alguém mandar.
   // ⚠️ DEFAULT DIFERENTE POR MÉTRICA. Em depósito é 'all' (nada some sem alguém mandar). Em GGR a
   // verba rastreada só existe de ~mar/2026 pra frente, e antes disso sobram coortes de 1 conta de
@@ -8778,7 +8794,7 @@ function TabEscadaMensal({ chFilter, meta, metric, lottuEscada }) {
   // `diaOk` e `mesesJan` entram no ctx por causa da RÉGUA CORRIDA: a maturação dela é em DIAS (não em
   // meses fechados) e o recorte de período vale nela (diferente da mensal, que precisa das safras velhas).
   const ctx = { coortes: coortes, meses: mesesRef, ultFech: ultFech, soMaduras: soMaduras, baseRet: baseRet, porSafra: porSafra, semReat: semReatOn,
-                lottu: temLottu ? lottuCoo : null, eixo: eixo, diaOk: diaOk, mesesJan: mesesJan };
+                lottu: temLottu ? lottuCoo : null, eixo: eixo, diaOk: diaOk, mesesJan: mesesJan, acumulado: acumulado };
   const escalas = {};
   cols.forEach((c) => { if (!c.plain && !c.semCor && !c.corDe) escalas[c.key] = escEscala_(linhas, c, ctx); });
   // ⚠️ 2ª passada: as colunas da Lottu PEGAM EMPRESTADA a rampa da coluna equivalente da Apostou
@@ -8786,9 +8802,11 @@ function TabEscadaMensal({ chFilter, meta, metric, lottuEscada }) {
   // diferentes e a comparação visual — que é o motivo da seção existir — diria o oposto do número.
   cols.forEach((c) => { if (c.corDe) escalas[c.key] = escalas[c.corDe] || escEscala_(linhas, c, ctx); });
   const fmtDe = (c) => c.plain ? c.fmt : (escEhRet_(c) ? ESC_RET_FMT : fmtMultiple);
-  // O toggle troca só o bloco 'mult' DESTA aba (den:'inv' é o que marca ROAS — o Mult da Pirâmide de
-  // depósito não tem esse campo e por isso nunca entra aqui).
-  const ggrValCol_ = (c) => met === 'ggr' && c.blk === 'mult' && c.den === 'inv' && verValor;
+  // Os dois toggles (ROAS×R$ e acumulado×período) só existem no bloco 'mult' DESTA aba (den:'inv' é o
+  // que marca ROAS — o Mult da Pirâmide de depósito não tem esse campo e por isso nunca entra aqui).
+  const isGgrMult_ = (c) => met === 'ggr' && c.blk === 'mult' && c.den === 'inv';
+  const ggrValCol_ = (c) => isGgrMult_(c) && verValor;
+  const ggrIncCol_ = (c) => isGgrMult_(c) && !acumulado;
   const chLbl = chLabel_(chFilter);
   const faixaLbl = faixaSel.length === 0 ? 'todas as faixas' : (faixaSel.length <= 2 ? faixaSel.map(fxLabel_).join(' + ') : faixaSel.length + ' faixas');
   const grupoLbl = !grupoActive ? '' : (grupoSel.length <= 2 ? grupoSel.map(grupoLabel_).join(' + ') : grupoSel.length + ' grupos');
@@ -8905,8 +8923,10 @@ function TabEscadaMensal({ chFilter, meta, metric, lottuEscada }) {
          : '')
       + (c.blk === 'ret' && baseRet === 'jog' ? ' · razão de CONTAGEM de depositantes' : '')
       // O par ROAS/R$ vai sempre junto no tooltip, qualquer que seja o toggle — quem está olhando o R$
-      // não perde o ROAS de vista, e vice-versa.
-      + (c.blk === 'mult' && c.den === 'inv' ? (ggrVal ? ' · ROAS ' + fmtMultiple(cel.v) : ' · GGR acumulado ' + fmtBRL(cel.num)) : '');
+      // não perde o ROAS de vista, e vice-versa. O rótulo "acumulado"/"do período" segue o outro toggle.
+      + (c.blk === 'mult' && c.den === 'inv'
+         ? (ggrVal ? ' · ROAS ' + fmtMultiple(cel.v) : ' · GGR ' + (acumulado ? 'acumulado ' : 'do período ') + fmtBRL(cel.num))
+         : '');
     return (
       <td key={c.key} className={sep || undefined}>
         <span className={'pir-v' + (cel.aberta ? ' pir-open' : '')} style={st || undefined} title={dica}>
@@ -9016,6 +9036,15 @@ function TabEscadaMensal({ chFilter, meta, metric, lottuEscada }) {
                     title="ROAS acumulado da safra (GGR ÷ investimento da coorte) — a leitura padrão desta aba, comparável entre safras de tamanhos diferentes. É sobre esta razão que a escala de cor é calculada.">ROAS</button>
             <button className={`preset-btn ${verValor ? 'active' : ''}`} onClick={() => setVerValor(true)}
                     title="O R$ de GGR acumulado da safra em cada horizonte (M0, M0+M1, …) — quanto ela gerou, sem dividir pelo investimento. A escala de cor some nesta leitura: ela é calculada em cima do ROAS e colorir o R$ com ela pintaria pela nota de outra métrica.">R$</button>
+          </div>
+          {/* Acumulado × por período (22/09) — vale pras DUAS leituras acima, ROAS e R$: troca só o
+              NUMERADOR de "tudo desde o M0" pra "só aquele mês de idade". */}
+          <span style={{ fontSize: '11px', color: 'var(--text-muted)', marginLeft: '10px' }}>Coluna</span>
+          <div className="slicer-presets" style={{ marginLeft: 6 }}>
+            <button className={`preset-btn ${acumulado ? 'active' : ''}`} onClick={() => setAcumulado(true)}
+                    title="Cada coluna soma do M0 até ali (ex.: ROAS M2 = GGR de M0+M1+M2 ÷ investimento) — o padrão, a leitura de payback: quanto já voltou até aquele horizonte.">acumulado</button>
+            <button className={`preset-btn ${!acumulado ? 'active' : ''}`} onClick={() => setAcumulado(false)}
+                    title="Cada coluna mostra só o GGR daquele mês de idade, sozinho (ex.: ROAS M2 = GGR SÓ do mês de idade 2 ÷ investimento, sem somar M0/M1) — mostra se a safra ainda paga verba SOZINHA naquele mês, em vez do total acumulado desde o início. M3+ vira 'tudo com idade ≥3', sem M0/M1/M2.">por período</button>
           </div>
         </React.Fragment>
         )}
@@ -9273,14 +9302,19 @@ function TabEscadaMensal({ chFilter, meta, metric, lottuEscada }) {
             <thead>
               <tr>
                 <th>{eixoDef.col}</th>
-                {cols.map((c, i) => (
-                  <th key={c.key} className={sepCls[i] || undefined}
-                      title={ggrValCol_(c) ? (c.tip || '') + ' Toggle "GGR da safra" em R$: mostra o acumulado em vez do ROAS.' : c.tip || undefined}>
+                {cols.map((c, i) => {
+                  const inc = ggrIncCol_(c);
+                  const tipBase = inc ? (c.tipInc || c.tip) : c.tip;
+                  const tip = ggrValCol_(c) ? (tipBase || '') + ' Toggle "GGR da safra" em R$: mostra o valor em vez do ROAS.' : tipBase;
+                  return (
+                  <th key={c.key} className={sepCls[i] || undefined} title={tip || undefined}>
                     {ggrValCol_(c) ? c.lb.replace('ROAS', 'GGR') : c.lb}
                     {c.lottu ? <i style={{ opacity: .75, fontWeight: 400, color: 'var(--accent-yellow)' }}> lottu</i> : ''}
                     {escEhRet_(c) && baseRet === 'jog' ? <i style={{ opacity: .55, fontWeight: 400 }}> jog</i> : ''}
+                    {inc ? <i style={{ opacity: .55, fontWeight: 400 }}> período</i> : ''}
                   </th>
-                ))}
+                  );
+                })}
               </tr>
             </thead>
             <tbody>
