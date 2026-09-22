@@ -8419,6 +8419,10 @@ function TabEscadaMensal({ chFilter, meta, metric, lottuEscada }) {
   // de 30 dias (D60/D30, D90/D60, D120/D90, D120+). Ver ESC_COLS_RET_DIA: não é a mesma conta em outra escala.
   // Default 'mes' de propósito — é a régua que o BP, o Farol e a meta da Lottu falam.
   const [regua, setRegua] = usePersistedState(pk('Regua'), 'mes');
+  // GGR da safra: ROAS (razão) × R$ (valor acumulado) — pedido do Luis (22/09). Só existe na aba GGR:
+  // no modo depósito não haveria leitura nova, o multiplicador já É a razão e o R$ acumulado já está
+  // nas colunas de contexto. Troca só o bloco 'mult' (ROAS M0..M3+) — retenção e contexto não mudam.
+  const [verValor, setVerValor] = usePersistedState(pk('VerValor'), false);
   // Período: preset de janela ou 'm:YYYY-MM'. Default 'all' de propósito: nada some sem alguém mandar.
   // ⚠️ DEFAULT DIFERENTE POR MÉTRICA. Em depósito é 'all' (nada some sem alguém mandar). Em GGR a
   // verba rastreada só existe de ~mar/2026 pra frente, e antes disso sobram coortes de 1 conta de
@@ -8782,6 +8786,9 @@ function TabEscadaMensal({ chFilter, meta, metric, lottuEscada }) {
   // diferentes e a comparação visual — que é o motivo da seção existir — diria o oposto do número.
   cols.forEach((c) => { if (c.corDe) escalas[c.key] = escalas[c.corDe] || escEscala_(linhas, c, ctx); });
   const fmtDe = (c) => c.plain ? c.fmt : (escEhRet_(c) ? ESC_RET_FMT : fmtMultiple);
+  // O toggle troca só o bloco 'mult' DESTA aba (den:'inv' é o que marca ROAS — o Mult da Pirâmide de
+  // depósito não tem esse campo e por isso nunca entra aqui).
+  const ggrValCol_ = (c) => met === 'ggr' && c.blk === 'mult' && c.den === 'inv' && verValor;
   const chLbl = chLabel_(chFilter);
   const faixaLbl = faixaSel.length === 0 ? 'todas as faixas' : (faixaSel.length <= 2 ? faixaSel.map(fxLabel_).join(' + ') : faixaSel.length + ' faixas');
   const grupoLbl = !grupoActive ? '' : (grupoSel.length <= 2 ? grupoSel.map(grupoLabel_).join(' + ') : grupoSel.length + ' grupos');
@@ -8839,10 +8846,16 @@ function TabEscadaMensal({ chFilter, meta, metric, lottuEscada }) {
         </td>
       );
     }
-    const v = cel.v;
+    // Em R$, a célula mostra o ACUMULADO (cel.num) em vez da razão — mesmo numerador que já sustenta o
+    // ROAS, só sem dividir pelo investimento.
+    const ggrVal = ggrValCol_(c);
+    const v = ggrVal ? cel.num : cel.v;
     let st = null;
     const e = escalas[c.key];
-    if (!cel.aberta && e && v != null && isFinite(v)) {
+    // ⚠️ SEM RAMPA EM R$ DE PROPÓSITO: a escala é calculada sobre o ROAS (a razão), então colorir o R$
+    // com ela pintaria o valor pela nota de uma métrica diferente — uma safra grande em R$ mas com ROAS
+    // ruim sairia verde. A rampa continua valendo no toggle ROAS, sem mudar de conta.
+    if (!ggrVal && !cel.aberta && e && v != null && isFinite(v)) {
       const t = (e.max === e.min) ? 0.5 : (v - e.min) / (e.max - e.min);
       const i = Math.min(5, Math.max(0, Math.round(t * 5)));
       st = { background: 'var(' + PIR_RAMP[i] + ')', color: 'var(' + PIR_INK[i] + ')' };
@@ -8890,11 +8903,14 @@ function TabEscadaMensal({ chFilter, meta, metric, lottuEscada }) {
             ? ' · SEM reativados (fora ' + ((baseRet === 'jog') ? pirInt_(cel.reat) + ' contas' : fmtBRL(cel.reat)) + ', ' + fmtPct(cel.reat / (cel.numBruto || 1), 1) + ' do numerador) · com eles daria ' + ESC_RET_FMT(cel.numBruto / cel.den)
             : ' · COM reativados: ' + ((baseRet === 'jog') ? pirInt_(cel.reat) + ' contas' : fmtBRL(cel.reat)) + ' (' + fmtPct(cel.reat / (cel.num || 1), 1) + ' do numerador) voltaram depois de 2+ meses secos · sem eles daria ' + ESC_RET_FMT((cel.num - cel.reat) / cel.den))
          : '')
-      + (c.blk === 'ret' && baseRet === 'jog' ? ' · razão de CONTAGEM de depositantes' : '');
+      + (c.blk === 'ret' && baseRet === 'jog' ? ' · razão de CONTAGEM de depositantes' : '')
+      // O par ROAS/R$ vai sempre junto no tooltip, qualquer que seja o toggle — quem está olhando o R$
+      // não perde o ROAS de vista, e vice-versa.
+      + (c.blk === 'mult' && c.den === 'inv' ? (ggrVal ? ' · ROAS ' + fmtMultiple(cel.v) : ' · GGR acumulado ' + fmtBRL(cel.num)) : '');
     return (
       <td key={c.key} className={sep || undefined}>
         <span className={'pir-v' + (cel.aberta ? ' pir-open' : '')} style={st || undefined} title={dica}>
-          <span>{fmtDe(c)(v)}</span>
+          <span>{ggrVal ? fmtBRL(v) : fmtDe(c)(v)}</span>
         </span>
       </td>
     );
@@ -8989,6 +9005,20 @@ function TabEscadaMensal({ chFilter, meta, metric, lottuEscada }) {
           <option value="">{dadosCp.error ? 'campanhas indisponíveis' : !dadosCp.rows ? 'carregando…' : 'Todas'}</option>
           {topCamps.map((c) => <option key={c.campanha} value={c.campanha}>{escCampLbl_(c.campanha)}</option>)}
         </select>
+        {/* GGR da safra: ROAS × R$ (pedido do Luis, 22/09) — só existe nesta aba. No modo depósito não
+            haveria leitura nova: o multiplicador já é a razão e o R$ acumulado já mora nas colunas de
+            contexto. Troca só o bloco de ROAS (M0..M3+); retenção e contexto seguem iguais nos dois lados. */}
+        {met === 'ggr' && (
+        <React.Fragment>
+          <span style={{ fontSize: '11px', color: 'var(--text-muted)', marginLeft: '10px' }}>GGR da safra</span>
+          <div className="slicer-presets" style={{ marginLeft: 6 }}>
+            <button className={`preset-btn ${!verValor ? 'active' : ''}`} onClick={() => setVerValor(false)}
+                    title="ROAS acumulado da safra (GGR ÷ investimento da coorte) — a leitura padrão desta aba, comparável entre safras de tamanhos diferentes. É sobre esta razão que a escala de cor é calculada.">ROAS</button>
+            <button className={`preset-btn ${verValor ? 'active' : ''}`} onClick={() => setVerValor(true)}
+                    title="O R$ de GGR acumulado da safra em cada horizonte (M0, M0+M1, …) — quanto ela gerou, sem dividir pelo investimento. A escala de cor some nesta leitura: ela é calculada em cima do ROAS e colorir o R$ com ela pintaria pela nota de outra métrica.">R$</button>
+          </div>
+        </React.Fragment>
+        )}
         {/* RÉGUA DO BLOCO DE RETENÇÃO — mês-calendário × janela corrida de 30 dias. Fica ANTES do
             "Retenção sobre" de propósito: os dois falam do mesmo bloco, e a régua é a escolha mais
             estruturante das duas (ela troca as colunas, não só o denominador). */}
@@ -9244,8 +9274,9 @@ function TabEscadaMensal({ chFilter, meta, metric, lottuEscada }) {
               <tr>
                 <th>{eixoDef.col}</th>
                 {cols.map((c, i) => (
-                  <th key={c.key} className={sepCls[i] || undefined} title={c.tip || undefined}>
-                    {c.lb}
+                  <th key={c.key} className={sepCls[i] || undefined}
+                      title={ggrValCol_(c) ? (c.tip || '') + ' Toggle "GGR da safra" em R$: mostra o acumulado em vez do ROAS.' : c.tip || undefined}>
+                    {ggrValCol_(c) ? c.lb.replace('ROAS', 'GGR') : c.lb}
                     {c.lottu ? <i style={{ opacity: .75, fontWeight: 400, color: 'var(--accent-yellow)' }}> lottu</i> : ''}
                     {escEhRet_(c) && baseRet === 'jog' ? <i style={{ opacity: .55, fontWeight: 400 }}> jog</i> : ''}
                   </th>
