@@ -10040,6 +10040,228 @@ function useRetMes_(winTo) {
   return retMes;
 }
 
+// ============================================================
+// ABA MATRIZ DE COORTE (pedido do Luis, 24/09) — coorte de FTD × idade de depósito, ligada no BQ
+// ============================================================
+// Porte da página "Matriz de Coorte de Depósito" (estudo de 23/09) SEM o benchmark da Lottu. Fonte:
+// only=matriz (queryMatrizCoorte_), janela rolante de 5 meses-calendário até o último dia FECHADO.
+// Não segue o slicer global de data nem o de canal: o canal aqui é o recorte T/Meta/Google que o backend
+// já manda pronto (o mesmo UNNEST), e a janela é a da coorte, não a do período.
+// Células: a = contas com depósito na idade · V = R$ · N = nº de depósitos. Idade −1 = FTDs da coorte.
+const MX_MAXA = { d: 30, w: 12, m: 4 };
+const MX_PFX = { d: 'D', w: 'S', m: 'M' };
+const MX_MES = ['jan', 'fev', 'mar', 'abr', 'mai', 'jun', 'jul', 'ago', 'set', 'out', 'nov', 'dez'];
+const MX_METRICAS = [
+  { k: 'ret', lb: 'Retenção de jogadores', tip: 'Jogadores com depósito naquela idade ÷ FTDs da coorte.' },
+  { k: 'R', lb: 'Retenção em R$', tip: 'R$ depositado naquela idade ÷ R$ da idade 0 (D0, S0 ou M0).' },
+  { k: 'f', lb: 'Frequência', tip: 'Nº de depósitos ÷ jogadores ativos naquela idade.' },
+  { k: 'tk', lb: 'Ticket médio', tip: 'R$ ÷ nº de depósitos.' },
+  { k: 'dm', lb: 'Depósito médio', tip: 'R$ ÷ jogadores ativos naquela idade.' },
+];
+const mxDt_ = (s) => new Date(s + 'T12:00:00Z');
+const mxIso_ = (d) => d.toISOString().slice(0, 10);
+const mxAddD_ = (s, n) => { const d = mxDt_(s); d.setUTCDate(d.getUTCDate() + n); return mxIso_(d); };
+const mxMonthEdge_ = (s, k, last) => { const d = mxDt_(s); return mxIso_(new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth() + k + (last ? 1 : 0), last ? 0 : 1, 12))); };
+function mxLabel_(c, g) {
+  const d = mxDt_(c);
+  if (g === 'm') return MX_MES[d.getUTCMonth()] + '/' + String(d.getUTCFullYear()).slice(2);
+  const s = String(d.getUTCDate()).padStart(2, '0') + '/' + String(d.getUTCMonth() + 1).padStart(2, '0');
+  return g === 'w' ? 'sem ' + s : s;
+}
+// 'ok' = idade completa até o corte · 'part' = em andamento · null = ainda não começou.
+function mxStatus_(c, g, k, cut) {
+  if (g === 'd') return mxAddD_(c, k) <= cut ? 'ok' : null;
+  if (g === 'w') { const st = mxAddD_(c, 7 * k), en = mxAddD_(c, 6 + 7 * k + 6); if (st > cut) return null; return (en <= cut && mxAddD_(c, 6) <= cut) ? 'ok' : 'part'; }
+  const st = mxMonthEdge_(c, k, false), en = mxMonthEdge_(c, k, true); if (st > cut) return null; return en <= cut ? 'ok' : 'part';
+}
+// Semana entra no mês da sua QUINTA-feira (o mês com mais dias dela). A 1ª semana da janela, que começa
+// antes do 1º dia, é puxada para o 1º mês da janela.
+function mxMonthOf_(c, g, ini) { if (g !== 'w') return c.slice(0, 7); let t = mxAddD_(c, 3); if (t < ini) t = ini; return t.slice(0, 7); }
+// Expande a string compacta do backend ("idade:a:V:N;...") num mapa por chave.
+function mxExpand_(rows) {
+  const out = [];
+  (rows || []).forEach(([g, c, t5, canal, s]) => {
+    String(s || '').split(';').forEach((p) => { if (!p) return; const [age, a, V, N] = p.split(':'); out.push([g, c, Number(t5), Number(age), Number(a), Number(V), Number(N), canal]); });
+  });
+  return out;
+}
+const MX_LS = 'cockpit.matriz.v1';
+
+function TabMatrizCoorte() {
+  const [dados, setDados] = React.useState({ raw: null, meta: null, loading: true, error: null });
+  const [S, setS] = React.useState(() => {
+    const def = { grao: 'm', canal: 'T', rec: 'tot', mes: 'all', met: 'ret' };
+    try { return { ...def, ...JSON.parse(localStorage.getItem(MX_LS) || '{}') }; } catch (e) { return def; }
+  });
+  const set = (k, v) => setS((s) => { const n = { ...s, [k]: v }; try { localStorage.setItem(MX_LS, JSON.stringify(n)); } catch (e) {} return n; });
+  React.useEffect(() => {
+    if (!ENDPOINT_URL) { setDados({ raw: null, meta: null, loading: false, error: 'sem endpoint' }); return; }
+    let vivo = true;
+    fetch(`${ENDPOINT_URL}?${authParam_()}&only=matriz`)
+      .then((r) => r.ok ? r.json() : Promise.reject(new Error('HTTP ' + r.status)))
+      .then((j) => {
+        if (!vivo) return;
+        if (j.error) throw new Error(j.error);
+        // Backend antigo responde 200 com o payload inteiro e sem `matriz` — sem a guarda a aba ficaria vazia com cara de "sem coorte".
+        if (!j.matriz) throw new Error('o backend em produção ainda não tem o endpoint only=matriz — falta propagar o deploy');
+        setDados({ raw: mxExpand_(j.matriz.rows), meta: { ...(j.meta || {}), ini: j.matriz.ini, ate: j.matriz.fim }, loading: false, error: null });
+      })
+      .catch((e) => { if (vivo) setDados({ raw: null, meta: null, loading: false, error: String(e.message || e) }); });
+    return () => { vivo = false; };
+  }, []);
+
+  const cut = dados.meta && dados.meta.ate;
+  const ini = dados.meta && dados.meta.ini;
+  const g = S.grao, K = MX_MAXA[g];
+  const meses = React.useMemo(() => {
+    if (!dados.raw) return [];
+    return [...new Set(dados.raw.filter((r) => r[0] === 'm').map((r) => r[1].slice(0, 7)))].sort();
+  }, [dados.raw]);
+
+  const rows = React.useMemo(() => {
+    if (!dados.raw) return [];
+    const M = new Map();
+    for (const [gg, c, t5, age, a, V, N, cn] of dados.raw) {
+      if (gg !== g || cn !== S.canal) continue;
+      if (S.rec === 'top' && t5 !== 1) continue;
+      if (S.rec === 'sem' && t5 !== 0) continue;
+      if (age > K) continue;
+      let o = M.get(c); if (!o) { o = { c, J: 0, cells: {} }; M.set(c, o); }
+      if (age < 0) { o.J += a; continue; }
+      const x = o.cells[age] || (o.cells[age] = { a: 0, V: 0, N: 0 }); x.a += a; x.V += V; x.N += N;
+    }
+    return [...M.values()].filter((o) => S.mes === 'all' || mxMonthOf_(o.c, g, ini) === S.mes).sort((p, q) => (p.c < q.c ? -1 : 1));
+  }, [dados.raw, g, S.canal, S.rec, S.mes, ini]);
+
+  const isPct = S.met === 'ret' || S.met === 'R';
+  const metric = (o, k) => {
+    const x = o.cells[k], x0 = o.cells[0];
+    if (!x) return isPct ? 0 : null;
+    switch (S.met) {
+      case 'ret': return o.J ? x.a / o.J : null;
+      case 'R': return x0 && x0.V ? x.V / x0.V : null;
+      case 'f': return x.a ? x.N / x.a : null;
+      case 'tk': return x.N ? x.V / x.N : null;
+      default: return x.a ? x.V / x.a : null;
+    }
+  };
+  // Média PONDERADA só com idades completas (Σ numerador ÷ Σ denominador) — parcial fica fora.
+  const pooled = (k) => {
+    let n = 0, d = 0;
+    for (const o of rows) {
+      if (mxStatus_(o.c, g, k, cut) !== 'ok') continue;
+      const x = o.cells[k] || { a: 0, V: 0, N: 0 }, x0 = o.cells[0] || { V: 0 };
+      switch (S.met) {
+        case 'ret': n += x.a; d += o.J; break;
+        case 'R': n += x.V; d += x0.V; break;
+        case 'f': n += x.N; d += x.a; break;
+        case 'tk': n += x.V; d += x.N; break;
+        default: n += x.V; d += x.a;
+      }
+    }
+    return d ? n / d : null;
+  };
+  const nf = (x, d) => (x == null || !isFinite(x)) ? '' : x.toLocaleString('pt-BR', { minimumFractionDigits: d, maximumFractionDigits: d });
+  const fmtV = (v) => v == null ? '' : isPct ? nf(v * 100, 1) + '%' : S.met === 'f' ? nf(v, 1) : 'R$ ' + nf(v, 0);
+  // Escala de cor pelos percentis 5–95 das células COMPLETAS (idade ≥1 nas retenções, onde a idade 0 é 100%/trivial).
+  const [lo, hi] = React.useMemo(() => {
+    const all = [];
+    for (const o of rows) for (let k = isPct ? 1 : 0; k <= K; k++) { if (mxStatus_(o.c, g, k, cut) !== 'ok') continue; const v = metric(o, k); if (v != null && isFinite(v)) all.push(v); }
+    all.sort((p, q) => p - q);
+    const q = (p) => all.length ? all[Math.floor(p * (all.length - 1))] : 0;
+    return [q(0.05), q(0.95)];
+  }, [rows, S.met, cut]);
+  const bg = (v) => { if (v == null) return undefined; const t = hi > lo ? Math.max(0, Math.min(1, (v - lo) / (hi - lo))) : 0; return `rgba(96,165,250,${(0.06 + t * 0.52).toFixed(3)})`; };
+
+  const MN = MX_METRICAS.find((m) => m.k === S.met).lb;
+  const seg = (k, opts) => (
+    <div className="slicer-presets" style={{ marginLeft: 6 }}>
+      {opts.map((o) => <button key={o.k} className={`preset-btn ${S[k] === o.k ? 'active' : ''}`} onClick={() => set(k, o.k)} title={o.tip}>{o.lb}</button>)}
+    </div>
+  );
+  const lab = (t) => <span style={{ fontSize: '11px', color: 'var(--text-muted)', marginLeft: '10px' }}>{t}</span>;
+
+  return (
+    <React.Fragment>
+      <div className="tab-header">
+        <div>
+          <h1>Matriz de Coorte</h1>
+          <div className="subtitle">
+            Cada linha é uma coorte de FTD e cada coluna a idade dela (dias, semanas ou meses desde o FTD). A célula mostra
+            a métrica escolhida naquela idade. Safras dos <strong>últimos 5 meses</strong>{cut ? <React.Fragment>, dado até <strong>{fmtBR_(cut)}</strong></React.Fragment> : null}.
+            <strong> Não segue o slicer de data nem o de canal</strong>: o canal é escolhido aqui.
+          </div>
+        </div>
+      </div>
+      <div className="slicer-group slicer-ruler" style={{ flexWrap: 'wrap', rowGap: 8 }}>
+        {lab('Grão')}{seg('grao', [{ k: 'd', lb: 'Diário' }, { k: 'w', lb: 'Semanal' }, { k: 'm', lb: 'Mensal' }])}
+        {lab('Canal')}{seg('canal', [{ k: 'T', lb: 'Total da casa' }, { k: 'Meta', lb: 'Meta' }, { k: 'Google', lb: 'Google' }])}
+        {lab('Recorte')}{seg('rec', [{ k: 'tot', lb: 'Total' }, { k: 'top', lb: 'Top 5%', tip: 'Os ceil(5% × FTDs) de maior depósito no M0 da safra mensal.' }, { k: 'sem', lb: 'Sem top 5%' }])}
+        {lab('Mês do FTD')}{seg('mes', [{ k: 'all', lb: 'Todos' }].concat(meses.map((m) => ({ k: m, lb: MX_MES[Number(m.slice(5, 7)) - 1] + '/' + m.slice(2, 4) }))))}
+        {lab('Métrica')}{seg('met', MX_METRICAS)}
+      </div>
+      {dados.loading && <div className="subtitle" style={{ padding: '18px 0' }}>Carregando a matriz do BigQuery…</div>}
+      {dados.error && <div className="subtitle" style={{ padding: '18px 0', color: 'var(--negative)' }}>Não consegui carregar a matriz: {dados.error}</div>}
+      {dados.raw && (
+        <React.Fragment>
+          <div style={{ display: 'flex', gap: 18, flexWrap: 'wrap', fontSize: 11.5, color: 'var(--text-muted)', margin: '14px 0 8px' }}>
+            <strong style={{ color: 'var(--text)', fontSize: 13 }}>{MN}</strong>
+            <span>coorte {{ d: 'diária', w: 'semanal', m: 'mensal' }[g]} · {{ T: 'total da casa', Meta: 'Meta', Google: 'Google' }[S.canal]} · {{ tot: 'total', top: 'top 5%', sem: 'sem top 5%' }[S.rec]}</span>
+            <span><i style={{ display: 'inline-block', width: 10, height: 10, outline: '1px dashed var(--text-muted)', marginRight: 5 }}></i>idade em andamento</span>
+            <span><i style={{ display: 'inline-block', width: 10, height: 10, background: 'rgba(96,165,250,.3)', opacity: .5, marginRight: 5 }}></i>menos de 30 jogadores ativos</span>
+            {S.met === 'R' && <span>idade 0 = 100% por definição</span>}
+          </div>
+          <div className="table-scroll tall">
+            <table className="ch-table pir-table mx-table">
+              <thead>
+                <tr><th>Coorte</th><th>FTDs</th>{Array.from({ length: K + 1 }, (_, k) => <th key={k}>{MX_PFX[g]}{k}</th>)}</tr>
+              </thead>
+              <tbody>
+                {rows.map((o) => (
+                  <tr key={o.c}>
+                    <td>{mxLabel_(o.c, g)}</td>
+                    <td style={{ color: 'var(--text-muted)' }}>{nf(o.J, 0)}</td>
+                    {Array.from({ length: K + 1 }, (_, k) => {
+                      const st = mxStatus_(o.c, g, k, cut);
+                      if (!st) return <td key={k}></td>;
+                      const v = metric(o, k), x = o.cells[k], low = !x || x.a < 30;
+                      return (
+                        <td key={k} className={st === 'part' ? 'mx-part' : undefined}
+                            style={{ background: bg(v), opacity: low ? 0.55 : 1 }}
+                            title={`${mxLabel_(o.c, g)} · ${MX_PFX[g]}${k}: ${x ? nf(x.a, 0) + ' ativos · R$ ' + nf(x.V, 0) + ' · ' + nf(x.N, 0) + ' depósitos' : 'sem depósito'}${st === 'part' ? ' · idade em andamento' : ''}`}>
+                          {fmtV(v)}
+                        </td>
+                      );
+                    })}
+                  </tr>
+                ))}
+              </tbody>
+              <tfoot>
+                <tr>
+                  <td>Média</td>
+                  <td style={{ color: 'var(--text-muted)' }}>{nf(rows.reduce((s, o) => s + o.J, 0), 0)}</td>
+                  {Array.from({ length: K + 1 }, (_, k) => <td key={k}>{fmtV(pooled(k))}</td>)}
+                </tr>
+              </tfoot>
+            </table>
+          </div>
+          <details style={{ marginTop: 14, fontSize: 12, color: 'var(--text-muted)' }}>
+            <summary style={{ cursor: 'pointer', color: 'var(--text)' }}>Como ler esta tabela</summary>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginTop: 8, maxWidth: 900 }}>
+              <div><strong>Idade:</strong> no diário, D0 é o dia do FTD, até D30. No semanal, S0 são os dias 0 a 6 desde o FTD de cada jogador, até S12. No mensal, M0 é o mês-calendário do FTD e M1 o seguinte, até M4.</div>
+              {MX_METRICAS.map((m) => <div key={m.k}><strong>{m.lb}</strong> = {m.tip}</div>)}
+              <div><strong>Top 5%:</strong> os ceil(5% × FTDs) jogadores de maior depósito no M0 da safra mensal. No diário e no semanal, o recorte leva os jogadores desse grupo que fizeram FTD naquele dia ou semana. A safra do mês corrente ainda tem M0 em andamento, então o top 5% dela é provisório.</div>
+              <div><strong>Média:</strong> ponderada, só com as coortes que já completaram aquela idade (Σ numeradores ÷ Σ denominadores).</div>
+              <div><strong>Semana:</strong> rotulada pela segunda-feira; entra no mês da sua quinta-feira. <strong>Canal:</strong> o do FTD, pela vw_account_attribution (Google inclui YouTube). Total da casa inclui orgânico e todos os canais.</div>
+              <div><strong>Fonte:</strong> player_metrics, contagem diária de depósitos. Atualiza com o load do BigQuery; o corte é sempre o último dia fechado.</div>
+            </div>
+          </details>
+        </React.Fragment>
+      )}
+    </React.Fragment>
+  );
+}
+
 const TABS = [
   { id: 'farol', label: 'Farol', component: TabFarol },
   { id: 'farolcapa', label: 'Farol · Volume & GGR', component: TabFarolCapa },
@@ -10051,6 +10273,7 @@ const TABS = [
   // ⚠️ MESMO COMPONENTE, outra métrica. O registro de abas passa `tabProps` por spread, então a única
   // forma de fixar a métrica é este wrapper — que é justamente o que mantém as duas abas idênticas.
   { id: 'piramensalggr', label: 'Pirâmide GGR', component: TabEscadaGgr },
+  { id: 'matriz', label: 'Matriz de Coorte', component: TabMatrizCoorte },
   { id: 'metricasdia', label: 'Métricas do dia a dia', component: TabMetricasDia },
   { id: 'ativacao', label: 'Ativação D0', component: TabAtivacao },
   { id: 'cashflow', label: 'Daily Cashflow', component: TabDailyCashflow },
