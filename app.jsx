@@ -3471,6 +3471,7 @@ function buildFarolGroups_(MM, f, range, useYtd, sparkByKey, retMes, chFilter) {
       // escrito "BP" enquanto todos os outros dizem "Orçado" (CARD_BP_LABEL).
       blS(dressPlain(f.depSafra_notm0)),
     ].filter(c => c && c.act != null) },
+
     // Mesma safra, em CABEÇA (pedido do Luis, 01/09). Fica colada no card de R$ acima porque as duas
     // juntas é que respondem "essa safra é grande porque tem muita gente ou porque tem pouca gente
     // depositando muito?". Ver o bloco de jogSafra_ em buildFarolMetrics_ para a definição e o aviso
@@ -3486,7 +3487,12 @@ function buildFarolGroups_(MM, f, range, useYtd, sparkByKey, retMes, chFilter) {
     { id: 'tktsafra', title: 'Mediana de depósito por safra', cards: [
       dressPlain(f.tktSafra_m0), dressPlain(f.tktSafra_m1), dressPlain(f.tktSafra_m2), dressPlain(f.tktSafra_m3plus),
     ].filter(c => c && (c.act != null || c.note)) },
-    // Margem por safra em DUAS seções (GGR e Hold separados, pedido do Luis) — qualidade de monetização
+    // O MESMO bloco do Depósito por safra (R$) com GGR no lugar do depósito (pedido do Luis, 24/09), aqui antes das margens: fica colado no GGR/Dep por safra — quanto da receita do período
+    // veio de cada idade de coorte. Não-M0 sem Orçado (ver ggrSafra_notm0 em buildFarolMetrics_).
+    { id: 'ggrsafrabrl', title: 'GGR por safra (R$)', cards: [
+      dressPlain(f.ggrSafra_m0), dressPlain(f.ggrSafra_m1), dressPlain(f.ggrSafra_m2), dressPlain(f.ggrSafra_m3plus),
+      dressPlain(f.ggrSafra_notm0),
+    ].filter(c => c && c.act != null) },    // Margem por safra em DUAS seções (GGR e Hold separados, pedido do Luis) — qualidade de monetização
     // por IDADE DE COORTE, não é retenção; janela MTD. Cada card carrega o `share` (peso da safra no GGR).
     // Só entra card com valor: bucket sem safra no período sai da tela em vez de virar um "—" mudo
     // (e sem ggrSafra nenhum as duas seções desaparecem).
@@ -3556,6 +3562,7 @@ const FAROL_SECOES = [
   { id: 'depsafra',     label: 'Depósito por safra (R$)' },
   { id: 'jogsafra',     label: 'Depositantes por safra' },
   { id: 'tktsafra',     label: 'Mediana de depósito por safra' },
+  { id: 'ggrsafrabrl',  label: 'GGR por safra (R$)' },
   { id: 'ggrsafra',     label: 'GGR por safra' },
   { id: 'holdsafra',    label: 'Hold por safra' },
   { id: 'rollsafra',    label: 'Rollover por safra' },
@@ -10403,6 +10410,10 @@ function buildFarolMetrics_(M, comp, channels, ggrChannels, bp, filter, ggrSafra
     const shareD  = (on && depAll  > 0) ? dep  / depAll  : null;
     const shareDL = (on && depAllL > 0) ? depL / depAllL : null;
     safraMargem['depSafra_' + bk] = wShare(mk(`Depósito ${lbl}`, 'brl', on ? dep : null, null, on ? depL : null), shareD, shareDL, 'depósito');
+    // GGR ABSOLUTO da safra (R$) — irmão exato do card de depósito acima, com a RECEITA no lugar do
+    // depósito (pedido do Luis, 24/09). Share = composição do GGR (o próprio valor do card). Com safra de
+    // GGR negativo o share não fecha 100% de forma intuitiva, mas continua sendo a conta certa.
+    safraMargem['ggrSafra_' + bk] = wShare(mk(`GGR ${lbl}`, 'brl', on ? ggr : null, null, on ? ggrL : null), shareG, shareGL, 'GGR');
     // `jog` = COUNTIF(dep > 0) do bucket. Declarado aqui porque serve a DOIS cards: o de cabeça
     // logo abaixo e a nota do card de mediana, mais adiante.
     const jog = S('jog'), jogL = S('jogM1');
@@ -10479,6 +10490,15 @@ function buildFarolMetrics_(M, comp, channels, ggrChannels, bp, filter, ggrSafra
   // dado". Sem este reforço a linha de Orçado sumia (bolinha cinza) e ficava indistinguível de "não
   // calculamos isso aqui". O Hero sabe ler bp===0 (farol vermelho se o realizado for >0, sem % — ver Hero).
   if (depNotM0Bp === 0) notM0Card.bp = 0;
+  // GGR NÃO-M0 (pedido do Luis, 24/09) — mesma construção do card de depósito acima: GGR da casa
+  // (M.ggr, reconciliado e no escopo do filtro) − GGR da safra M0 (bucket m0 do ggrSafra). SEM Orçado:
+  // o plano declara só o GGR Total, sem meta de GGR M0 em R$ — a única referência de M0 é a meta de
+  // ROAS GGR M0, e derivar dela um orçado em R$ seria inventar uma meta que ninguém aprovou.
+  safraMargem['ggrSafra_notm0'] = Object.assign(
+    mk('GGR Não-M0 (M1+M2+M3+)', 'brl', (gg.act != null && ggrM0Sum != null) ? gg.act - ggrM0Sum : null, null,
+      (gg.m1 != null && ggrM0SumL != null) ? gg.m1 - ggrM0SumL : null),
+    { bpTitle: 'GGR Total (Casa) − GGR M0. Sem Orçado: o plano só declara o GGR Total, não a quebra por idade de coorte. '
+        + 'Pode divergir um pouco da soma dos cards M1+M2+M3+ ao lado: aqueles vêm de payload.ggrSafra, restrito a conta com FTD.' });
   safraMargem['depSafra_notm0'] = Object.assign(notM0Card,
     { bpTitle: 'Depósito Total (Casa) − Depósito M0 (Casa). BP = Depósito Total BP − Depósito M0 BP '
         + '(o plano não quebra a meta de depósito por idade de coorte, só Total e M0). Pode divergir um '

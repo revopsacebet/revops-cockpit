@@ -1459,7 +1459,9 @@ blS(dressPlain(f.depSafra_notm0))].filter(c=>c&&c.act!=null)},// Mesma safra, em
 // direções opostas quando o mix de ticket muda.
 // ⚠️ o filtro aceita card sem `act` quando ele traz `note`: é o caso de 2+ canais selecionados, em
 // que a mediana não existe. Some a seção inteira sem explicação é pior do que dizer por que sumiu.
-{id:'tktsafra',title:'Mediana de depósito por safra',cards:[dressPlain(f.tktSafra_m0),dressPlain(f.tktSafra_m1),dressPlain(f.tktSafra_m2),dressPlain(f.tktSafra_m3plus)].filter(c=>c&&(c.act!=null||c.note))},// Margem por safra em DUAS seções (GGR e Hold separados, pedido do Luis) — qualidade de monetização
+{id:'tktsafra',title:'Mediana de depósito por safra',cards:[dressPlain(f.tktSafra_m0),dressPlain(f.tktSafra_m1),dressPlain(f.tktSafra_m2),dressPlain(f.tktSafra_m3plus)].filter(c=>c&&(c.act!=null||c.note))},// O MESMO bloco do Depósito por safra (R$) com GGR no lugar do depósito (pedido do Luis, 24/09), aqui antes das margens: fica colado no GGR/Dep por safra — quanto da receita do período
+// veio de cada idade de coorte. Não-M0 sem Orçado (ver ggrSafra_notm0 em buildFarolMetrics_).
+{id:'ggrsafrabrl',title:'GGR por safra (R$)',cards:[dressPlain(f.ggrSafra_m0),dressPlain(f.ggrSafra_m1),dressPlain(f.ggrSafra_m2),dressPlain(f.ggrSafra_m3plus),dressPlain(f.ggrSafra_notm0)].filter(c=>c&&c.act!=null)},// Margem por safra em DUAS seções (GGR e Hold separados, pedido do Luis) — qualidade de monetização
 // por IDADE DE COORTE, não é retenção; janela MTD. Cada card carrega o `share` (peso da safra no GGR).
 // Só entra card com valor: bucket sem safra no período sai da tela em vez de virar um "—" mudo
 // (e sem ggrSafra nenhum as duas seções desaparecem).
@@ -1481,7 +1483,7 @@ function applyFtdByRegister_(MM,f,ftdByRegister,chFilter){const scoped=filterCha
 // ⚠️ O `label` tem que ser IDÊNTICO ao `title` da seção — o export do Excel monta sua própria lista de
 // grupos (buildFarolExportGroups_, com splits que a tela não tem) e é casado por título. O segtest.js
 // cobra os dois sentidos: seção sem entrada aqui = invisível pro admin; entrada sem seção = checkbox morto.
-const FAROL_SECOES=[{id:'aquisicao',label:'Aquisição'},{id:'depm0',label:'Depósito M0'},{id:'volumeggr',label:'Volume & GGR'},{id:'freespins',label:'FreeSpins & Bonificação'},{id:'retencao',label:'Retenção'},{id:'retencaojog',label:'Retenção por jogador'},{id:'depsafra',label:'Depósito por safra (R$)'},{id:'jogsafra',label:'Depositantes por safra'},{id:'tktsafra',label:'Mediana de depósito por safra'},{id:'ggrsafra',label:'GGR por safra'},{id:'holdsafra',label:'Hold por safra'},{id:'rollsafra',label:'Rollover por safra'},{id:'fssafra',label:'Freespin por safra'},{id:'fsturnsafra',label:'Freespin / Turnover por safra'}];const FAROL_SEC_ID_BY_LABEL={};FAROL_SECOES.forEach(x=>{FAROL_SEC_ID_BY_LABEL[x.label]=x.id;});// Seções que ESTE usuário pode ver. Admin e perfil sem restrição → null (todas). Mesma regra das abas:
+const FAROL_SECOES=[{id:'aquisicao',label:'Aquisição'},{id:'depm0',label:'Depósito M0'},{id:'volumeggr',label:'Volume & GGR'},{id:'freespins',label:'FreeSpins & Bonificação'},{id:'retencao',label:'Retenção'},{id:'retencaojog',label:'Retenção por jogador'},{id:'depsafra',label:'Depósito por safra (R$)'},{id:'jogsafra',label:'Depositantes por safra'},{id:'tktsafra',label:'Mediana de depósito por safra'},{id:'ggrsafrabrl',label:'GGR por safra (R$)'},{id:'ggrsafra',label:'GGR por safra'},{id:'holdsafra',label:'Hold por safra'},{id:'rollsafra',label:'Rollover por safra'},{id:'fssafra',label:'Freespin por safra'},{id:'fsturnsafra',label:'Freespin / Turnover por safra'}];const FAROL_SEC_ID_BY_LABEL={};FAROL_SECOES.forEach(x=>{FAROL_SEC_ID_BY_LABEL[x.label]=x.id;});// Seções que ESTE usuário pode ver. Admin e perfil sem restrição → null (todas). Mesma regra das abas:
 // allowlist vazia = sem restrição. Gate de UI — o payload continua trazendo tudo.
 function allowedSecoes_(user){if(!user||user.admin)return null;return Array.isArray(user.sections)&&user.sections.length?user.sections:null;}// ⚠️ NÃO tem fallback "não casou nada → mostra tudo": isso transformaria uma seção some do payload
 // (mês sem dado) num vazamento silencioso do Farol inteiro pra quem não podia ver. Devolve vazio e quem
@@ -3370,7 +3372,10 @@ const shareF=on&&fsAll>0?fsp/fsAll:null;const shareFL=on&&fsAllL>0?fspL/fsAllL:n
 safraMargem['fsTurn_'+bk]=wShare(mk(`FreeSpins/Turnover ${lbl}`,'pct',on&&hasFs?div(fsp,turn):null,null,on&&hasFs?div(fspL,turnL):null,true),shareF,shareFL,'freespin');// DEPÓSITO ABSOLUTO da safra (R$) — o numerador cru por trás dos % de retenção. Fica logo abaixo
 // das duas seções de retenção no Farol: o % diz a passagem, este card diz quanto dinheiro ela move.
 // Share = composição do DEPÓSITO (o próprio valor do card), então as 4 safras somam 100%.
-const shareD=on&&depAll>0?dep/depAll:null;const shareDL=on&&depAllL>0?depL/depAllL:null;safraMargem['depSafra_'+bk]=wShare(mk(`Depósito ${lbl}`,'brl',on?dep:null,null,on?depL:null),shareD,shareDL,'depósito');// `jog` = COUNTIF(dep > 0) do bucket. Declarado aqui porque serve a DOIS cards: o de cabeça
+const shareD=on&&depAll>0?dep/depAll:null;const shareDL=on&&depAllL>0?depL/depAllL:null;safraMargem['depSafra_'+bk]=wShare(mk(`Depósito ${lbl}`,'brl',on?dep:null,null,on?depL:null),shareD,shareDL,'depósito');// GGR ABSOLUTO da safra (R$) — irmão exato do card de depósito acima, com a RECEITA no lugar do
+// depósito (pedido do Luis, 24/09). Share = composição do GGR (o próprio valor do card). Com safra de
+// GGR negativo o share não fecha 100% de forma intuitiva, mas continua sendo a conta certa.
+safraMargem['ggrSafra_'+bk]=wShare(mk(`GGR ${lbl}`,'brl',on?ggr:null,null,on?ggrL:null),shareG,shareGL,'GGR');// `jog` = COUNTIF(dep > 0) do bucket. Declarado aqui porque serve a DOIS cards: o de cabeça
 // logo abaixo e a nota do card de mediana, mais adiante.
 const jog=S('jog'),jogL=S('jogM1');const hasJog=arr.some(c=>c.jog!=null);// JOGADORES DA SAFRA (cabeça) — irmão exato do card de R$ acima: aquele diz quanto a safra
 // depositou, este diz quantas pessoas depositaram. Lidos em par, dão o ticket médio da safra sem
@@ -3402,7 +3407,11 @@ const depNotM0Act=dt.act!=null&&dm0.act!=null?dt.act-dm0.act:null;const depNotM0
 // plano de M0 (o plano não separa "resto" por canal), então a subtração é honestamente zero, não "sem
 // dado". Sem este reforço a linha de Orçado sumia (bolinha cinza) e ficava indistinguível de "não
 // calculamos isso aqui". O Hero sabe ler bp===0 (farol vermelho se o realizado for >0, sem % — ver Hero).
-if(depNotM0Bp===0)notM0Card.bp=0;safraMargem['depSafra_notm0']=Object.assign(notM0Card,{bpTitle:'Depósito Total (Casa) − Depósito M0 (Casa). BP = Depósito Total BP − Depósito M0 BP '+'(o plano não quebra a meta de depósito por idade de coorte, só Total e M0). Pode divergir um '+'pouco da soma dos cards M1+M2+M3+ acima: aqueles vêm de payload.ggrSafra, restrito a conta '+'com FTD, enquanto este usa o Depósito Total/M0 reconciliado da casa.'});const bpM=bp&&bp.month||null;let roasDepM0Bp=div(dm0.bp,inv.bp);// fallback: razão da janela (mock / sem bp.month)
+if(depNotM0Bp===0)notM0Card.bp=0;// GGR NÃO-M0 (pedido do Luis, 24/09) — mesma construção do card de depósito acima: GGR da casa
+// (M.ggr, reconciliado e no escopo do filtro) − GGR da safra M0 (bucket m0 do ggrSafra). SEM Orçado:
+// o plano declara só o GGR Total, sem meta de GGR M0 em R$ — a única referência de M0 é a meta de
+// ROAS GGR M0, e derivar dela um orçado em R$ seria inventar uma meta que ninguém aprovou.
+safraMargem['ggrSafra_notm0']=Object.assign(mk('GGR Não-M0 (M1+M2+M3+)','brl',gg.act!=null&&ggrM0Sum!=null?gg.act-ggrM0Sum:null,null,gg.m1!=null&&ggrM0SumL!=null?gg.m1-ggrM0SumL:null),{bpTitle:'GGR Total (Casa) − GGR M0. Sem Orçado: o plano só declara o GGR Total, não a quebra por idade de coorte. '+'Pode divergir um pouco da soma dos cards M1+M2+M3+ ao lado: aqueles vêm de payload.ggrSafra, restrito a conta com FTD.'});safraMargem['depSafra_notm0']=Object.assign(notM0Card,{bpTitle:'Depósito Total (Casa) − Depósito M0 (Casa). BP = Depósito Total BP − Depósito M0 BP '+'(o plano não quebra a meta de depósito por idade de coorte, só Total e M0). Pode divergir um '+'pouco da soma dos cards M1+M2+M3+ acima: aqueles vêm de payload.ggrSafra, restrito a conta '+'com FTD, enquanto este usa o Depósito Total/M0 reconciliado da casa.'});const bpM=bp&&bp.month||null;let roasDepM0Bp=div(dm0.bp,inv.bp);// fallback: razão da janela (mock / sem bp.month)
 if(bpM){if(sel.length){let dm=0,iv=0;sel.forEach(ch=>{const b=bpM.byChannel&&bpM.byChannel[ch];if(b){dm+=b.depM0||0;iv+=b.invest||0;}});if(iv>0)roasDepM0Bp=dm/iv;}else if(filter&&filter.scope==='growth'){const g=bpM.growthAgg||{};if(g.invest>0)roasDepM0Bp=(g.depM0||0)/g.invest;}else{const hh=bpM.house||{};if(hh.invest>0)roasDepM0Bp=(hh.m0tt||0)/hh.invest;}}// BP do Multiplicador M0 = mesma regra do ROAS Dep M0, trocando o denominador INVESTIMENTO pelo
 // FTD AMOUNT: razão do MÊS INTEIRO do plano, nunca a soma prorateada da janela.
 let multM0Bp=div(dm0.bp,fa.bp);if(bpM){if(sel.length){let dm=0,fam=0;sel.forEach(ch=>{const b=bpM.byChannel&&bpM.byChannel[ch];if(b){dm+=b.depM0||0;fam+=b.ftdAmount||0;}});if(fam>0)multM0Bp=dm/fam;}else if(filter&&filter.scope==='growth'){const g=bpM.growthAgg||{};if(g.ftdAmount>0)multM0Bp=(g.depM0||0)/g.ftdAmount;}else{const hh=bpM.house||{};if(hh.ftdAmountTt>0)multM0Bp=(hh.m0tt||0)/hh.ftdAmountTt;}}// ⚠️ MATURAÇÃO MTD — aplicada DEPOIS de os dois orçados de mês estarem prontos, de propósito: cada
@@ -3568,7 +3577,7 @@ useEffect(()=>{loadData();},[loadData]);// ⚠️ CACHE-BUSTER dos JSONs estáti
 // correção do FINAL sem nada na tela dizendo que era dado velho. O build.js troca cada
 // __V_<ARQUIVO>__ pelo hash do arquivo, então todo deploy muda a URL e o dado velho não sobrevive.
 // Ver [[feedback-data-tool-freshness]]: fix não acaba até PROPAGAR.
-const ASSET_VER={'benchmark_net.json':'db859bcfc5','lottu_escada.json':'0d449a0b7e','lottu_campanhas.json':'5a42db2a1e'};const assetUrl_=f=>f+'?v='+(ASSET_VER[f]||'dev');// Benchmark das casas concorrentes — arquivo estático servido ao lado do index.html.
+const ASSET_VER={'benchmark_net.json':'b68a50ab8f','lottu_escada.json':'b6221272dd','lottu_campanhas.json':'5a42db2a1e'};const assetUrl_=f=>f+'?v='+(ASSET_VER[f]||'dev');// Benchmark das casas concorrentes — arquivo estático servido ao lado do index.html.
 // 2026-08-05: `benchmark.json` (3 casas, ~828 KB) e `benchmark_sameday.json` (~201 KB) deixaram de ser
 // baixados junto com a remoção da aba Benchmark — ficaram sem consumidor. Os arquivos seguem no repo
 // (o build_benchmark.py ainda os gera); se a aba voltar, é só religar o fetch.
