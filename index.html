@@ -1453,7 +1453,9 @@ pv(pc(bl(dressPlain(relabelRet(MM.retM3plus,'Depósito M3+'))),'m3'),'m3'),dress
 // (pedido do Luis, 10/09) — ver o cálculo e o porquê do BP em buildFarolMetrics_ (depSafra_notm0).
 // blS: sem ele o Hero cai no rótulo default 'BP' e este card ficava sendo o ÚNICO da tela
 // escrito "BP" enquanto todos os outros dizem "Orçado" (CARD_BP_LABEL).
-blS(dressPlain(f.depSafra_notm0))].filter(c=>c&&c.act!=null)},// Mesma safra, em CABEÇA (pedido do Luis, 01/09). Fica colada no card de R$ acima porque as duas
+// `dress` (não dressPlain): é VOLUME em R$, então projeta por run-rate igual Depósitos Totais
+// (pedido do Luis, 25/09). Os 4 cards por safra seguem sem trend.
+blS(dress(f.depSafra_notm0))].filter(c=>c&&c.act!=null)},// Mesma safra, em CABEÇA (pedido do Luis, 01/09). Fica colada no card de R$ acima porque as duas
 // juntas é que respondem "essa safra é grande porque tem muita gente ou porque tem pouca gente
 // depositando muito?". Ver o bloco de jogSafra_ em buildFarolMetrics_ para a definição e o aviso
 // de que os 4 não somam pessoas distintas em janela multi-mês.

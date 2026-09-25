@@ -3469,7 +3469,9 @@ function buildFarolGroups_(MM, f, range, useYtd, sparkByKey, retMes, chFilter) {
       // (pedido do Luis, 10/09) — ver o cálculo e o porquê do BP em buildFarolMetrics_ (depSafra_notm0).
       // blS: sem ele o Hero cai no rótulo default 'BP' e este card ficava sendo o ÚNICO da tela
       // escrito "BP" enquanto todos os outros dizem "Orçado" (CARD_BP_LABEL).
-      blS(dressPlain(f.depSafra_notm0)),
+      // `dress` (não dressPlain): é VOLUME em R$, então projeta por run-rate igual Depósitos Totais
+      // (pedido do Luis, 25/09). Os 4 cards por safra seguem sem trend.
+      blS(dress(f.depSafra_notm0)),
     ].filter(c => c && c.act != null) },
 
     // Mesma safra, em CABEÇA (pedido do Luis, 01/09). Fica colada no card de R$ acima porque as duas
