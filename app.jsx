@@ -3492,8 +3492,9 @@ function buildFarolGroups_(MM, f, range, useYtd, sparkByKey, retMes, chFilter) {
     // O MESMO bloco do Depósito por safra (R$) com GGR no lugar do depósito (pedido do Luis, 24/09), aqui antes das margens: fica colado no GGR/Dep por safra — quanto da receita do período
     // veio de cada idade de coorte. Não-M0 sem Orçado (ver ggrSafra_notm0 em buildFarolMetrics_).
     { id: 'ggrsafrabrl', title: 'GGR por safra (R$)', cards: [
-      dressPlain(f.ggrSafra_m0), dressPlain(f.ggrSafra_m1), dressPlain(f.ggrSafra_m2), dressPlain(f.ggrSafra_m3plus),
-      dressPlain(f.ggrSafra_notm0),
+      // `dress`: volume em R$ → trend por run-rate, igual Depósito Não-M0 (pedido do Luis, 25/09).
+      dress(f.ggrSafra_m0), dress(f.ggrSafra_m1), dress(f.ggrSafra_m2), dress(f.ggrSafra_m3plus),
+      dress(f.ggrSafra_notm0),
     ].filter(c => c && c.act != null) },    // Margem por safra em DUAS seções (GGR e Hold separados, pedido do Luis) — qualidade de monetização
     // por IDADE DE COORTE, não é retenção; janela MTD. Cada card carrega o `share` (peso da safra no GGR).
     // Só entra card com valor: bucket sem safra no período sai da tela em vez de virar um "—" mudo
