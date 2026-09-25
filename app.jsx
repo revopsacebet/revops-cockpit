@@ -3463,7 +3463,11 @@ function buildFarolGroups_(MM, f, range, useYtd, sparkByKey, retMes, chFilter) {
     // Quanto CADA SAFRA depositou no período (R$ absoluto) — o numerador que está por trás dos %
     // das duas seções acima. `share` = participação da safra no depósito do período (as 4 fecham 100%).
     // Mesma fonte/janela dos outros cards por safra (payload.ggrSafra, MTD, segue o filtro de canal).
-    { id: 'depsafra', title: 'Depósito por safra (R$)', cards: [
+    // RETENÇÃO DE VALORES (R$) (pedido do Luis, 25/09) = os blocos Depósito por safra e GGR por safra (R$)
+    // juntos numa seção só. Id segue 'depsafra' de propósito: é o que está gravado nos perfis (FAROL_SECOES),
+    // e quem tinha o id antigo 'ggrsafrabrl' é aliasado em filterFarolSecoes_.
+    // `rowBreak` no GGR M0 = quebra de linha no grid, pra depósito e GGR não dividirem a mesma fileira.
+    { id: 'depsafra', title: 'Retenção de valores (R$)', cards: [
       dressPlain(f.depSafra_m0), dressPlain(f.depSafra_m1), dressPlain(f.depSafra_m2), dressPlain(f.depSafra_m3plus),
       // Resumo dos 3 buckets acima (M1+M2+M3+) = tudo que NÃO é safra nova, com BP pra acompanhamento
       // (pedido do Luis, 10/09) — ver o cálculo e o porquê do BP em buildFarolMetrics_ (depSafra_notm0).
@@ -3472,6 +3476,10 @@ function buildFarolGroups_(MM, f, range, useYtd, sparkByKey, retMes, chFilter) {
       // `dress` (não dressPlain): é VOLUME em R$, então projeta por run-rate igual Depósitos Totais
       // (pedido do Luis, 25/09). Os 4 cards por safra seguem sem trend.
       blS(dress(f.depSafra_notm0)),
+      // GGR por safra (R$) (24/09): quanto da receita do período veio de cada idade de coorte. Não-M0 sem
+      // Orçado (ver ggrSafra_notm0 em buildFarolMetrics_). `dress` = trend por run-rate (25/09).
+      f.ggrSafra_m0 ? { ...dress(f.ggrSafra_m0), rowBreak: true } : null, dress(f.ggrSafra_m1), dress(f.ggrSafra_m2), dress(f.ggrSafra_m3plus),
+      dress(f.ggrSafra_notm0),
     ].filter(c => c && c.act != null) },
 
     // Mesma safra, em CABEÇA (pedido do Luis, 01/09). Fica colada no card de R$ acima porque as duas
@@ -3489,13 +3497,7 @@ function buildFarolGroups_(MM, f, range, useYtd, sparkByKey, retMes, chFilter) {
     { id: 'tktsafra', title: 'Mediana de depósito por safra', cards: [
       dressPlain(f.tktSafra_m0), dressPlain(f.tktSafra_m1), dressPlain(f.tktSafra_m2), dressPlain(f.tktSafra_m3plus),
     ].filter(c => c && (c.act != null || c.note)) },
-    // O MESMO bloco do Depósito por safra (R$) com GGR no lugar do depósito (pedido do Luis, 24/09), aqui antes das margens: fica colado no GGR/Dep por safra — quanto da receita do período
-    // veio de cada idade de coorte. Não-M0 sem Orçado (ver ggrSafra_notm0 em buildFarolMetrics_).
-    { id: 'ggrsafrabrl', title: 'GGR por safra (R$)', cards: [
-      // `dress`: volume em R$ → trend por run-rate, igual Depósito Não-M0 (pedido do Luis, 25/09).
-      dress(f.ggrSafra_m0), dress(f.ggrSafra_m1), dress(f.ggrSafra_m2), dress(f.ggrSafra_m3plus),
-      dress(f.ggrSafra_notm0),
-    ].filter(c => c && c.act != null) },    // Margem por safra em DUAS seções (GGR e Hold separados, pedido do Luis) — qualidade de monetização
+    // Margem por safra em DUAS seções (GGR e Hold separados, pedido do Luis) — qualidade de monetização
     // por IDADE DE COORTE, não é retenção; janela MTD. Cada card carrega o `share` (peso da safra no GGR).
     // Só entra card com valor: bucket sem safra no período sai da tela em vez de virar um "—" mudo
     // (e sem ggrSafra nenhum as duas seções desaparecem).
@@ -3562,10 +3564,9 @@ const FAROL_SECOES = [
   { id: 'freespins',    label: 'FreeSpins & Bonificação' },
   { id: 'retencao',     label: 'Retenção' },
   { id: 'retencaojog',  label: 'Retenção por jogador' },
-  { id: 'depsafra',     label: 'Depósito por safra (R$)' },
+  { id: 'depsafra',     label: 'Retenção de valores (R$)' },
   { id: 'jogsafra',     label: 'Depositantes por safra' },
   { id: 'tktsafra',     label: 'Mediana de depósito por safra' },
-  { id: 'ggrsafrabrl',  label: 'GGR por safra (R$)' },
   { id: 'ggrsafra',     label: 'GGR por safra' },
   { id: 'holdsafra',    label: 'Hold por safra' },
   { id: 'rollsafra',    label: 'Rollover por safra' },
@@ -3584,7 +3585,9 @@ function allowedSecoes_(user) {
 // chama avisa na tela.
 function filterFarolSecoes_(groups, allowed) {
   if (!allowed) return groups;
-  return (groups || []).filter(g => allowed.indexOf(g.id || FAROL_SEC_ID_BY_LABEL[g.title]) >= 0);
+  // 'ggrsafrabrl' (GGR por safra R$) foi fundida em 'depsafra' em 25/09 — perfil que tinha só a antiga continua vendo.
+  const al = allowed.indexOf('ggrsafrabrl') >= 0 ? allowed.concat(['depsafra']) : allowed;
+  return (groups || []).filter(g => al.indexOf(g.id || FAROL_SEC_ID_BY_LABEL[g.title]) >= 0);
 }
 
 const CENARIOS = [
@@ -4013,7 +4016,7 @@ function TabFarol({ M, farol, range, ytd, ftdByRegister, chFilter, planScenarios
             )}
             {aberta && (
               <div className="hero-grid">
-                {g.cards.map((m, j) => (m ? <Hero key={j} metric={m} variant="farol" /> : null))}
+                {g.cards.map((m, j) => (m ? <React.Fragment key={j}>{m.rowBreak && j > 0 && <div style={{ gridColumn: '1 / -1', height: 0 }} />}<Hero metric={m} variant="farol" /></React.Fragment> : null))}
               </div>
             )}
           </div>
